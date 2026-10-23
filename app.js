@@ -25,6 +25,7 @@ function withDefaults(ex) {
   if (ex.max10 === undefined) ex.max10 = null;  // max. kg bei 10 Wdh.
   if (ex.step === undefined) ex.step = null;    // Steigerung in kg, null = automatisch
   if (ex.variant === undefined) ex.variant = '';  // Standard-Ausführung: '', 'pause', 'slow'
+  if (ex.kind === undefined) ex.kind = null;      // Übungsart, null = automatisch aus dem Namen
   return ex;
 }
 
@@ -33,6 +34,7 @@ function upgradeData(d) {
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
   // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
   if (!d.cycle) d.cycle = { buildWeeks: 5, start: mondayISO(new Date()) };
+  d.cycle.buildWeeks = Math.min(5, Math.max(4, d.cycle.buildWeeks));  // 4–5 Trainingswochen
   return d;
 }
 
@@ -219,11 +221,23 @@ function setInput(field, ei, j, value) {
 
 // Im Training: Wdh. der offenen Sätze aus dem letzten erledigten Satz ableiten.
 // Wdh. nächster Satz = (Wdh. + Tank) − Ziel-Tank − Ermüdung; jeder weitere Satz noch 1 weniger.
+// Durchschnitt Tank aller erledigten Sätze im Vergleich zum Wochenziel
+function avgTankText(en) {
+  const done = en.sets.filter(isDone).map(s => parseNum(s.rir));
+  if (!done.length || !en.target) return '';
+  const avg = Math.round(done.reduce((a, b) => a + b, 0) / done.length * 10) / 10;
+  const t = en.target.rir;
+  const verdict = Math.abs(avg - t) <= 0.5 ? '✔ im Ziel' : avg > t ? 'leichter als geplant' : 'schwerer als geplant';
+  return `Ø Tank bisher: <b>${fmtNum(avg)}</b> (Ziel ${targetRirText(en.target)}) – ${verdict}`;
+}
+
 // Bezug ist immer der letzte erledigte Satz derselben Ausführungsvariante.
 function recalcSets(ei) {
   const en = draft.entries[ei];
   const t = en.target;
   if (!t) return;
+  const avgEl = $view.querySelector(`[data-avg="${ei}"]`);
+  if (avgEl) avgEl.innerHTML = avgTankText(en);
   const tt = { step: 2.5, ...t };
   let first = null, firstLast = -1, firstCap = null;
   for (let j = 0; j < en.sets.length; j++) {
@@ -262,7 +276,7 @@ function recalcSets(ei) {
   const last = firstLast, cap = firstCap;
   en.note = `Satz ${last + 1}: ${cap} Wdh. bis zum Versagen → nächster Satz: ` +
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
-    `(${t.rir} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`;
+    `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`;
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
@@ -310,6 +324,64 @@ function cycleInfo(date = new Date()) {
 }
 
 const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
+
+// Ziel im Tank pro Trainingswoche (normale Übungen, als Durchschnitt über die Sätze).
+// [min, max] = Bereich; gerechnet wird mit der Mitte.
+const RIR_PLAN = { 4: [2, 2, 1.5, 1], 5: [2, 2, 1.5, 1, [0.5, 1]] };
+
+// Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
+const KINDS = { compound: 'Grundübung', normal: 'Normal', assist: 'Assistenz' };
+const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
+const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken|kreuzheben|schulterdrucken langhantel|klimmzuge|rudern langhantel|rudern t-bar|hackenschmidt|beinpresse|dips|hip thrust langhantel|umsetzen|reissen)/;
+const ASSIST = /curls|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
+
+function kindOf(ex) {
+  if (ex.kind) return ex.kind;
+  const n = norm(ex.name || '');
+  return COMPOUND.test(n) ? 'compound' : ASSIST.test(n) ? 'assist' : 'normal';
+}
+
+// Tank-Ziel als Bereich [min, max] für Übungsart und Woche
+function rirRange(kind, week, buildWeeks) {
+  const plan = RIR_PLAN[buildWeeks] || RIR_PLAN[5];
+  const base = plan[Math.min(plan.length, Math.max(1, week)) - 1];
+  const [lo, hi] = Array.isArray(base) ? base : [base, base];
+  const off = KIND_OFFSET[kind || 'normal'];
+  return [Math.max(0, lo + off), Math.max(0, hi + off)];
+}
+
+const rirFor = (kind, week, buildWeeks) => {
+  const [lo, hi] = rirRange(kind, week, buildWeeks);
+  return (lo + hi) / 2;
+};
+
+const rirLabel = (kind, week, buildWeeks) => {
+  const [lo, hi] = rirRange(kind, week, buildWeeks);
+  return lo === hi ? fmtNum(lo) : `${fmtNum(lo)}–${fmtNum(hi)}`;
+};
+
+// Ziel im Tank, wie es angezeigt wird (Bereich statt Mittelwert, im Deload „mind. 3“)
+const targetRirText = t => t.deload ? `mind. ${fmtNum(t.rir)}` : (t.rirText || fmtNum(t.rir));
+
+function weekRirText(kind) {
+  const ci = cycleInfo();
+  if (ci.deload) return `Deload – mind. ${DELOAD_RIR}`;
+  return `${rirLabel(kind, ci.week, ci.buildWeeks)} (${weekLabel(ci.week)})`;
+}
+
+function rirTable(buildWeeks) {
+  const plan = RIR_PLAN[buildWeeks];
+  const ci = cycleInfo();
+  let h = '<div class="table-wrap"><table class="rir"><tr><th>Ziel im Tank</th>';
+  plan.forEach((_, i) => { h += `<th class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${i === 0 ? 'Intro' : 'W' + (i + 1)}</th>`; });
+  h += '<th>Deload</th></tr>';
+  for (const [k, label] of Object.entries(KINDS)) {
+    h += `<tr><td>${label}</td>` + plan.map((_, i) =>
+      `<td class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${rirLabel(k, i + 1, buildWeeks)}</td>`).join('') +
+      `<td class="${ci.deload ? 'now' : ''}">≥ ${DELOAD_RIR}</td></tr>`;
+  }
+  return h + '</table></div>';
+}
 
 // Deload: Volumen halbieren (Sätze), Gewicht −20 %, nie schwerer als DELOAD_RIR im Tank.
 // base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
@@ -441,7 +513,7 @@ function proposeSet(en, i, v) {
   const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
   const cmpV = ofVariant(en.compare && en.compare.sets, v);
   const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v);
-  const usePrev = prevV.length && (cmpV.length || v);
+  const usePrev = prevV.length > 0;  // innerhalb des Zyklus immer: Satz 1 +1 Wdh., Rest bestätigen
   let p = null, rule = null;
   if (usePrev && braked(en.prevWeek, v)) {
     const src = refAt(prevV, k);
@@ -617,7 +689,7 @@ function renderTraining() {
     if (en.replacing) h += renderReplace(en, ei);
     if (en.target) {
       const t = en.target;
-      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank` +
+      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
     }
     if (en.compare) {
@@ -642,7 +714,7 @@ function renderTraining() {
     </div>`;
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
-    const tankHint = en.target ? en.target.rir : '–';
+    const tankHint = en.target ? targetRirText(en.target).replace('mind. ', '≥') : '–';
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
       h += `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
@@ -651,10 +723,10 @@ function renderTraining() {
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
-        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="${tankHint}"
+        <input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
           class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`;
     });
-    h += `</div>
+    h += `</div><p class="avg" data-avg="${ei}">${avgTankText(en)}</p>
       <div class="row">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
@@ -692,7 +764,7 @@ function renderPlan() {
   let h = `<h2>Periodisierung</h2>
     <div class="card">
       <div class="row" style="margin-top:0">
-        <span>Wochen bis Deload<br><small class="hint">inkl. Intro-Woche</small></span>
+        <span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
         <div class="stepper">
           <button data-action="cycle-weeks" data-delta="-1" aria-label="Weniger Wochen">−</button>
           <b>${c.buildWeeks}</b>
@@ -703,6 +775,7 @@ function renderPlan() {
         <input class="inp date" type="date" data-field="cycle-start" value="${c.start}"></label>
       <p class="hint">Danach folgt automatisch 1 Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
       ${cyclePills(cycleInfo())}
+      ${rirTable(c.buildWeeks)}
       <div class="row"><button class="btn outline" data-action="cycle-restart">Neuen Zyklus ab dieser Woche</button></div>
     </div>
     <h2>Trainingstage</h2>`;
@@ -762,7 +835,10 @@ function renderDay({ id }) {
       ${planCompare(ex, day)}
       ${stepperRow('Sätze', 'sets', i, ex.sets)}
       ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
-      ${stepperRow('Ziel im Tank (RIR)', 'rir', i, ex.rir)}
+      <div class="variants plan"><span>Art${ex.kind == null ? ' <small class="hint">(auto)</small>' : ''}</span>${Object.entries(KINDS).map(([k, label]) =>
+        `<button class="vchip ${kindOf(ex) === k ? 'on' : ''}" data-action="plan-kind" data-i="${i}" data-k="${k}">${label}</button>`).join('')}
+      </div>
+      <p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex))}</b></p>
       <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
       </div>
@@ -932,7 +1008,11 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
   draft.entries = exercises.map(ex => {
     const en = { name: ex.name.trim() };
-    setupEntry(en, { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) }, () => ex.variant);
+    // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
+    const week = ci.deload ? ci.buildWeeks : ci.week;
+    const rir = rirFor(kindOf(ex), week, ci.buildWeeks);
+    const rirText = rirLabel(kindOf(ex), week, ci.buildWeeks);
+    setupEntry(en, { sets: ex.sets, reps: ex.reps, rir, rirText, max10: ex.max10, step: stepFor(ex) }, () => ex.variant);
     return en;
   });
   saveDraft();
@@ -1297,8 +1377,12 @@ const actions = {
   },
   'ex-up': el => { moveExercise(findDay(current.params.id), +el.dataset.i, -1); saveData(); render(); },
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
+  'plan-kind': el => {
+    findDay(current.params.id).exercises[el.dataset.i].kind = el.dataset.k;
+    saveData(); render();
+  },
   'cycle-weeks': el => {
-    data.cycle.buildWeeks = Math.min(6, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
+    data.cycle.buildWeeks = Math.min(5, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
     saveData(); render();
   },
   'cycle-restart': () => {

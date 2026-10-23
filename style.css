@@ -164,6 +164,17 @@ input:focus { outline: none; border-color: var(--accent); }
 .lbl { display: block; margin-bottom: 16px; font-size: 17px; color: var(--muted); }
 .lbl .inp { margin-top: 6px; color: var(--text); }
 
+/* Ziel im Tank pro Woche */
+.table-wrap { overflow-x: auto; margin: 0 0 8px; }
+table.rir { width: 100%; border-collapse: collapse; font-size: 16px; font-variant-numeric: tabular-nums; }
+table.rir th, table.rir td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: center; }
+table.rir th:first-child, table.rir td:first-child { text-align: left; white-space: nowrap; }
+table.rir th { font-weight: 600; color: var(--muted); }
+table.rir .now { background: var(--accent); color: #fff; font-weight: 700; }
+.kind-hint { margin: 4px 0 0; }
+.avg { margin: 8px 0 0; font-size: 16px; color: var(--muted); }
+.avg:empty { display: none; }
+
 /* Kommentar & Tagesform */
 .icon-btn.bubble { min-width: 44px; height: 44px; padding: 0; font-size: 20px; opacity: .55; }
 .icon-btn.bubble.has { opacity: 1; background: var(--accent); }
@@ -290,6 +301,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .vchip.on { background: var(--accent); color: #fff; }
 .setgrid input { min-width: 0; padding: 12px 4px; text-align: center; font-size: 24px; font-weight: 600; }
 .setgrid input.tank { border-style: dashed; }
+.setgrid input.tank::placeholder { font-size: 17px; }
 .setgrid input.flash { animation: flash 1.2s ease-out; }
 @keyframes flash { from { background: #ffe08a; color: #111; } }
 .adjust { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--bg); font-size: 17px; }
