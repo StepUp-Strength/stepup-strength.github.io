@@ -10,7 +10,7 @@ let draft = loadDraft();          // laufendes, noch nicht gespeichertes Trainin
 let current = { view: 'start', params: {} };
 
 function emptyData() {
-  return { app: 'trainingsapp', version: 1, days: [], sessions: [], bodyweight: [] };
+  return { app: 'trainingsapp', version: 1, days: [], sessions: [], bodyweight: [], cycle: null };
 }
 
 function isValidData(d) {
@@ -30,6 +30,8 @@ function withDefaults(ex) {
 function upgradeData(d) {
   d.days.forEach(day => day.exercises.forEach(withDefaults));
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
+  // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
+  if (!d.cycle) d.cycle = { buildWeeks: 5, start: mondayISO(new Date()) };
   return d;
 }
 
@@ -38,7 +40,7 @@ function loadData() {
     const d = JSON.parse(localStorage.getItem(STORE_KEY));
     if (isValidData(d)) return upgradeData(d);
   } catch (e) { /* leer oder defekt -> neu anfangen */ }
-  return emptyData();
+  return upgradeData(emptyData());
 }
 
 function saveData() {
@@ -183,13 +185,26 @@ const MIN_REPS = 5;
 
 // Vorschlag für einen Satz, k Sätze nach einem Satz mit cap Wdh. bis zum Versagen bei Gewicht w.
 // Ohne festes Gewicht wird in Steigerungsschritten reduziert, bis mindestens MIN_REPS Wdh. passen.
-function planSet(cap, w, t, k, fixedWeight) {
+// startWeight: Ausgangsgewicht des Satzes (z. B. aus der Vergleichswoche), sonst das Gewicht von w.
+function planSet(cap, w, t, k, fixedWeight, startWeight) {
   const repsAt = wt => Math.floor(capacityAt(cap, w, wt) - t.rir - FATIGUE * k + 1e-9);
   if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(1, repsAt(fixedWeight)) };
   if (w == null) return { weight: null, reps: Math.max(1, repsAt(null)) };  // ohne Gewicht
-  let wt = w;
+  let wt = startWeight != null ? startWeight : w;
   while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
   return { weight: wt, reps: Math.max(1, repsAt(wt)) };
+}
+
+// Satzziel laut Plan: Satz 1 = Ziel-Wdh., danach je Satz FATIGUE weniger (mind. MIN_REPS)
+const goalReps = (t, i) => Math.max(MIN_REPS, t.reps - FATIGUE * i);
+
+// Nächste Gewichtsstufe, sobald die Leistung (cap Wdh. bis zum Versagen bei w) reicht,
+// um mit w + step noch goal Wdh. mit Ziel-Tank (nach k Sätzen Ermüdung) zu schaffen.
+function stepUp(cap, w, t, k, goal) {
+  if (w == null || !t.step) return null;
+  const up = round2(w + t.step);
+  const reps = Math.floor(capacityAt(cap, w, up) - t.rir - FATIGUE * k + 1e-9);
+  return reps >= goal ? { weight: up, reps } : null;
 }
 
 function setInput(field, ei, j, value) {
@@ -219,7 +234,22 @@ function recalcSets(ei) {
   for (let j = last + 1; j < en.sets.length; j++) {
     const s = en.sets[j];
     if (!s.auto) continue;  // Wdh. selbst geändert -> Satz nicht mehr anfassen
-    const p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null);
+    // Ausgangsgewicht: aus der Vergleichswoche, aber nie unter dem zuletzt gesteigerten Gewicht
+    const start = s.baseWeight != null && w != null ? Math.max(s.baseWeight, w) : s.baseWeight;
+    let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start);
+    if (!t.deload && !s.manualWeight) {
+      // Genug Wdh. über dem Ziel -> nächste Gewichtsstufe für die folgenden Sätze
+      const up = stepUp(cap, w, tt, j - last, goalReps(tt, j));
+      if (up && (p.weight == null || up.weight > p.weight)) p = up;
+    }
+    if (t.deload) {
+      // Deload: Wdh. nie über das Ziel erhöhen, nur senken, falls es schwerer als DELOAD_RIR war
+      const keep = parseNum(s.weight);
+      p = {
+        weight: p.weight != null && keep != null && p.weight < keep ? p.weight : keep,
+        reps: Math.min(p.reps, t.reps),
+      };
+    }
     if (!first) first = p;
     const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
     if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
@@ -232,6 +262,118 @@ function recalcSets(ei) {
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
+
+/* ---------- Periodisierung ---------- */
+
+const WEEK_MS = 7 * 86400000;
+const DELOAD_RIR = 3;  // in der Deload-Woche mindestens so viele Wdh. im Tank
+
+// Montag der Woche als JJJJ-MM-TT
+function mondayISO(date) {
+  const d = new Date(date);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - (d.getDay() + 6) % 7);
+  return d.toLocaleDateString('sv-SE');
+}
+
+const addWeeks = (iso, n) => {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + 7 * n);
+  return d.toLocaleDateString('sv-SE');
+};
+
+// Wo im Zyklus liegt das Datum? Woche 1..buildWeeks = Aufbau, buildWeeks + 1 = Deload
+function cycleInfo(date = new Date()) {
+  const c = data.cycle;
+  const weeks = Math.round((new Date(mondayISO(date) + 'T12:00:00') - new Date(c.start + 'T12:00:00')) / WEEK_MS);
+  const len = c.buildWeeks + 1;
+  const future = weeks < 0;
+  const n = Math.max(0, weeks);
+  const cycle = Math.floor(n / len) + 1;
+  const pos = n % len;
+  const cycleStart = addWeeks(c.start, (cycle - 1) * len);
+  return {
+    cycle,
+    week: pos + 1,
+    buildWeeks: c.buildWeeks,
+    deload: !future && pos === c.buildWeeks,
+    intro: !future && pos === 0,
+    future,
+    cycleStart,
+    deloadStart: addWeeks(cycleStart, c.buildWeeks),
+    nextStart: addWeeks(cycleStart, len),
+  };
+}
+
+const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
+
+// Deload: Volumen halbieren (Sätze), Gewicht −20 %, nie schwerer als DELOAD_RIR im Tank.
+// base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
+const deloadSets = sets => Math.max(1, Math.round(sets / 2));
+const introSets = sets => deloadSets(sets) + 1;  // Intro-Woche: ein Satz mehr als im Deload
+
+function deloadTarget(t) {
+  const normal = targetWeight(t);
+  return {
+    ...t,
+    sets: deloadSets(t.sets),
+    rir: Math.max(t.rir, DELOAD_RIR),
+    weight: normal != null ? roundTo(normal * DELOAD_WEIGHT, t.step) : null,
+    deload: true,
+    base: t,
+  };
+}
+
+// In welchem Zyklus (Startdatum) und welcher Woche lag ein gespeichertes Training?
+function sessionCycle(s) {
+  if (s.cycleStart) return { cycleStart: s.cycleStart, week: s.week };
+  const c = cycleInfo(new Date(s.date));
+  return { cycleStart: c.cycleStart, week: c.week };
+}
+
+// Vergleichswoche: dieselbe Woche im vorherigen Zyklus (bevorzugt derselbe Trainingstag)
+function comparisonEntry(name, dayId, ci) {
+  const k = nameKey(name);
+  const cands = data.sessions
+    .filter(s => !s.deload)
+    .map(s => ({ s, c: sessionCycle(s) }))
+    .filter(x => x.c.week === ci.week && x.c.cycleStart < ci.cycleStart)
+    .sort((a, b) => b.c.cycleStart.localeCompare(a.c.cycleStart)
+      || (b.s.dayId === dayId) - (a.s.dayId === dayId)
+      || b.s.date.localeCompare(a.s.date));
+  for (const { s } of cands) {
+    const e = s.entries.find(en => nameKey(en.name) === k);
+    if (e) return { date: s.date, week: ci.week, sets: e.sets };
+  }
+  return null;
+}
+
+// Sätze aus der Vergleichswoche: gleiches Gewicht und je 1 Wdh. mehr –
+// außer die damalige Leistung reicht schon für die nächste Gewichtsstufe
+function compareSets(cmp, target) {
+  const n = target.intro ? target.sets : cmp.sets.length;
+  const sets = [];
+  for (let i = 0; i < n; i++) {
+    const src = cmp.sets[i] || cmp.sets[cmp.sets.length - 1];
+    let weight = src.weight;
+    let reps = src.reps != null ? src.reps + 1 : target.reps;
+    if (src.reps != null && src.weight != null) {
+      const cap = src.reps + (src.rir != null ? src.rir : target.rir);
+      const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
+      if (up) ({ weight, reps } = up);
+    }
+    sets.push({
+      weight: weight != null ? fmtNum(weight) : '',
+      reps: String(reps),
+      rir: '',
+      auto: true,
+      baseWeight: weight,  // Ausgangsgewicht für die Anpassung im Training
+    });
+  }
+  return sets;
+}
+
+const weekLabel = w => w === 1 ? 'Intro-Woche' : `Woche ${w}`;
 
 /* ---------- Bildschirme ---------- */
 
@@ -263,8 +405,35 @@ function render() {
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
 }
 
+function cyclePills(ci) {
+  let h = '<div class="pills">';
+  for (let i = 1; i <= ci.buildWeeks + 1; i++) {
+    const deload = i === ci.buildWeeks + 1;
+    const state = i === ci.week ? 'now' : i < ci.week ? 'past' : '';
+    const cls = deload ? 'dl' : i === 1 ? 'intro' : '';
+    h += `<span class="pill ${cls} ${state}">${deload ? 'Deload' : i === 1 ? 'Intro' : i}</span>`;
+  }
+  return h + '</div>';
+}
+
+function cycleCard(ci) {
+  const head = ci.future
+    ? `Zyklus startet am ${fmtDate(ci.cycleStart)}`
+    : ci.deload
+      ? `Zyklus ${ci.cycle} · Deload-Woche`
+      : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
+  const sub = ci.deload
+    ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Nächster Zyklus ab ${fmtDate(ci.nextStart)}.`
+    : ci.intro
+      ? `Ein Satz mehr als im Deload. Werte der letzten Intro-Woche, je +1 Wdh. Deload ab ${fmtDate(ci.deloadStart)}.`
+      : `Werte derselben Woche im letzten Zyklus, je +1 Wdh. Deload-Woche ab ${fmtDate(ci.deloadStart)}.`;
+  return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
+    <h2>${head}</h2>${cyclePills(ci)}<p class="sub">${sub}</p>
+  </div>`;
+}
+
 function renderStart() {
-  let h = '';
+  let h = cycleCard(cycleInfo());
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -289,7 +458,12 @@ function renderStart() {
 
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
-  let h = `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
+  let h = draft.deload
+    ? `<p class="deload-note">Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
+    : draft.intro
+      ? '<p class="intro-note">Intro-Woche: ein Satz mehr als im Deload. Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.</p>'
+      : '';
+  h += `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
     h += `<section class="card">
@@ -304,9 +478,14 @@ function renderTraining() {
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
     }
-    h += last
-      ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
-      : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+    if (en.compare) {
+      h += `<p class="compare">Vergleich: ${weekLabel(en.compare.week)} im letzten Zyklus (${fmtDate(en.compare.date)})<br>
+        ${en.compare.sets.map(fmtSet).join(' · ')}<br><b>Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt</b></p>`;
+    } else {
+      h += last
+        ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
+        : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+    }
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     h += '<div class="setgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
     const tankHint = en.target ? en.target.rir : '–';
@@ -352,7 +531,24 @@ function renderReplace(en, ei) {
 }
 
 function renderPlan() {
-  let h = '';
+  const c = data.cycle;
+  let h = `<h2>Periodisierung</h2>
+    <div class="card">
+      <div class="row" style="margin-top:0">
+        <span>Wochen bis Deload<br><small class="hint">inkl. Intro-Woche</small></span>
+        <div class="stepper">
+          <button data-action="cycle-weeks" data-delta="-1" aria-label="Weniger Wochen">−</button>
+          <b>${c.buildWeeks}</b>
+          <button data-action="cycle-weeks" data-delta="1" aria-label="Mehr Wochen">+</button>
+        </div>
+      </div>
+      <label class="row"><span>Zyklus-Start</span>
+        <input class="inp date" type="date" data-field="cycle-start" value="${c.start}"></label>
+      <p class="hint">Danach folgt automatisch 1 Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
+      ${cyclePills(cycleInfo())}
+      <div class="row"><button class="btn outline" data-action="cycle-restart">Neuen Zyklus ab dieser Woche</button></div>
+    </div>
+    <h2>Trainingstage</h2>`;
   if (!data.days.length) {
     h += '<p class="hint">Lege Trainingstage an, z. B. „Tag A – Oberkörper“ und „Tag B – Beine“.</p>';
   }
@@ -383,6 +579,16 @@ function stepperRow(label, prop, i, value) {
   </div>`;
 }
 
+// Im Plan: Werte der Vergleichswoche für die aktuelle Zykluswoche
+function planCompare(ex, day) {
+  const ci = cycleInfo();
+  if (!ex.name.trim() || ci.deload || ci.future) return '';
+  const cmp = comparisonEntry(ex.name, day.id, ci);
+  if (!cmp) return '';
+  return `<p class="compare">Diese Woche (${weekLabel(ci.week)}) – Vergleich letzter Zyklus:<br>
+    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +1 Wdh.</b></p>`;
+}
+
 function renderDay({ id }) {
   const day = findDay(id);
   if (!day) return '<p class="hint">Trainingstag nicht gefunden.</p>';
@@ -396,6 +602,7 @@ function renderDay({ id }) {
         autocomplete="off" autocorrect="off" spellcheck="false"
         value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
       <div class="suggest" hidden></div>
+      ${planCompare(ex, day)}
       ${stepperRow('Sätze', 'sets', i, ex.sets)}
       ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
       ${stepperRow('Ziel im Tank (RIR)', 'rir', i, ex.rir)}
@@ -450,7 +657,7 @@ function renderHistory() {
   h += '<h2>Alle Trainings</h2>';
   for (const s of sessionsNewestFirst()) {
     h += `<button class="btn" data-action="open-session" data-id="${s.id}">
-      ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen</small></button>`;
+      ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen${s.deload ? ' · Deload' : ''}</small></button>`;
   }
   return h;
 }
@@ -479,7 +686,7 @@ function renderExercise({ name }) {
 function renderSession({ id }) {
   const s = data.sessions.find(x => x.id === id);
   if (!s) return '<p class="hint">Training nicht gefunden.</p>';
-  let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}</p><ul class="list">`;
+  let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}</p><ul class="list">`;
   for (const e of s.entries) {
     const res = e.result
       ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
@@ -514,28 +721,57 @@ function startDay(id) {
   }
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
 
+  const ci = cycleInfo();
   draft = {
     dayId: day.id,
     dayName: day.name,
     date: new Date().toISOString(),
-    entries: exercises.map(ex => {
-      const target = { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) };
-      return { name: ex.name.trim(), target, sets: buildSets(ex.name, target) };
-    }),
+    deload: ci.deload,
+    intro: ci.intro,
+    cycleStart: ci.cycleStart,
+    week: ci.week,
+    entries: [],
   };
+  // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
+  draft.entries = exercises.map(ex => {
+    const en = { name: ex.name.trim() };
+    setupEntry(en, { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) });
+    return en;
+  });
   saveDraft();
   go('training');
+}
+
+// Ziel und vorgeschlagene Sätze einer Übung je nach Zykluswoche festlegen:
+// Deload -> halbiert & leichter; sonst Werte der Vergleichswoche + 1 Wdh., falls vorhanden
+function setupEntry(en, target) {
+  en.plan = target;
+  if (draft.deload) target = deloadTarget(target);
+  else if (draft.intro) target = { ...target, sets: introSets(target.sets), intro: true };
+  const cmp = draft.deload ? null : comparisonEntry(en.name, draft.dayId, draft);
+  en.target = target;
+  en.compare = cmp;
+  en.sets = cmp ? compareSets(cmp, target) : buildSets(en.name, target);
+  if (cmp) en.target = { ...target, sets: en.sets.length };
+  en.note = null;
 }
 
 // Vorgeschlagene Sätze für den Trainingsstart
 function buildSets(name, target) {
   // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
   const last = lastEntry(name);
-  const tw = targetWeight(target);
+  const tw = target.deload ? target.weight : targetWeight(target);
   const sets = [];
   for (let i = 0; i < target.sets; i++) {
     const ls = last && (last.sets[i] || last.sets[last.sets.length - 1]);
-    const w = tw != null ? tw : (ls && ls.weight != null ? ls.weight : null);
+    const lw = ls && ls.weight != null ? ls.weight : null;
+    const w = tw != null ? tw
+      : lw != null && target.deload ? roundTo(lw * DELOAD_WEIGHT, target.step || 2.5) : lw;
+    if (target.deload) {
+      // Deload: gleiche Wdh. in allen Sätzen, das leichtere Gewicht reicht als Entlastung
+      sets.push({ weight: w != null ? fmtNum(w) : '', reps: String(target.reps), rir: '', auto: true });
+      continue;
+    }
     // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. MIN_REPS
     const p = i === 0 ? { weight: w, reps: target.reps } : planSet(target.reps + target.rir, w, target, i);
     sets.push({ weight: p.weight != null ? fmtNum(p.weight) : '', reps: String(p.reps), rir: '', auto: true });
@@ -563,15 +799,10 @@ function knownMax10(name) {
 function replaceExercise(en, name, max10) {
   const original = en.replacedFrom || en.name;
   const ex = planExercise(name);
-  en.target = {
-    ...en.target,
-    max10,
-    step: stepFor(ex || { name, step: null }),
-  };
+  const plan = en.plan || en.target;  // Ziel laut Plan (ohne Deload-/Intro-Anpassung)
   en.name = name;
   en.replacedFrom = nameKey(name) === nameKey(original) ? null : original;
-  en.sets = buildSets(name, en.target);
-  en.note = null;
+  setupEntry(en, { sets: plan.sets, reps: plan.reps, rir: plan.rir, max10, step: stepFor(ex || { name, step: null }) });
 }
 
 function saveTraining() {
@@ -593,8 +824,8 @@ function saveTraining() {
     return;
   }
 
-  // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren
-  for (const en of entries) {
+  // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren (nicht in der Deload-Woche)
+  for (const en of draft.deload ? [] : entries) {
     const first = en.sets[0];
     if (!en.target || first.weight == null || first.reps == null || first.rir == null) continue;
     const t = { step: 2.5, ...en.target };
@@ -607,6 +838,8 @@ function saveTraining() {
   }
 
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
+  if (draft.deload) session.deload = true;
+  if (draft.cycleStart) Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
   data.sessions.push(session);
   saveData();
   draft = null;
@@ -650,7 +883,10 @@ function importData(file) {
       return;
     }
     if (!confirm(`Sicherung mit ${d.days.length} Trainingstagen und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
-    data = upgradeData({ app: 'trainingsapp', version: 1, days: d.days, sessions: d.sessions, bodyweight: d.bodyweight });
+    data = upgradeData({
+      app: 'trainingsapp', version: 1,
+      days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle,
+    });
     saveData();
     toast('Sicherung importiert ✔');
     go('start');
@@ -817,6 +1053,16 @@ const actions = {
   },
   'ex-up': el => { moveExercise(findDay(current.params.id), +el.dataset.i, -1); saveData(); render(); },
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
+  'cycle-weeks': el => {
+    data.cycle.buildWeeks = Math.min(6, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
+    saveData(); render();
+  },
+  'cycle-restart': () => {
+    if (!confirm('Neuen Zyklus ab dieser Woche beginnen? Diese Woche wird dann Aufbauwoche 1.')) return;
+    data.cycle.start = mondayISO(new Date());
+    saveData(); render();
+    toast('Neuer Zyklus gestartet');
+  },
   'set-step': el => {
     findDay(current.params.id).exercises[el.dataset.i].step = Number(el.dataset.v);
     saveData(); render();
@@ -856,6 +1102,11 @@ const fields = {
     showSuggestions(el);
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
+  'cycle-start': el => {
+    if (!el.value) return;
+    data.cycle.start = mondayISO(el.value + 'T12:00:00');  // immer auf den Montag dieser Woche
+    saveData(); render();
+  },
   'tr-weight': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.weight = el.value;
