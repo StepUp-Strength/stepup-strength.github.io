@@ -10,17 +10,33 @@ let draft = loadDraft();          // laufendes, noch nicht gespeichertes Trainin
 let current = { view: 'start', params: {} };
 
 function emptyData() {
-  return { app: 'trainingsapp', version: 1, days: [], sessions: [] };
+  return { app: 'trainingsapp', version: 1, days: [], sessions: [], bodyweight: [] };
 }
 
 function isValidData(d) {
   return d && Array.isArray(d.days) && Array.isArray(d.sessions);
 }
 
+// Fehlende Felder ergänzen (z. B. bei Daten aus einer älteren App-Version)
+function withDefaults(ex) {
+  if (ex.sets == null) ex.sets = 3;
+  if (ex.reps == null) ex.reps = 10;      // Ziel-Wiederholungen pro Satz
+  if (ex.rir == null) ex.rir = 2;         // Ziel: Wiederholungen im Tank
+  if (ex.max10 === undefined) ex.max10 = null;  // max. kg bei 10 Wdh.
+  if (ex.step === undefined) ex.step = null;    // Steigerung in kg, null = automatisch
+  return ex;
+}
+
+function upgradeData(d) {
+  d.days.forEach(day => day.exercises.forEach(withDefaults));
+  if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
+  return d;
+}
+
 function loadData() {
   try {
     const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (isValidData(d)) return d;
+    if (isValidData(d)) return upgradeData(d);
   } catch (e) { /* leer oder defekt -> neu anfangen */ }
   return emptyData();
 }
@@ -74,13 +90,15 @@ function fmtDate(iso, long) {
 }
 
 function fmtSet(s) {
-  if (s.weight == null) return `${s.reps} Wdh.`;
+  const tank = s.rir != null ? ` · Tank ${s.rir}` : '';
+  if (s.weight == null) return `${s.reps} Wdh.${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
-  return `${fmtNum(s.weight)} kg × ${s.reps}`;
+  return `${fmtNum(s.weight)} kg × ${s.reps}${tank}`;
 }
 
 function sessionsNewestFirst() {
-  return [...data.sessions].sort((a, b) => b.date.localeCompare(a.date));
+  // reverse() zuerst, damit bei gleicher Uhrzeit das zuletzt gespeicherte vorne steht
+  return [...data.sessions].reverse().sort((a, b) => b.date.localeCompare(a.date));
 }
 
 // Letzter Eintrag einer Übung (über alle Trainingstage, per Name)
@@ -88,7 +106,7 @@ function lastEntry(name) {
   const k = nameKey(name);
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets };
+    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets, result: e.result };
   }
   return null;
 }
@@ -98,6 +116,121 @@ function toast(msg) {
   $toast.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { $toast.hidden = true; }, 2200);
+}
+
+/* ---------- Progression ---------- */
+
+// Faustregel: 1 Wdh. mehr oder weniger bis zum Versagen ≈ 2,5 % Gewicht.
+// repFactor(n) = Anteil vom „Max. bei 10 Wdh.“, mit dem man n Wdh. bis zum Versagen schafft.
+const repFactor = n => Math.max(0.5, 1 - 0.025 * (n - 10));
+
+const DUMBBELL = /kurzhantel|konzentrationscurls|arnold press|goblet/;
+const stepFor = ex => ex.step != null ? ex.step : (DUMBBELL.test(norm(ex.name)) ? 2 : 2.5);
+
+const round2 = x => Math.round(x * 100) / 100;
+const roundTo = (w, step, fn = Math.round) => round2(fn(w / step) * step);
+
+// Startgewicht aus „Max. bei 10 Wdh.“ und den Zielvorgaben
+function targetWeight(t) {
+  if (t.max10 == null) return null;
+  return roundTo(t.max10 * repFactor(t.reps + t.rir), t.step);
+}
+
+// Nach einem Satz: Abweichung vom Ziel (in Wdh.) und passendes Gewicht für den nächsten Satz
+function adjustAfterSet(weight, reps, rir, t) {
+  const diff = (reps + rir) - (t.reps + t.rir);
+  const raw = Math.min(weight * 1.05, Math.max(weight * 0.9,
+    weight * repFactor(t.reps + t.rir) / repFactor(reps + rir)));
+  let w = roundTo(raw, t.step);
+  if (w > weight * 1.05) w = roundTo(raw, t.step, Math.floor);
+  return { diff, weight: w };
+}
+
+// Nach dem Training: Gewicht fürs nächste Mal, gemessen am ersten Satz
+function progression(first, t, prev) {
+  const rir = first.rir != null ? first.rir : t.rir;
+  const { diff, weight } = adjustAfterSet(first.weight, first.reps, rir, t);
+  const prevMissed = prev && prev.result && prev.result.diff < 0 && !prev.result.deload;
+  let next, deload = false;
+  if (diff >= 1) next = Math.max(weight, first.weight + t.step);     // klar übertroffen
+  else if (diff >= 0) next = first.weight + t.step;                  // genau erreicht
+  else if (prevMissed) { next = roundTo(first.weight * 0.95, t.step, Math.floor); deload = true; }
+  else next = first.weight;                                          // verfehlt: halten
+  return { diff, next: round2(next), deload };
+}
+
+function resultText(r) {
+  if (r.diff >= 1) return 'Ziel übertroffen → steigern';
+  if (r.diff >= 0) return 'Ziel erreicht → kleiner Schritt hoch';
+  if (r.deload) return 'Zweimal verfehlt → Gewicht reduziert';
+  return 'Ziel verfehlt → Gewicht halten';
+}
+
+// Pro Satz wird man schwächer: so viele Wdh. kostet die Ermüdung von Satz zu Satz
+const FATIGUE = 1;
+
+// Wdh. bis zum Versagen bei anderem Gewicht (falls man das Gewicht im Folgesatz ändert)
+function capacityAt(cap, weight, newWeight) {
+  if (!weight || !newWeight || weight === newWeight) return cap;
+  const f = repFactor(cap) * newWeight / weight;
+  return 10 + (1 - f) / 0.025;
+}
+
+const isDone = s => parseNum(s.reps) != null && parseNum(s.rir) != null;
+
+// Weniger Wdh. als das wird nie vorgeschlagen – stattdessen geht das Gewicht runter
+const MIN_REPS = 5;
+
+// Vorschlag für einen Satz, k Sätze nach einem Satz mit cap Wdh. bis zum Versagen bei Gewicht w.
+// Ohne festes Gewicht wird in Steigerungsschritten reduziert, bis mindestens MIN_REPS Wdh. passen.
+function planSet(cap, w, t, k, fixedWeight) {
+  const repsAt = wt => Math.floor(capacityAt(cap, w, wt) - t.rir - FATIGUE * k + 1e-9);
+  if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(1, repsAt(fixedWeight)) };
+  if (w == null) return { weight: null, reps: Math.max(1, repsAt(null)) };  // ohne Gewicht
+  let wt = w;
+  while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
+  return { weight: wt, reps: Math.max(1, repsAt(wt)) };
+}
+
+function setInput(field, ei, j, value) {
+  const input = $view.querySelector(`[data-field="${field}"][data-ei="${ei}"][data-si="${j}"]`);
+  if (!input) return;
+  input.value = value;
+  input.classList.remove('flash');
+  void input.offsetWidth;
+  input.classList.add('flash');
+}
+
+// Im Training: Wdh. der offenen Sätze aus dem letzten erledigten Satz ableiten.
+// Wdh. nächster Satz = (Wdh. + Tank) − Ziel-Tank − Ermüdung; jeder weitere Satz noch 1 weniger.
+function recalcSets(ei) {
+  const en = draft.entries[ei];
+  const t = en.target;
+  if (!t) return;
+  let last = -1;
+  en.sets.forEach((s, i) => { if (isDone(s)) last = i; });
+  if (last < 0 || last === en.sets.length - 1) return;
+
+  const done = en.sets[last];
+  const cap = parseNum(done.reps) + parseNum(done.rir);
+  const w = parseNum(done.weight);
+  const tt = { step: 2.5, ...t };
+  let first = null;
+  for (let j = last + 1; j < en.sets.length; j++) {
+    const s = en.sets[j];
+    if (!s.auto) continue;  // Wdh. selbst geändert -> Satz nicht mehr anfassen
+    const p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null);
+    if (!first) first = p;
+    const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
+    if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
+    if (String(p.reps) !== s.reps) { s.reps = String(p.reps); setInput('tr-reps', ei, j, s.reps); }
+  }
+  if (!first) return;
+  en.note = `Satz ${last + 1}: ${cap} Wdh. bis zum Versagen → Satz ${last + 2}: ` +
+    (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
+    `(${t.rir} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`;
+  const note = $view.querySelector(`[data-note="${ei}"]`);
+  if (note) { note.textContent = en.note; note.hidden = false; }
 }
 
 /* ---------- Bildschirme ---------- */
@@ -127,6 +260,7 @@ function render() {
     b.classList.toggle('active', b.dataset.tab === v.tab);
   });
   $view.innerHTML = v.render(current.params);
+  if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
 }
 
 function renderStart() {
@@ -155,20 +289,35 @@ function renderStart() {
 
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
-  let h = `<p class="sub">${fmtDate(draft.date, true)}<br>Vorausgefüllt mit deinen Werten vom letzten Mal. Leere Felder werden nicht gespeichert.</p>`;
+  let h = `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
-    h += `<section class="card"><h2>${esc(en.name)}</h2>`;
+    h += `<section class="card">
+      <div class="ex-head">
+        <h2>${esc(en.name)}</h2>
+        <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
+      </div>`;
+    if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
+    if (en.replacing) h += renderReplace(en, ei);
+    if (en.target) {
+      const t = en.target;
+      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank` +
+        (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
+    }
     h += last
       ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
       : '<p class="last">Erstes Mal – noch keine Werte.</p>';
-    h += '<div class="setgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span>';
+    h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
+    h += '<div class="setgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
+    const tankHint = en.target ? en.target.rir : '–';
     en.sets.forEach((s, si) => {
       h += `<span class="setno">${si + 1}</span>
         <input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
-          data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">`;
+          data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="${tankHint}"
+          class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`;
     });
     h += `</div>
       <div class="row">
@@ -182,6 +331,26 @@ function renderTraining() {
   return h;
 }
 
+function renderReplace(en, ei) {
+  const t = en.target;
+  return `<div class="replace">
+    <p class="lbl">Ersatzübung</p>
+    <input class="inp" type="text" data-field="rep-name" data-ei="${ei}"
+      autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
+    <div class="suggest" hidden></div>
+    <label class="row">
+      <span>Max. kg bei 10 Wdh.</span>
+      <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
+        data-field="rep-max" data-ei="${ei}" placeholder="kg">
+    </label>
+    ${t ? `<p class="hint">Übernimmt das Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank. Der Plan bleibt unverändert.</p>` : ''}
+    <div class="row">
+      <button class="btn" data-action="rep-cancel" data-ei="${ei}">Abbrechen</button>
+      <button class="btn primary" data-action="rep-ok" data-ei="${ei}">Ersetzen</button>
+    </div>
+  </div>`;
+}
+
 function renderPlan() {
   let h = '';
   if (!data.days.length) {
@@ -192,8 +361,26 @@ function renderPlan() {
     h += `<button class="btn" data-action="open-day" data-id="${day.id}">
       ${esc(day.name)}<small>${names ? esc(names) : 'Noch keine Übungen'}</small></button>`;
   }
-  h += '<button class="btn primary" data-action="add-day">+ Trainingstag hinzufügen</button>';
+  h += '<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>';
+  if (data.days.length) {
+    h += `<p class="hint">Dein Plan ist gespeichert. Tippe einen Tag an, um ihn zu bearbeiten.</p>
+      <button class="btn primary" data-action="tab" data-tab="start">Zum Training →</button>`;
+  }
   return h;
+}
+
+// Grenzen für die Plus/Minus-Felder einer Übung
+const LIMITS = { sets: [1, 20], reps: [5, 50], rir: [0, 10] };
+
+function stepperRow(label, prop, i, value) {
+  return `<div class="row">
+    <span>${label}</span>
+    <div class="stepper">
+      <button data-action="step" data-prop="${prop}" data-delta="-1" data-i="${i}" aria-label="${label} weniger">−</button>
+      <b>${value}</b>
+      <button data-action="step" data-prop="${prop}" data-delta="1" data-i="${i}" aria-label="${label} mehr">+</button>
+    </div>
+  </div>`;
 }
 
 function renderDay({ id }) {
@@ -206,13 +393,23 @@ function renderDay({ id }) {
   day.exercises.forEach((ex, i) => {
     h += `<div class="card">
       <input class="inp" type="text" data-field="ex-name" data-i="${i}"
-        value="${esc(ex.name)}" placeholder="z. B. Bankdrücken">
+        autocomplete="off" autocorrect="off" spellcheck="false"
+        value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
+      <div class="suggest" hidden></div>
+      ${stepperRow('Sätze', 'sets', i, ex.sets)}
+      ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
+      ${stepperRow('Ziel im Tank (RIR)', 'rir', i, ex.rir)}
+      <label class="row">
+        <span>Max. kg bei 10 Wdh.</span>
+        <input class="inp kg ${ex.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal"
+          autocomplete="off" data-field="ex-max" data-i="${i}" placeholder="kg"
+          value="${ex.max10 == null ? '' : fmtNum(ex.max10)}">
+      </label>
       <div class="row">
-        <span>Sätze</span>
+        <span>Steigerung${ex.step == null ? ' <small class="hint">(auto)</small>' : ''}</span>
         <div class="stepper">
-          <button data-action="sets-minus" data-i="${i}" aria-label="Weniger Sätze">−</button>
-          <b>${ex.sets}</b>
-          <button data-action="sets-plus" data-i="${i}" aria-label="Mehr Sätze">+</button>
+          ${[2, 2.5].map(v => `<button class="toggle ${stepFor(ex) === v ? 'on' : ''}"
+            data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
         </div>
       </div>
       <div class="row">
@@ -222,7 +419,9 @@ function renderDay({ id }) {
       </div>
     </div>`;
   });
-  h += `<button class="btn primary" data-action="add-ex">+ Übung hinzufügen</button>
+  h += `<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
+    <button class="btn primary" data-action="day-done">✔ Fertig</button>
+    <p class="hint">Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – antippen zum Ändern.</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
   return h;
@@ -282,8 +481,12 @@ function renderSession({ id }) {
   if (!s) return '<p class="hint">Training nicht gefunden.</p>';
   let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}</p><ul class="list">`;
   for (const e of s.entries) {
-    h += `<li><div class="date">${esc(e.name)}</div>
-      <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div></li>`;
+    const res = e.result
+      ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
+      : '';
+    const instead = e.replacedFrom ? ` <small>statt ${esc(e.replacedFrom)}</small>` : '';
+    h += `<li><div class="date">${esc(e.name)}${instead}</div>
+      <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div>${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
@@ -316,28 +519,71 @@ function startDay(id) {
     dayName: day.name,
     date: new Date().toISOString(),
     entries: exercises.map(ex => {
-      const last = lastEntry(ex.name);
-      const sets = [];
-      for (let i = 0; i < ex.sets; i++) {
-        const ls = last && (last.sets[i] || last.sets[last.sets.length - 1]);
-        sets.push({
-          weight: ls && ls.weight != null ? fmtNum(ls.weight) : '',
-          reps: ls && ls.reps != null ? String(ls.reps) : '',
-        });
-      }
-      return { name: ex.name.trim(), sets };
+      const target = { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) };
+      return { name: ex.name.trim(), target, sets: buildSets(ex.name, target) };
     }),
   };
   saveDraft();
   go('training');
 }
 
+// Vorgeschlagene Sätze für den Trainingsstart
+function buildSets(name, target) {
+  // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
+  const last = lastEntry(name);
+  const tw = targetWeight(target);
+  const sets = [];
+  for (let i = 0; i < target.sets; i++) {
+    const ls = last && (last.sets[i] || last.sets[last.sets.length - 1]);
+    const w = tw != null ? tw : (ls && ls.weight != null ? ls.weight : null);
+    // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. MIN_REPS
+    const p = i === 0 ? { weight: w, reps: target.reps } : planSet(target.reps + target.rir, w, target, i);
+    sets.push({ weight: p.weight != null ? fmtNum(p.weight) : '', reps: String(p.reps), rir: '', auto: true });
+  }
+  return sets;
+}
+
+const planExercise = name => {
+  for (const d of data.days) {
+    const ex = d.exercises.find(e => nameKey(e.name) === nameKey(name));
+    if (ex) return ex;
+  }
+  return null;
+};
+
+// Bekanntes „Max. bei 10 Wdh.“: aus dem Plan, sonst aus dem letzten Training dieser Übung
+function knownMax10(name) {
+  const ex = planExercise(name);
+  if (ex && ex.max10 != null) return ex.max10;
+  const last = lastEntry(name);
+  return last && last.result && last.result.max10 != null ? last.result.max10 : null;
+}
+
+// Übung im laufenden Training gegen eine andere tauschen (Plan bleibt unverändert)
+function replaceExercise(en, name, max10) {
+  const original = en.replacedFrom || en.name;
+  const ex = planExercise(name);
+  en.target = {
+    ...en.target,
+    max10,
+    step: stepFor(ex || { name, step: null }),
+  };
+  en.name = name;
+  en.replacedFrom = nameKey(name) === nameKey(original) ? null : original;
+  en.sets = buildSets(name, en.target);
+  en.note = null;
+}
+
 function saveTraining() {
   const entries = draft.entries
     .map(en => ({
       name: en.name,
+      ...(en.replacedFrom ? { replacedFrom: en.replacedFrom } : {}),
+      target: en.target,
+      // Nur Sätze, die man angefasst hat – unveränderte Vorschläge zählen nicht als erledigt
       sets: en.sets
-        .map(s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps) }))
+        .filter(s => s.touched)
+        .map(s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir) }))
         .filter(s => s.weight != null || s.reps != null),
     }))
     .filter(en => en.sets.length);
@@ -346,18 +592,27 @@ function saveTraining() {
     alert('Es ist noch nichts eingetragen.');
     return;
   }
-  data.sessions.push({
-    id: uid(),
-    dayId: draft.dayId,
-    dayName: draft.dayName,
-    date: draft.date,
-    entries,
-  });
+
+  // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren
+  for (const en of entries) {
+    const first = en.sets[0];
+    if (!en.target || first.weight == null || first.reps == null || first.rir == null) continue;
+    const t = { step: 2.5, ...en.target };
+    en.result = progression(first, t, lastEntry(en.name));
+    const max10 = Math.round(en.result.next / repFactor(t.reps + t.rir) * 10) / 10;
+    en.result.max10 = max10;  // auch für Ersatzübungen, die nicht im Plan stehen
+    for (const day of data.days) {
+      for (const ex of day.exercises) if (nameKey(ex.name) === nameKey(en.name)) ex.max10 = max10;
+    }
+  }
+
+  const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
+  data.sessions.push(session);
   saveData();
   draft = null;
   saveDraft();
   toast('Training gespeichert ✔');
-  go('start');
+  go('session', { id: session.id });
 }
 
 async function exportData() {
@@ -395,12 +650,63 @@ function importData(file) {
       return;
     }
     if (!confirm(`Sicherung mit ${d.days.length} Trainingstagen und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
-    data = { app: 'trainingsapp', version: 1, days: d.days, sessions: d.sessions };
+    data = upgradeData({ app: 'trainingsapp', version: 1, days: d.days, sessions: d.sessions, bodyweight: d.bodyweight });
     saveData();
     toast('Sicherung importiert ✔');
     go('start');
   };
   reader.readAsText(file);
+}
+
+/* ---------- Übungs-Vorschläge ---------- */
+
+// Kleinbuchstaben ohne Umlaute, damit „drucken“ auch „drücken“ findet
+const norm = s => String(s).toLowerCase()
+  .replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ß/g, 'ss');
+
+function ownExerciseNames() {
+  const names = data.days.flatMap(d => d.exercises.map(e => e.name));
+  for (const s of data.sessions) for (const e of s.entries) names.push(e.name);
+  return names.map(n => n.trim()).filter(Boolean);
+}
+
+function suggestions(query, pool) {
+  const q = norm(query).trim();
+  if (!q) return [];
+  const qWords = q.split(/[^a-z0-9]+/).filter(Boolean);
+  const own = new Set(ownExerciseNames().map(nameKey));
+
+  const seen = new Set();
+  const hits = [];
+  for (const name of pool || [...ownExerciseNames(), ...EXERCISES]) {
+    const k = nameKey(name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const n = norm(name);
+    if (n === q) continue;
+    const words = n.split(/[^a-z0-9]+/);
+    // Jedes eingetippte Wort muss ein Wortanfang sein (ab 3 Buchstaben auch Wortteil)
+    const match = qWords.every(qw => words.some(w => w.startsWith(qw)) || (qw.length >= 3 && n.includes(qw)));
+    if (match) hits.push({ name, own: own.has(k), start: n.startsWith(q) });
+  }
+  hits.sort((a, b) => (b.own - a.own) || (b.start - a.start) || a.name.localeCompare(b.name, 'de'));
+  return hits.slice(0, 12);
+}
+
+function showSuggestions(input, pool) {
+  const box = input.nextElementSibling;
+  const list = suggestions(input.value, pool);
+  box.innerHTML = list.map(s => `<button type="button" data-action="pick"
+    data-name="${esc(s.name)}">${esc(s.name)}${s.own ? ' <small>★</small>' : ''}</button>`).join('');
+  box.hidden = !list.length;
+}
+
+// Beim Ersetzen: bekanntes Max.-Gewicht der gewählten Übung eintragen
+function fillReplaceMax(input) {
+  const maxInput = input.closest('.replace').querySelector('[data-field="rep-max"]');
+  const m = knownMax10(input.value);
+  maxInput.value = m != null ? fmtNum(m) : '';
+  maxInput.classList.toggle('missing', m == null);
 }
 
 function moveExercise(day, i, dir) {
@@ -418,7 +724,15 @@ const actions = {
   'tr-add-set': el => {
     const sets = draft.entries[el.dataset.ei].sets;
     const prev = sets[sets.length - 1];
-    sets.push(prev ? { ...prev } : { weight: '', reps: '' });
+    const t = draft.entries[el.dataset.ei].target;
+    const prevReps = prev ? parseNum(prev.reps) : null;
+    sets.push({
+      weight: prev ? prev.weight : '',
+      reps: prevReps != null ? String(Math.max(1, prevReps - FATIGUE)) : (t ? String(t.reps) : ''),
+      rir: '',
+      auto: true,
+    });
+    recalcSets(+el.dataset.ei);
     saveDraft(); render();
   },
   'tr-del-set': el => {
@@ -439,6 +753,15 @@ const actions = {
     go('day', { id: day.id });
   },
   'open-day': el => go('day', { id: el.dataset.id }),
+  'day-done': () => {
+    const missing = findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null);
+    if (missing.length && !confirm(
+      `Bei ${missing.length === 1 ? '1 Übung' : missing.length + ' Übungen'} fehlt noch „Max. kg bei 10 Wdh.“:\n\n` +
+      missing.map(e => '• ' + e.name.trim()).join('\n') +
+      '\n\nTrotzdem fertig? (Bei Übungen ohne Gewicht, z. B. Klimmzüge, einfach leer lassen.)'
+    )) return;
+    toast('Trainingstag gespeichert ✔'); go('plan');
+  },
   'del-day': () => {
     const day = findDay(current.params.id);
     if (!confirm(`„${day.name}“ löschen? Bereits gespeicherte Trainings bleiben im Verlauf.`)) return;
@@ -446,10 +769,44 @@ const actions = {
     saveData(); go('plan');
   },
   'add-ex': () => {
-    findDay(current.params.id).exercises.push({ id: uid(), name: '', sets: 3 });
+    findDay(current.params.id).exercises.push(withDefaults({ id: uid(), name: '' }));
     saveData(); render();
     const inputs = $view.querySelectorAll('[data-field="ex-name"]');
     inputs[inputs.length - 1].focus();
+  },
+  pick: el => {
+    const box = el.closest('.suggest');
+    const input = box.previousElementSibling;
+    input.value = el.dataset.name;
+    box.hidden = true;
+    input.blur();
+    if (input.dataset.field === 'ex-name') {
+      findDay(current.params.id).exercises[input.dataset.i].name = el.dataset.name;
+      saveData();
+    } else if (input.dataset.field === 'chart-name') {
+      showChartFor(el.dataset.name);
+    } else {
+      fillReplaceMax(input);
+    }
+  },
+
+  'rep-open': el => {
+    draft.entries.forEach((en, i) => { en.replacing = i === +el.dataset.ei && !en.replacing; });
+    render();
+    const input = $view.querySelector(`[data-field="rep-name"][data-ei="${el.dataset.ei}"]`);
+    if (input) input.focus();
+  },
+  'rep-cancel': el => { draft.entries[el.dataset.ei].replacing = false; render(); },
+  'rep-ok': el => {
+    const en = draft.entries[el.dataset.ei];
+    const panel = el.closest('.replace');
+    const name = panel.querySelector('[data-field="rep-name"]').value.trim();
+    if (!name) { alert('Bitte eine Ersatzübung eingeben.'); return; }
+    if (en.sets.some(s => s.touched) && !confirm('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem ersetzen?')) return;
+    replaceExercise(en, name, parseNum(panel.querySelector('[data-field="rep-max"]').value));
+    en.replacing = false;
+    saveDraft(); render();
+    toast(`Ersetzt durch ${name}`);
   },
   'ex-del': el => {
     const day = findDay(current.params.id);
@@ -460,14 +817,15 @@ const actions = {
   },
   'ex-up': el => { moveExercise(findDay(current.params.id), +el.dataset.i, -1); saveData(); render(); },
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
-  'sets-minus': el => {
-    const ex = findDay(current.params.id).exercises[el.dataset.i];
-    ex.sets = Math.max(1, ex.sets - 1);
+  'set-step': el => {
+    findDay(current.params.id).exercises[el.dataset.i].step = Number(el.dataset.v);
     saveData(); render();
   },
-  'sets-plus': el => {
+  step: el => {
     const ex = findDay(current.params.id).exercises[el.dataset.i];
-    ex.sets = Math.min(20, ex.sets + 1);
+    const prop = el.dataset.prop;
+    const [min, max] = LIMITS[prop];
+    ex[prop] = Math.min(max, Math.max(min, ex[prop] + Number(el.dataset.delta)));
     saveData(); render();
   },
 
@@ -486,9 +844,41 @@ const actions = {
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)
 const fields = {
   'day-name': el => { findDay(current.params.id).name = el.value; saveData(); },
-  'ex-name': el => { findDay(current.params.id).exercises[el.dataset.i].name = el.value; saveData(); },
-  'tr-weight': el => { draft.entries[el.dataset.ei].sets[el.dataset.si].weight = el.value; saveDraft(); },
-  'tr-reps': el => { draft.entries[el.dataset.ei].sets[el.dataset.si].reps = el.value; saveDraft(); },
+  'ex-max': el => {
+    const ex = findDay(current.params.id).exercises[el.dataset.i];
+    ex.max10 = parseNum(el.value);
+    el.classList.toggle('missing', ex.max10 == null);
+    saveData();
+  },
+  'ex-name': el => {
+    findDay(current.params.id).exercises[el.dataset.i].name = el.value;
+    saveData();
+    showSuggestions(el);
+  },
+  'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
+  'tr-weight': el => {
+    const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    s.weight = el.value;
+    s.manualWeight = true;  // selbst gewähltes Gewicht -> nur noch Wdh. anpassen
+    s.touched = true;
+    recalcSets(+el.dataset.ei);
+    saveDraft();
+  },
+  'tr-reps': el => {
+    const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    s.reps = el.value;
+    s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
+    s.touched = true;
+    recalcSets(+el.dataset.ei);
+    saveDraft();
+  },
+  'tr-rir': el => {
+    const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    s.rir = el.value;
+    s.touched = true;
+    recalcSets(+el.dataset.ei);
+    saveDraft();
+  },
 };
 
 document.addEventListener('click', e => {
@@ -505,6 +895,20 @@ document.addEventListener('change', e => {
   if (e.target.id === 'import-file' && e.target.files[0]) {
     importData(e.target.files[0]);
     e.target.value = '';
+  }
+});
+
+// Vorschlag antippen, ohne dass das Eingabefeld vorher den Fokus verliert
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('.suggest')) e.preventDefault();
+});
+
+// Vorschläge schließen, wenn man das Feld verlässt
+document.addEventListener('focusout', e => {
+  const f = e.target.dataset && e.target.dataset.field;
+  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name') {
+    const box = e.target.nextElementSibling;
+    setTimeout(() => { box.hidden = true; }, 200);
   }
 });
 

@@ -94,9 +94,9 @@ nav button {
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 15px;
+  font-size: 13px;
 }
-nav button span { font-size: 26px; line-height: 1.1; }
+nav button span { font-size: 24px; line-height: 1.1; }
 nav button.active { color: var(--accent); font-weight: 600; }
 
 /* Buttons */
@@ -163,6 +163,43 @@ input:focus { outline: none; border-color: var(--accent); }
 .lbl { display: block; margin-bottom: 16px; font-size: 17px; color: var(--muted); }
 .lbl .inp { margin-top: 6px; color: var(--text); }
 
+/* Übung ersetzen */
+.ex-head { display: flex; align-items: flex-start; gap: 10px; }
+.ex-head h2 { flex: 1; }
+.icon-btn.swap { min-width: 0; height: 44px; font-size: 16px; white-space: nowrap; }
+.replace {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 2px solid var(--accent);
+  border-radius: 14px;
+}
+.replace .lbl { margin: 0 0 6px; }
+
+/* Übungs-Vorschläge */
+.suggest {
+  max-height: 360px;
+  margin-top: 6px;
+  overflow-y: auto;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+}
+.suggest button {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  font-size: 19px;
+  text-align: left;
+}
+.suggest button:last-child { border-bottom: 0; }
+.suggest button:active { background: var(--bg); }
+.suggest small { color: var(--accent); }
+
 .row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .row > .btn { flex: 1; margin: 0; text-align: center; }
 
@@ -183,16 +220,32 @@ input:focus { outline: none; border-color: var(--accent); }
 .icon-btn.danger { color: var(--danger); font-size: 19px; margin-left: auto; }
 
 /* Training eintragen */
+.inp.kg { width: 120px; margin-left: auto; text-align: center; font-weight: 600; }
+.inp.missing { border-color: #e8a317; }
+.target { margin: -4px 0 6px; font-size: 19px; font-weight: 600; color: var(--accent); }
+.target small { font-size: 16px; font-weight: 400; color: var(--muted); }
 .last { margin: -4px 0 12px; font-size: 17px; color: var(--muted); }
 .setgrid {
   display: grid;
-  grid-template-columns: 34px 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: 24px 1.35fr 1fr 1fr;
+  gap: 8px;
   align-items: center;
 }
 .setgrid .head { font-size: 16px; color: var(--muted); text-align: center; }
 .setno { font-size: 20px; color: var(--muted); text-align: center; }
-.setgrid input { text-align: center; font-size: 26px; font-weight: 600; }
+.setgrid input { min-width: 0; padding: 12px 4px; text-align: center; font-size: 24px; font-weight: 600; }
+.setgrid input.tank { border-style: dashed; }
+.setgrid input.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: #ffe08a; color: #111; } }
+.adjust { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--bg); font-size: 17px; }
+.result { margin-top: 8px; font-size: 17px; color: var(--accent); }
+
+.toggle {
+  min-width: 0 !important;
+  font-size: 18px !important;
+  color: var(--muted) !important;
+}
+.toggle.on { background: var(--accent) !important; color: #fff !important; }
 
 /* Listen im Verlauf */
 .list { margin: 0 0 16px; padding: 0; list-style: none; }
@@ -200,6 +253,87 @@ input:focus { outline: none; border-color: var(--accent); }
 .list .date { font-weight: 600; }
 .list .date small { font-weight: 400; color: var(--muted); }
 .list .sets { margin-top: 4px; font-size: 21px; }
+
+/* Diagramme */
+.seg { display: flex; gap: 4px; margin: 0 0 14px; padding: 4px; border-radius: 14px; background: var(--card); }
+.seg button {
+  flex: 1;
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+}
+.seg button.on { background: var(--accent); color: #fff; }
+.seg.small { margin-top: 12px; }
+.seg.small button { min-height: 42px; font-size: 16px; }
+.chips-title { margin: 16px 0 8px; }
+
+.range { display: flex; align-items: center; gap: 4px; margin: 14px 0 4px; }
+.range .chip {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+.range .chip.on { background: var(--accent); color: #fff; }
+.range .icon-btn { min-width: 40px; height: 44px; padding: 0; background: var(--card); }
+.range .icon-btn:disabled { opacity: .3; }
+.span { margin: 0 0 8px; font-size: 15px; color: var(--muted); text-align: center; }
+
+.chart-area { position: relative; min-height: 120px; margin: 0 0 12px; padding: 6px 0; border-radius: 16px; background: var(--card); }
+.chart-empty { margin: 0; padding: 40px 16px; text-align: center; }
+.chart-note { position: absolute; left: 50px; right: 16px; top: 40%; margin: 0; font-size: 15px; color: var(--muted); text-align: center; }
+.chart-svg {
+  display: block;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.c-grid { stroke: var(--line); stroke-width: 1; }
+.c-text { fill: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.c-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.c-area { fill: var(--accent); opacity: .1; }
+.c-dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.c-cross { stroke: var(--muted); stroke-width: 1; }
+
+.tip {
+  position: absolute;
+  z-index: 2;
+  max-width: 230px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+  font-size: 15px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.tip strong { display: block; font-size: 22px; }
+.tip .muted { color: var(--muted); }
+.tip-sets { margin: 4px 0; white-space: pre-line; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 12px; }
+.stat { min-width: 0; padding: 10px 12px; border-radius: 14px; background: var(--card); }
+.stat span { display: block; font-size: 14px; color: var(--muted); }
+.stat b { display: block; font-size: 19px; }
+.stat small { font-size: 14px; color: var(--muted); }
+
+.bw-row { display: flex; align-items: center; gap: 12px; padding-block: 8px !important; }
+.bw-row b { margin-left: auto; }
+.bw-row .icon-btn { min-width: 48px; height: 48px; margin-left: 0; }
+.inp.date { width: auto; margin-left: auto; }
 
 /* Hinweis-Meldung */
 #toast {
