@@ -26,7 +26,7 @@ function historyNames() {
 
 // Erfolge sind Serien mit Stufen: Nach jeder erreichten Stufe kommt die nächste – endlos, wenn step gesetzt ist.
 // def: { id, cat, goals, step, names, icons, name(g), desc(g), value(ctx), fmt(v) }
-const AWARD_CATS = ['Trainings', 'Tonnage', 'Kraft', 'Übungen'];
+const AWARD_CATS = ['Trainings', 'Tonnage', 'Kraft', 'Übungen', 'Schritte'];
 
 const goalAt = (def, i) => i < def.goals.length ? def.goals[i]
   : def.step ? def.goals[def.goals.length - 1] + def.step * (i - def.goals.length + 1) : null;
@@ -165,9 +165,69 @@ function streakEnding(weeks, w) {
   return n;
 }
 
-// Alle Erfolge chronologisch aus dem Verlauf nachrechnen.
-// Ergebnis: done = freigeschaltete Stufen (mit Datum), next = jeweils nächste Stufe jeder Serie (mit Fortschritt)
+// Schritt-Erfolge (aus Diagramme → Schritte bzw. Apple Health)
+const STEP_SERIES = [
+  { id: 'steps-day', cat: 'Schritte', goals: [5000, 7500, 10000, 12500, 15000, 20000, 25000, 30000], step: 5000,
+    names: ['Spaziergänger', 'Flotter Geher', 'Zehntausender', 'Wandersmann', 'Marschierer', 'Halbmarathon zu Fuß', 'Langstreckler', 'Ultra-Geher'],
+    icons: ['🚶', '👞', '👟', '🥾', '🎒', '🏞️', '🗺️', '🦶'],
+    name: g => `${deNum(g)} Schritte`, desc: g => `${deNum(g)} Schritte an einem Tag`,
+    value: c => c.maxDay, fmt: v => deNum(v) },
+  { id: 'steps-total', cat: 'Schritte', goals: [100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000], step: 5000000,
+    names: ['Hunderttausend', 'Viertelmillion', 'Halbe Million', 'Schritt-Millionär', 'Weltenbummler', 'Fünf Millionen', 'Zehn Millionen'],
+    icons: ['📍', '🧭', '🗺️', '💰', '🌍', '🚀', '🌌'],
+    name: g => `${deNum(g)} Schritte gesamt`, desc: g => `${deNum(g)} Schritte insgesamt`,
+    value: c => c.total, fmt: v => deNum(v) },
+  { id: 'steps-10k-days', cat: 'Schritte', goals: [1, 7, 30, 100, 365], step: 365,
+    names: ['Erster 10.000er-Tag', 'Eine Woche voll', 'Ein Monat voll', 'Hundert starke Tage', 'Ein Jahr voll'], icons: ['✅'],
+    name: g => `${deNum(g)} Tage mit 10.000`, desc: g => g === 1 ? 'Ein Tag mit mindestens 10.000 Schritten' : `${deNum(g)} Tage mit mindestens 10.000 Schritten`,
+    value: c => c.days10k, fmt: fmtCount },
+  { id: 'steps-streak', cat: 'Schritte', goals: [3, 7, 14, 30], step: 30,
+    names: ['Drei am Stück', 'Wochen-Streak', 'Zwei Wochen am Stück', 'Monats-Streak'], icons: ['🔥'],
+    name: g => `${g} Tage am Stück`, desc: g => `${g} Tage in Folge mit mindestens 10.000 Schritten`,
+    value: c => c.streak, fmt: v => `${v} Tage` },
+];
+
+function stepsProgress() {
+  const c = { maxDay: 0, total: 0, days10k: 0, streak: 0 };
+  const series = STEP_SERIES.map(def => ({ def, i: 0 }));
+  const done = [];
+  let run = 0, prevDate = null;
+  for (const s of [...data.steps].sort((a, b) => a.date.localeCompare(b.date))) {
+    c.total += s.steps;
+    c.maxDay = Math.max(c.maxDay, s.steps);
+    if (s.steps >= 10000) {
+      c.days10k++;
+      const yesterday = new Date(s.date + 'T12:00:00');
+      yesterday.setDate(yesterday.getDate() - 1);
+      run = prevDate === yesterday.toLocaleDateString('sv-SE') && run > 0 ? run + 1 : 1;
+      c.streak = Math.max(c.streak, run);
+    } else {
+      run = 0;
+    }
+    prevDate = s.date;
+    for (const st of series) {
+      for (let g = goalAt(st.def, st.i); g != null && st.def.value(c) >= g && st.i < 1000; g = goalAt(st.def, st.i)) {
+        done.push({ ...awardAt(st.def, st.i, g), date: s.date + 'T12:00:00' });
+        st.i++;
+      }
+    }
+  }
+  const next = series.map(st => {
+    const g = goalAt(st.def, st.i);
+    return g == null ? null : { ...awardAt(st.def, st.i, g), value: st.def.value(c), goal: g, fmt: st.def.fmt };
+  }).filter(Boolean);
+  return { done, next };
+}
+
+// Alle Erfolge: Training und Schritte
 function achievementProgress() {
+  const a = trainingProgress(), b = stepsProgress();
+  return { done: [...a.done, ...b.done], next: [...a.next, ...b.next] };
+}
+
+// Alle Trainings-Erfolge chronologisch aus dem Verlauf nachrechnen.
+// Ergebnis: done = freigeschaltete Stufen (mit Datum), next = jeweils nächste Stufe jeder Serie (mit Fortschritt)
+function trainingProgress() {
   const c = {
     count: 0, total: 0, month: 0, session: 0, streak: 0, fullWeeks: 0, cycles: 0,
     rel: { bench: 0, squat: 0, dead: 0 }, reps: { pullup: 0, dips: 0, pushup: 0 }, maxW: {}, exCount: {},
@@ -268,6 +328,11 @@ function showChartFor(name) {
 
 // Datenpunkte der gewählten Reihe, zeitlich aufsteigend
 function chartPoints() {
+  if (chartState.mode === 'steps') {
+    return [...data.steps]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(s => ({ t: Date.parse(s.date + 'T12:00:00'), v: s.steps, unit: 'Schritte' }));
+  }
   if (chartState.mode === 'ton') {
     const sessions = [...data.sessions].sort((a, b) => a.date.localeCompare(b.date));
     if (chartState.tonBy === 'week') {
@@ -365,6 +430,7 @@ function drawChart() {
     area.innerHTML = `<p class="hint chart-empty">${chartState.mode === 'bw'
       ? 'Noch kein Körpergewicht eingetragen.'
       : chartState.mode === 'ton' ? 'Noch keine Trainings gespeichert.'
+      : chartState.mode === 'steps' ? 'Noch keine Schritte eingetragen.'
       : 'Für diese Übung gibt es noch keine Trainings mit Werten.'}</p>`;
     extra.innerHTML = '';
     updateRangeControls(null);
@@ -391,7 +457,7 @@ function drawChart() {
   // Raster und y-Achse
   for (const v of ticks) {
     svg += `<line class="c-grid" x1="${L}" x2="${L + pw}" y1="${Y(v)}" y2="${Y(v)}"/>
-      <text class="c-text" x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${fmtNum(v)}</text>`;
+      <text class="c-text" x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${v >= 10000 ? deNum(v / 1000) + 'k' : fmtNum(v)}</text>`;
   }
   // x-Achse
   const spanDays = (x1 - x0) / DAY;
@@ -433,7 +499,8 @@ function tooltip(p, unit, x, y, W, H) {
   const tip = document.createElement('div');
   tip.className = 'tip';
   const value = document.createElement('strong');
-  value.textContent = `${fmtNum(p.v)} ${unit}` + (chartState.mode === 'ex' && chartState.metric === 'max10' ? ' (Max. bei 10)' : '');
+  value.textContent = `${unit === 'Schritte' ? deNum(p.v) : fmtNum(p.v)} ${unit}` +
+    (chartState.mode === 'ex' && chartState.metric === 'max10' ? ' (Max. bei 10)' : '');
   tip.appendChild(value);
   const date = document.createElement('div');
   date.className = 'muted';
@@ -481,8 +548,23 @@ function tonnageStats() {
   <button class="btn center" data-action="chart-mode" data-mode="awards">🏆 Erfolge ansehen</button>`;
 }
 
+// Kennzahlen zu den Schritten (unabhängig vom Zeitfenster)
+function stepsStats() {
+  const list = [...data.steps].sort((a, b) => a.date.localeCompare(b.date));
+  if (!list.length) return '';
+  const last = list[list.length - 1];
+  const week = list.slice(-7);
+  const avg = Math.round(week.reduce((a, s) => a + s.steps, 0) / week.length);
+  return `<div class="stats">
+    <div class="stat"><span>${last.date === todayISO() ? 'Heute' : 'Zuletzt'}</span><b>${deNum(last.steps)}</b></div>
+    <div class="stat"><span>Ø letzte 7</span><b>${deNum(avg)}</b></div>
+    <div class="stat"><span>Rekord</span><b>${deNum(Math.max(...list.map(s => s.steps)))}</b></div>
+  </div>`;
+}
+
 function chartStats(vis, unit) {
   if (chartState.mode === 'ton') return tonnageStats();
+  if (chartState.mode === 'steps') return stepsStats();
   // Deload-Trainings sind bewusst leichter und zählen für Aktuell/Veränderung/Bestwert nicht
   if (vis.some(p => !p.deload)) vis = vis.filter(p => !p.deload);
   if (!vis.length) return '';
@@ -536,16 +618,111 @@ function bwList() {
     </li>`).join('') + '</ul>';
 }
 
+function stepsList() {
+  const list = [...data.steps].sort((a, b) => b.date.localeCompare(a.date));
+  if (!list.length) return '';
+  return '<h2>Einträge</h2><ul class="list">' + list.map(s => `<li class="bw-row">
+      <span>${fmtDate(s.date + 'T12:00:00')}</span><b>${deNum(s.steps)}</b>
+      <button class="icon-btn danger" data-action="steps-del" data-date="${s.date}" aria-label="Löschen">✕</button>
+    </li>`).join('') + '</ul>';
+}
+
+/* ---------- Apple Health über die Zwischenablage ---------- */
+
+// Ein Kurzbefehl kopiert z. B. „Datum: 2026-10-23 Schritte: 8.432 Gewicht: 89,4 kg“ in die Zwischenablage.
+function healthCard() {
+  return `<div class="card health">
+    <button class="btn primary" data-action="health-paste">❤️ Aus Health einfügen</button>
+    <p class="hint">Übernimmt Schritte und Gewicht, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
+    ${chartState.pasteBox ? `<textarea class="inp comment" id="health-text" rows="3"
+        placeholder="Hier lange drücken → Einsetzen"></textarea>
+      <div class="row"><button class="btn" data-action="health-apply">Übernehmen</button></div>` : ''}
+  </div>`;
+}
+
+// Datum (JJJJ-MM-TT oder TT.MM.JJ[JJ]), Schritte und Gewicht aus dem Text lesen
+function parseHealthText(text) {
+  const t = String(text).replace(/ /g, ' ');
+  let date = todayISO();
+  const iso = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+  const de = t.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
+  else if (de) date = `${de[3].length === 2 ? '20' + de[3] : de[3]}-${de[2].padStart(2, '0')}-${de[1].padStart(2, '0')}`;
+
+  let steps = null, kg = null;
+  const sm = t.match(/(?:schritte|steps)\D{0,5}([\d.,' ]+)/i);
+  if (sm) {
+    // „8.432“ / „8 432“ = Tausenderpunkt; „8432,0“ / „8432.0“ = Nachkommastellen abschneiden
+    const raw = sm[1].trim().replace(/[.,]\d{1,2}$/, '');
+    const n = parseInt(raw.replace(/\D/g, ''), 10);
+    if (isFinite(n) && n >= 0 && n < 200000) steps = n;
+  }
+  const wm = t.match(/(?:gewicht|weight)\D{0,5}(\d{2,3}(?:[.,]\d+)?)/i);
+  if (wm) {
+    const n = parseNum(wm[1]);
+    if (n != null && n >= 20 && n <= 400) kg = Math.round(n * 10) / 10;
+  }
+  if (steps == null && kg == null) {
+    // nur eine Zahl kopiert: große Zahl = Schritte
+    const only = t.trim().match(/^[\d.,' ]+$/) && parseInt(t.replace(/[.,]\d{1,2}\s*$/, '').replace(/\D/g, ''), 10);
+    if (only && only >= 300) steps = only;
+  }
+  return { date, steps, kg };
+}
+
+function saveSteps(date, steps) {
+  const existing = data.steps.find(s => s.date === date);
+  if (existing) existing.steps = steps;
+  else data.steps.push({ date, steps });
+}
+
+function saveBodyweight(day, kg) {
+  const existing = data.bodyweight.find(b => b.date.slice(0, 10) === day);
+  if (existing) existing.kg = kg;
+  else data.bodyweight.push({ id: uid(), date: `${day}T12:00:00`, kg });
+}
+
+function applyHealthText(text) {
+  const { date, steps, kg } = parseHealthText(text);
+  if (steps == null && kg == null) {
+    alert('In der Zwischenablage wurden keine Schritte oder kein Gewicht gefunden.\n\nErwartet wird z. B.: „Datum: 2026-10-23 Schritte: 8432 Gewicht: 89,4“');
+    return;
+  }
+  const before = unlockedIds();
+  if (steps != null) saveSteps(date, steps);
+  if (kg != null) saveBodyweight(date, kg);
+  saveData();
+  const fresh = achievementProgress().done.filter(a => !before.has(a.id));
+  chartState.pasteBox = false;
+  render();
+  const parts = [steps != null ? `${deNum(steps)} Schritte` : null, kg != null ? `${fmtNum(kg)} kg` : null].filter(Boolean);
+  toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}` +
+    (fresh.length ? ` · 🏆 ${fresh.map(a => a.name).join(', ')}` : ''));
+}
+
 function renderCharts() {
   const s = chartState;
   let h = `<div class="seg grid">
     <button class="${s.mode === 'ex' ? 'on' : ''}" data-action="chart-mode" data-mode="ex">Übungen</button>
     <button class="${s.mode === 'bw' ? 'on' : ''}" data-action="chart-mode" data-mode="bw">Körpergewicht</button>
     <button class="${s.mode === 'ton' ? 'on' : ''}" data-action="chart-mode" data-mode="ton">Tonnage</button>
+    <button class="${s.mode === 'steps' ? 'on' : ''}" data-action="chart-mode" data-mode="steps">Schritte</button>
     <button class="${s.mode === 'awards' ? 'on' : ''}" data-action="chart-mode" data-mode="awards">🏆 Erfolge</button>
   </div>`;
 
   if (s.mode === 'awards') return h + renderAwards();
+
+  if (s.mode === 'steps') {
+    h += healthCard() + `<div class="card">
+      <label class="row"><span>Schritte</span>
+        <input class="inp kg" id="steps-n" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="8500"></label>
+      <label class="row"><span>Datum</span>
+        <input class="inp date" id="steps-date" type="date" value="${todayISO()}" max="${todayISO()}"></label>
+      <div class="row"><button class="btn primary" data-action="steps-save">Speichern</button></div>
+    </div>`;
+    h += rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
+    return h + stepsList();
+  }
 
   if (s.mode === 'ton') {
     h += `<div class="seg small">
@@ -579,7 +756,7 @@ function renderCharts() {
       </div>`;
     }
   } else {
-    h += `<div class="card">
+    h += healthCard() + `<div class="card">
       <label class="row"><span>Körpergewicht</span>
         <input class="inp kg" id="bw-kg" type="text" inputmode="decimal" autocomplete="off" placeholder="kg"></label>
       <label class="row"><span>Datum</span>
@@ -612,14 +789,37 @@ Object.assign(actions, {
   'bw-save': () => {
     const kg = parseNum(document.getElementById('bw-kg').value);
     if (kg == null || kg < 20 || kg > 400) { alert('Bitte ein gültiges Körpergewicht in kg eintragen.'); return; }
-    const day = document.getElementById('bw-date').value || todayISO();
-    const existing = data.bodyweight.find(b => b.date.slice(0, 10) === day);
-    if (existing) existing.kg = kg;
-    else data.bodyweight.push({ id: uid(), date: `${day}T12:00:00`, kg });
+    saveBodyweight(document.getElementById('bw-date').value || todayISO(), kg);
     saveData();
     toast('Körpergewicht gespeichert ✔');
     render();
   },
+  'steps-save': () => {
+    const n = parseInt(document.getElementById('steps-n').value.replace(/\D/g, ''), 10);
+    if (!isFinite(n) || n < 0 || n > 200000) { alert('Bitte eine gültige Schrittzahl eintragen.'); return; }
+    const before = unlockedIds();
+    saveSteps(document.getElementById('steps-date').value || todayISO(), n);
+    saveData();
+    const fresh = achievementProgress().done.filter(a => !before.has(a.id));
+    toast('Schritte gespeichert ✔' + (fresh.length ? ` · 🏆 ${fresh.map(a => a.name).join(', ')}` : ''));
+    render();
+  },
+  'steps-del': el => {
+    if (!confirm('Diesen Eintrag löschen?')) return;
+    data.steps = data.steps.filter(s => s.date !== el.dataset.date);
+    saveData(); render();
+  },
+  // Zwischenablage lesen; klappt das nicht (Safari fragt nicht immer), Feld zum Einsetzen zeigen
+  'health-paste': async () => {
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch (e) { /* nicht erlaubt */ }
+    if (text && text.trim()) { applyHealthText(text); return; }
+    chartState.pasteBox = true;
+    render();
+    const box = document.getElementById('health-text');
+    if (box) box.focus();
+  },
+  'health-apply': () => applyHealthText(document.getElementById('health-text').value),
   'bw-del': el => {
     if (!confirm('Diesen Eintrag löschen?')) return;
     data.bodyweight = data.bodyweight.filter(b => b.id !== el.dataset.id);

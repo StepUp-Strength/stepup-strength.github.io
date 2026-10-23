@@ -34,6 +34,7 @@ function withDefaults(ex) {
 function upgradeData(d) {
   d.days.forEach(day => day.exercises.forEach(withDefaults));
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
+  if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
   // Sätze pro Muskelgruppe und Training (im Plan einstellbar)
   if (!d.volume) d.volume = defaultVolume();
   // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
@@ -1464,7 +1465,7 @@ function importData(file) {
     if (!confirm(`Sicherung mit ${d.days.length} Trainingstagen und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
     data = upgradeData({
       app: 'trainingsapp', version: 1,
-      days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume,
+      days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume, steps: d.steps,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -1767,7 +1768,7 @@ const actions = {
       if (!isValidData(d)) throw new Error('ungültig');
       data = upgradeData({
         app: 'trainingsapp', version: 1,
-        days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume,
+        days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume, steps: d.steps,
       });
       saveData();
       draft = null; saveDraft();

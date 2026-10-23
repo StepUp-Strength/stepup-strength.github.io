@@ -414,7 +414,10 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
 
 /* Tonnage & Erfolge */
 .seg.grid { flex-wrap: wrap; }
-.seg.grid button { flex: 1 1 45%; }
+.seg.grid button { flex: 1 1 30%; font-size: 16px; }
+.card.health .btn { margin-bottom: 4px; }
+.card.health .hint { margin: 6px 0 0; font-size: 15px; }
+.card.health textarea { margin-top: 10px; }
 .stats.one { grid-template-columns: 1fr; }
 .award-row { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; padding: 12px 14px; }
 .award-row b { display: block; font-size: 19px; }
