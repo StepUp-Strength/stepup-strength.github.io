@@ -169,6 +169,9 @@ input:focus { outline: none; border-color: var(--accent); }
 .icon-btn.bubble.has { opacity: 1; background: var(--accent); }
 .inp.comment { min-height: 0; margin: 0 0 12px; font-size: 18px; line-height: 1.35; resize: vertical; }
 .comment-text { margin-top: 6px; font-size: 17px; color: var(--muted); }
+.last-comment { display: flex; align-items: center; gap: 10px; margin: -4px 0 12px; font-size: 17px; color: var(--muted); }
+.last-comment span { flex: 1; }
+.last-comment .icon-btn { min-width: 44px; height: 44px; padding: 0; font-size: 18px; color: var(--muted); }
 .check { padding-block: 24px; text-align: center; }
 .check .question { margin: 8px 0 20px; font-size: 28px; }
 .check .row .btn { min-height: 76px; font-size: 26px; }

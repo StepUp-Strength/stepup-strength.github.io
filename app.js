@@ -411,11 +411,13 @@ function fromRef(src, target, plusOne, i) {
   return { weight, reps };
 }
 
-// Kommentar aus dem letzten Training dieser Übung, das einen hatte
+// Kommentar aus dem letzten Training dieser Übung, das einen hatte.
+// Wurde der Hinweis mit ✕ ausgeblendet, werden auch ältere Kommentare nicht mehr gezeigt.
 function lastCommentFor(name) {
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === nameKey(name));
-    if (e && e.comment) return e.comment;
+    if (!e || !e.comment) continue;
+    return e.commentHidden ? null : { text: e.comment, sessionId: s.id };
   }
   return null;
 }
@@ -606,7 +608,11 @@ function renderTraining() {
         placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
     }
     const lastComment = lastCommentFor(en.name);
-    if (lastComment) h += `<p class="last">💬 Letztes Mal: „${esc(lastComment)}“</p>`;
+    if (lastComment) {
+      h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
+        <button class="icon-btn" data-action="comment-dismiss" data-sid="${lastComment.sessionId}"
+          data-name="${esc(en.name)}" aria-label="Hinweis ausblenden">✕</button></div>`;
+    }
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
     if (en.target) {
@@ -900,7 +906,8 @@ function beginCheck(id) {
     return;
   }
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
-  go('check', { id, step: 1 });
+  if (cycleInfo().deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
+  else go('check', { id, step: 1 });
 }
 
 // readiness = { sleptWell, stress }; jede negative Antwort zieht 1 Wdh. pro Übung ab
@@ -919,7 +926,7 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     cycleStart: ci.cycleStart,
     week: ci.week,
     readiness,
-    penalty: (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
+    penalty: ci.deload ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
     entries: [],
   };
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
@@ -1177,6 +1184,14 @@ const actions = {
     const { id, step } = current.params;
     if (step === 1) go('check', { id, step: 2, sleptWell: yes });
     else startDay(id, { sleptWell: current.params.sleptWell, stress: yes });
+  },
+  // Hinweis auf den letzten Kommentar ausblenden (im Verlauf bleibt der Kommentar stehen)
+  'comment-dismiss': el => {
+    const s = data.sessions.find(x => x.id === el.dataset.sid);
+    const e = s && s.entries.find(en => nameKey(en.name) === nameKey(el.dataset.name));
+    if (!e) return;
+    e.commentHidden = true;
+    saveData(); render();
   },
   'comment-toggle': el => {
     const en = draft.entries[el.dataset.ei];
