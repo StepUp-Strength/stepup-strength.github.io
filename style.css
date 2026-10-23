@@ -124,6 +124,7 @@ nav button.active { color: var(--accent); font-weight: 600; }
 }
 .btn.primary { background: var(--accent); color: #fff; text-align: center; }
 .btn.center { text-align: center; }
+.btn.outline { border: 2px solid var(--line); box-shadow: none; text-align: center; font-size: 18px; }
 .btn.danger {
   background: transparent;
   border: 2px solid var(--danger);
@@ -227,12 +228,45 @@ input:focus { outline: none; border-color: var(--accent); }
 .last { margin: -4px 0 12px; font-size: 17px; color: var(--muted); }
 .setgrid {
   display: grid;
-  grid-template-columns: 24px 1.35fr 1fr 1fr;
+  grid-template-columns: 48px 1.3fr 1fr 1fr;
   gap: 8px;
   align-items: center;
 }
 .setgrid .head { font-size: 16px; color: var(--muted); text-align: center; }
-.setno { font-size: 20px; color: var(--muted); text-align: center; }
+.setno {
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+}
+.setno small { display: block; font-size: 10px; font-weight: 600; }
+.setno.has-v { background: #e8a317; color: #111; }
+
+/* Ausführungsvarianten */
+.variants { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.variants span { flex-basis: 100%; font-size: 16px; color: var(--muted); }
+.variants .vchip { flex: 1; }
+.variants.plan { margin-top: 12px; }
+.variants.plan span { font-size: 20px; color: var(--text); }
+.vchip {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+.vchip.on { background: var(--accent); color: #fff; }
 .setgrid input { min-width: 0; padding: 12px 4px; text-align: center; font-size: 24px; font-weight: 600; }
 .setgrid input.tank { border-style: dashed; }
 .setgrid input.flash { animation: flash 1.2s ease-out; }
@@ -306,6 +340,54 @@ input:focus { outline: none; border-color: var(--accent); }
 .c-area { fill: var(--accent); opacity: .1; }
 .c-dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
 .c-cross { stroke: var(--muted); stroke-width: 1; }
+.c-dot.deload { fill: var(--card); stroke: var(--accent); }
+
+/* Periodisierung */
+.pills { display: flex; gap: 4px; margin: 4px 0 10px; }
+.pill {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+.pill.dl, .pill.intro { flex: 2; }
+.compare {
+  margin: -4px 0 12px;
+  padding: 8px 12px;
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 16px;
+  color: var(--muted);
+}
+.compare b { color: var(--text); }
+.intro-note {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+}
+.pill.past { background: var(--line); color: var(--text); }
+.pill.now { background: var(--accent); color: #fff; }
+.pill.dl.now { background: #e8a317; color: #111; }
+.cycle .sub { margin: 0; font-size: 17px; }
+.cycle.is-deload { border: 2px solid #e8a317; }
+.deload-note {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #e8a317;
+  color: #111;
+  font-size: 18px;
+  font-weight: 600;
+}
 
 .tip {
   position: absolute;

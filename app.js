@@ -24,6 +24,7 @@ function withDefaults(ex) {
   if (ex.rir == null) ex.rir = 2;         // Ziel: Wiederholungen im Tank
   if (ex.max10 === undefined) ex.max10 = null;  // max. kg bei 10 Wdh.
   if (ex.step === undefined) ex.step = null;    // Steigerung in kg, null = automatisch
+  if (ex.variant === undefined) ex.variant = '';  // Standard-Ausführung: '', 'pause', 'slow'
   return ex;
 }
 
@@ -92,7 +93,7 @@ function fmtDate(iso, long) {
 }
 
 function fmtSet(s) {
-  const tank = s.rir != null ? ` · Tank ${s.rir}` : '';
+  const tank = (s.rir != null ? ` · Tank ${s.rir}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
   if (s.weight == null) return `${s.reps} Wdh.${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
   return `${fmtNum(s.weight)} kg × ${s.reps}${tank}`;
@@ -218,22 +219,24 @@ function setInput(field, ei, j, value) {
 
 // Im Training: Wdh. der offenen Sätze aus dem letzten erledigten Satz ableiten.
 // Wdh. nächster Satz = (Wdh. + Tank) − Ziel-Tank − Ermüdung; jeder weitere Satz noch 1 weniger.
+// Bezug ist immer der letzte erledigte Satz derselben Ausführungsvariante.
 function recalcSets(ei) {
   const en = draft.entries[ei];
   const t = en.target;
   if (!t) return;
-  let last = -1;
-  en.sets.forEach((s, i) => { if (isDone(s)) last = i; });
-  if (last < 0 || last === en.sets.length - 1) return;
-
-  const done = en.sets[last];
-  const cap = parseNum(done.reps) + parseNum(done.rir);
-  const w = parseNum(done.weight);
   const tt = { step: 2.5, ...t };
-  let first = null;
-  for (let j = last + 1; j < en.sets.length; j++) {
+  let first = null, firstLast = -1, firstCap = null;
+  for (let j = 0; j < en.sets.length; j++) {
     const s = en.sets[j];
-    if (!s.auto) continue;  // Wdh. selbst geändert -> Satz nicht mehr anfassen
+    if (!s.auto || isDone(s)) continue;  // Wdh. selbst geändert oder schon erledigt -> nicht anfassen
+    let last = -1;
+    for (let i = j - 1; i >= 0; i--) {
+      if (isDone(en.sets[i]) && variantOf(en.sets[i]) === variantOf(s)) { last = i; break; }
+    }
+    if (last < 0) continue;
+    const done = en.sets[last];
+    const cap = parseNum(done.reps) + parseNum(done.rir);
+    const w = parseNum(done.weight);
     // Ausgangsgewicht: aus der Vergleichswoche, aber nie unter dem zuletzt gesteigerten Gewicht
     const start = s.baseWeight != null && w != null ? Math.max(s.baseWeight, w) : s.baseWeight;
     let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start);
@@ -250,13 +253,14 @@ function recalcSets(ei) {
         reps: Math.min(p.reps, t.reps),
       };
     }
-    if (!first) first = p;
+    if (!first) { first = p; firstLast = last; firstCap = cap; }
     const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
     if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
     if (String(p.reps) !== s.reps) { s.reps = String(p.reps); setInput('tr-reps', ei, j, s.reps); }
   }
   if (!first) return;
-  en.note = `Satz ${last + 1}: ${cap} Wdh. bis zum Versagen → Satz ${last + 2}: ` +
+  const last = firstLast, cap = firstCap;
+  en.note = `Satz ${last + 1}: ${cap} Wdh. bis zum Versagen → nächster Satz: ` +
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
     `(${t.rir} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`;
   const note = $view.querySelector(`[data-note="${ei}"]`);
@@ -331,46 +335,140 @@ function sessionCycle(s) {
   return { cycleStart: c.cycleStart, week: c.week };
 }
 
-// Vergleichswoche: dieselbe Woche im vorherigen Zyklus (bevorzugt derselbe Trainingstag)
-function comparisonEntry(name, dayId, ci) {
+// Neuestes passendes Training einer Übung in einer bestimmten Zykluswoche (bevorzugt derselbe Trainingstag)
+function findWeekEntry(name, dayId, match) {
   const k = nameKey(name);
   const cands = data.sessions
     .filter(s => !s.deload)
     .map(s => ({ s, c: sessionCycle(s) }))
-    .filter(x => x.c.week === ci.week && x.c.cycleStart < ci.cycleStart)
+    .filter(x => match(x.c))
     .sort((a, b) => b.c.cycleStart.localeCompare(a.c.cycleStart)
       || (b.s.dayId === dayId) - (a.s.dayId === dayId)
       || b.s.date.localeCompare(a.s.date));
-  for (const { s } of cands) {
+  for (const { s, c } of cands) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, week: ci.week, sets: e.sets };
+    if (e) return { date: s.date, week: c.week, sets: e.sets, planned: e.planned, target: e.target };
   }
   return null;
 }
 
-// Sätze aus der Vergleichswoche: gleiches Gewicht und je 1 Wdh. mehr –
-// außer die damalige Leistung reicht schon für die nächste Gewichtsstufe
-function compareSets(cmp, target) {
-  const n = target.intro ? target.sets : cmp.sets.length;
-  const sets = [];
-  for (let i = 0; i < n; i++) {
-    const src = cmp.sets[i] || cmp.sets[cmp.sets.length - 1];
-    let weight = src.weight;
-    let reps = src.reps != null ? src.reps + 1 : target.reps;
-    if (src.reps != null && src.weight != null) {
-      const cap = src.reps + (src.rir != null ? src.rir : target.rir);
-      const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
-      if (up) ({ weight, reps } = up);
+// Vergleichswoche: dieselbe Woche im vorherigen Zyklus
+const comparisonEntry = (name, dayId, ci) =>
+  findWeekEntry(name, dayId, c => c.week === ci.week && c.cycleStart < ci.cycleStart);
+
+// Vorwoche im selben Zyklus
+const previousWeekEntry = (name, dayId, ci) => ci.week < 2 ? null
+  : findWeekEntry(name, dayId, c => c.cycleStart === ci.cycleStart && c.week === ci.week - 1);
+
+// Bremse: Satz 1 lag (Wdh. + Tank) mindestens BRAKE_REPS unter dem damaligen Vorschlag
+const BRAKE_REPS = 2;
+// v = Ausführungsvariante; es zählen nur Sätze derselben Variante
+function braked(prev, v) {
+  const s = ofVariant(prev.sets, v)[0];
+  const t = prev.target || {};
+  const p = ofVariant(prev.planned, v)[0];
+  if (!p && v) return false;  // ohne gespeicherten Vorschlag gibt es für Varianten keinen Maßstab
+  const planReps = p && p.reps != null ? p.reps : t.reps;
+  if (!s || s.reps == null || planReps == null) return false;
+  const tRir = t.rir != null ? t.rir : 2;
+  let cap = s.reps + (s.rir != null ? s.rir : tRir);
+  if (p && p.weight != null && s.weight != null) cap = capacityAt(cap, s.weight, p.weight);
+  return cap - (planReps + tRir) <= -BRAKE_REPS;
+}
+
+// Ist Vorschlag a leichter als b? Zuerst nach Gewicht, bei gleichem Gewicht nach Wdh.
+function lighterSet(a, b) {
+  if (a.weight != null && b.weight != null && a.weight !== b.weight) return a.weight < b.weight;
+  return a.reps < b.reps;
+}
+
+/* ---------- Ausführungsvarianten ---------- */
+
+// '' = normal. Sätze einer Variante werden nur mit Sätzen derselben Variante verglichen.
+const VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam' };
+const VARIANT_SHORT = { pause: 'P', slow: 'L' };
+const variantOf = s => (s && s.variant) || '';
+const ofVariant = (sets, v) => (sets || []).filter(s => variantOf(s) === v);
+
+// k-ter Bezugssatz einer Liste; fehlt er, den letzten nehmen und je Satz Ermüdung abziehen
+function refAt(list, k) {
+  if (k < list.length) return list[k];
+  const last = list[list.length - 1];
+  const extra = k - list.length + 1;
+  return { ...last, reps: last.reps != null ? Math.max(MIN_REPS, last.reps - FATIGUE * extra) : null };
+}
+
+// Vorschlag aus einem Bezugssatz: gleiches Gewicht, Wdh. +1 (plusOne) bzw. bestätigen –
+// reicht die damalige Leistung schon für die nächste Gewichtsstufe, steigt stattdessen das Gewicht
+function fromRef(src, target, plusOne, i) {
+  let weight = src.weight;
+  let reps = src.reps != null ? src.reps + (plusOne ? 1 : 0) : goalReps(target, i);
+  if (src.reps != null && src.weight != null) {
+    const cap = src.reps + (src.rir != null ? src.rir : target.rir);
+    const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
+    if (up) ({ weight, reps } = up);
+  }
+  return { weight, reps };
+}
+
+// Neueste Sätze einer Variante (falls es keine Bezugswoche mit dieser Variante gibt)
+function lastVariantSets(name, v) {
+  for (const s of sessionsNewestFirst()) {
+    const e = s.entries.find(en => nameKey(en.name) === nameKey(name));
+    const sets = e ? ofVariant(e.sets, v) : [];
+    if (sets.length) return sets;
+  }
+  return [];
+}
+
+// Vorschlag für Satz i mit Variante v.
+// Normal: Vergleichswoche (+1 je Satz) und Vorwoche (Satz 1 +1, Rest bestätigen) – der niedrigere;
+// Bremse -> Vorwoche 1:1. Ohne Bezug: Vorschlag aus Plan/Progression (en.base).
+// Varianten nutzen zusätzlich die Vorwoche und notfalls ihr letztes Training als Bezug.
+function proposeSet(en, i, v) {
+  const t = en.target;
+  const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
+  const cmpV = ofVariant(en.compare && en.compare.sets, v);
+  const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v);
+  const usePrev = prevV.length && (cmpV.length || v);
+  let p = null, rule = null;
+  if (usePrev && braked(en.prevWeek, v)) {
+    const src = refAt(prevV, k);
+    p = { weight: src.weight, reps: src.reps };
+    rule = 'brake';
+  } else {
+    const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, i) : null;
+    const b = usePrev ? fromRef(refAt(prevV, k), t, k === 0, i) : null;
+    if (a && b) { p = lighterSet(b, a) ? b : a; rule = 'lower'; }
+    else p = a || b;
+    if (!p && v) {
+      const lastV = lastVariantSets(en.name, v);
+      if (lastV.length) p = fromRef(refAt(lastV, k), t, k === 0, i);
     }
-    sets.push({
-      weight: weight != null ? fmtNum(weight) : '',
-      reps: String(reps),
+  }
+  if (!p) {
+    const b = en.base[Math.min(i, en.base.length - 1)];
+    p = { weight: parseNum(b.weight), reps: parseNum(b.reps) };
+  }
+  return {
+    set: {
+      weight: p.weight != null ? fmtNum(p.weight) : '',
+      reps: p.reps != null ? String(p.reps) : '',
       rir: '',
       auto: true,
-      baseWeight: weight,  // Ausgangsgewicht für die Anpassung im Training
-    });
-  }
-  return sets;
+      baseWeight: p.weight,  // Ausgangsgewicht für die Anpassung im Training
+      variant: v,
+    },
+    rule,
+  };
+}
+
+// Satz i (neu) vorschlagen und den ursprünglichen Vorschlag für die Bremse merken
+function applyProposal(en, i, v) {
+  const { set, rule } = proposeSet(en, i, v);
+  en.sets[i] = set;
+  en.planned[i] = { weight: parseNum(set.weight), reps: parseNum(set.reps), variant: v };
+  if (i === 0) en.rule = rule;
 }
 
 const weekLabel = w => w === 1 ? 'Intro-Woche' : `Woche ${w}`;
@@ -479,18 +577,32 @@ function renderTraining() {
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
     }
     if (en.compare) {
-      h += `<p class="compare">Vergleich: ${weekLabel(en.compare.week)} im letzten Zyklus (${fmtDate(en.compare.date)})<br>
-        ${en.compare.sets.map(fmtSet).join(' · ')}<br><b>Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt</b></p>`;
+      const rule = en.rule === 'brake'
+        ? `Bremse: Die Vorwoche lief deutlich schwerer als geplant → Werte der Vorwoche 1:1`
+        : en.rule === 'lower'
+          ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden – Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
+          : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
+      h += `<p class="compare">Letzter Zyklus, ${weekLabel(en.compare.week)} (${fmtDate(en.compare.date)}):<br>
+        ${en.compare.sets.map(fmtSet).join(' · ')}` +
+        (en.prevWeek ? `<br>Vorwoche, ${weekLabel(en.prevWeek.week)} (${fmtDate(en.prevWeek.date)}):<br>
+        ${en.prevWeek.sets.map(fmtSet).join(' · ')}` : '') +
+        `<br><b>${rule}</b></p>`;
     } else {
       h += last
         ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
         : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
+    const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
+    h += `<div class="variants"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+      `<button class="vchip ${vAll === v ? 'on' : ''}" data-action="ex-variant" data-ei="${ei}" data-v="${v}">${label}</button>`).join('')}
+    </div>`;
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
-    h += '<div class="setgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
+    h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
     const tankHint = en.target ? en.target.rir : '–';
     en.sets.forEach((s, si) => {
-      h += `<span class="setno">${si + 1}</span>
+      const v = variantOf(s);
+      h += `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
+          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>
         <input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
@@ -504,7 +616,8 @@ function renderTraining() {
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
       </div></section>`;
   });
-  h += `<button class="btn primary" data-action="tr-save">Training speichern</button>
+  h += `<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam). Sätze mit Pause oder langsam werden nur mit gleich ausgeführten Sätzen verglichen.</p>
+    <button class="btn primary" data-action="tr-save">Training speichern</button>
     <div class="spacer"></div>
     <button class="btn danger" data-action="tr-cancel">Training verwerfen</button>`;
   return h;
@@ -586,7 +699,7 @@ function planCompare(ex, day) {
   const cmp = comparisonEntry(ex.name, day.id, ci);
   if (!cmp) return '';
   return `<p class="compare">Diese Woche (${weekLabel(ci.week)}) – Vergleich letzter Zyklus:<br>
-    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +1 Wdh.</b></p>`;
+    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +1 Wdh. bzw. nächste Gewichtsstufe – ab Woche 2 höchstens Vorwoche mit Satz 1 +1 Wdh.</b></p>`;
 }
 
 function renderDay({ id }) {
@@ -606,6 +719,9 @@ function renderDay({ id }) {
       ${stepperRow('Sätze', 'sets', i, ex.sets)}
       ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
       ${stepperRow('Ziel im Tank (RIR)', 'rir', i, ex.rir)}
+      <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+        `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
+      </div>
       <label class="row">
         <span>Max. kg bei 10 Wdh.</span>
         <input class="inp kg ${ex.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal"
@@ -735,7 +851,7 @@ function startDay(id) {
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
   draft.entries = exercises.map(ex => {
     const en = { name: ex.name.trim() };
-    setupEntry(en, { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) });
+    setupEntry(en, { sets: ex.sets, reps: ex.reps, rir: ex.rir, max10: ex.max10, step: stepFor(ex) }, () => ex.variant);
     return en;
   });
   saveDraft();
@@ -744,15 +860,23 @@ function startDay(id) {
 
 // Ziel und vorgeschlagene Sätze einer Übung je nach Zykluswoche festlegen:
 // Deload -> halbiert & leichter; sonst Werte der Vergleichswoche + 1 Wdh., falls vorhanden
-function setupEntry(en, target) {
+// variantFor(i) liefert die Ausführungsvariante von Satz i
+function setupEntry(en, target, variantFor = () => '') {
   en.plan = target;
   if (draft.deload) target = deloadTarget(target);
   else if (draft.intro) target = { ...target, sets: introSets(target.sets), intro: true };
   const cmp = draft.deload ? null : comparisonEntry(en.name, draft.dayId, draft);
-  en.target = target;
+  const prev = draft.deload || draft.intro ? null : previousWeekEntry(en.name, draft.dayId, draft);
+  // Satzzahl: Intro/Deload laut Regel, sonst wie in der Vergleichswoche, sonst laut Plan
+  const n = cmp && !target.intro ? cmp.sets.length : target.sets;
+  en.target = { ...target, sets: n };
   en.compare = cmp;
-  en.sets = cmp ? compareSets(cmp, target) : buildSets(en.name, target);
-  if (cmp) en.target = { ...target, sets: en.sets.length };
+  en.prevWeek = prev;
+  en.rule = null;
+  en.base = buildSets(en.name, en.target);  // Vorschlag ohne Bezugswoche
+  en.sets = [];
+  en.planned = [];  // ursprünglicher Vorschlag, damit die Bremse nächste Woche vergleichen kann
+  for (let i = 0; i < n; i++) applyProposal(en, i, variantFor(i) || '');
   en.note = null;
 }
 
@@ -762,8 +886,9 @@ function buildSets(name, target) {
   const last = lastEntry(name);
   const tw = target.deload ? target.weight : targetWeight(target);
   const sets = [];
+  const lastSets = last ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
   for (let i = 0; i < target.sets; i++) {
-    const ls = last && (last.sets[i] || last.sets[last.sets.length - 1]);
+    const ls = lastSets[i] || lastSets[lastSets.length - 1];
     const lw = ls && ls.weight != null ? ls.weight : null;
     const w = tw != null ? tw
       : lw != null && target.deload ? roundTo(lw * DELOAD_WEIGHT, target.step || 2.5) : lw;
@@ -802,7 +927,9 @@ function replaceExercise(en, name, max10) {
   const plan = en.plan || en.target;  // Ziel laut Plan (ohne Deload-/Intro-Anpassung)
   en.name = name;
   en.replacedFrom = nameKey(name) === nameKey(original) ? null : original;
-  setupEntry(en, { sets: plan.sets, reps: plan.reps, rir: plan.rir, max10, step: stepFor(ex || { name, step: null }) });
+  const variants = en.sets.map(variantOf);
+  setupEntry(en, { sets: plan.sets, reps: plan.reps, rir: plan.rir, max10, step: stepFor(ex || { name, step: null }) },
+    i => variants[Math.min(i, variants.length - 1)]);
 }
 
 function saveTraining() {
@@ -811,10 +938,14 @@ function saveTraining() {
       name: en.name,
       ...(en.replacedFrom ? { replacedFrom: en.replacedFrom } : {}),
       target: en.target,
+      planned: en.planned,
       // Nur Sätze, die man angefasst hat – unveränderte Vorschläge zählen nicht als erledigt
       sets: en.sets
         .filter(s => s.touched)
-        .map(s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir) }))
+        .map(s => ({
+          weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir),
+          ...(s.variant ? { variant: s.variant } : {}),
+        }))
         .filter(s => s.weight != null || s.reps != null),
     }))
     .filter(en => en.sets.length);
@@ -826,8 +957,8 @@ function saveTraining() {
 
   // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren (nicht in der Deload-Woche)
   for (const en of draft.deload ? [] : entries) {
-    const first = en.sets[0];
-    if (!en.target || first.weight == null || first.reps == null || first.rir == null) continue;
+    const first = en.sets.find(s => !s.variant);  // Maßstab: erster normaler Satz
+    if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) continue;
     const t = { step: 2.5, ...en.target };
     en.result = progression(first, t, lastEntry(en.name));
     const max10 = Math.round(en.result.next / repFactor(t.reps + t.rir) * 10) / 10;
@@ -937,6 +1068,15 @@ function showSuggestions(input, pool) {
   box.hidden = !list.length;
 }
 
+// Variante eines Satzes ändern. Noch nicht angefasste Sätze bekommen einen neuen Vorschlag
+// aus den Bezugssätzen dieser Variante; eigene Eingaben bleiben stehen.
+function changeVariant(en, i, v) {
+  const s = en.sets[i];
+  if (variantOf(s) === v) return;
+  if (!en.base || s.touched) { s.variant = v; return; }
+  applyProposal(en, i, v);
+}
+
 // Beim Ersetzen: bekanntes Max.-Gewicht der gewählten Übung eintragen
 function fillReplaceMax(input) {
   const maxInput = input.closest('.replace').querySelector('[data-field="rep-max"]');
@@ -967,6 +1107,7 @@ const actions = {
       reps: prevReps != null ? String(Math.max(1, prevReps - FATIGUE)) : (t ? String(t.reps) : ''),
       rir: '',
       auto: true,
+      variant: variantOf(prev),
     });
     recalcSets(+el.dataset.ei);
     saveDraft(); render();
@@ -1062,6 +1203,26 @@ const actions = {
     data.cycle.start = mondayISO(new Date());
     saveData(); render();
     toast('Neuer Zyklus gestartet');
+  },
+  'plan-variant': el => {
+    findDay(current.params.id).exercises[el.dataset.i].variant = el.dataset.v;
+    saveData(); render();
+  },
+  // Ganze Übung: alle noch offenen Sätze auf die Variante stellen
+  'ex-variant': el => {
+    const ei = +el.dataset.ei;
+    const en = draft.entries[ei];
+    en.sets.forEach((s, i) => { if (!isDone(s)) changeVariant(en, i, el.dataset.v); });
+    recalcSets(ei); saveDraft(); render();
+  },
+  // Einzelner Satz: normal -> mit Pause -> langsam -> normal
+  'set-variant': el => {
+    const ei = +el.dataset.ei, si = +el.dataset.si;
+    const en = draft.entries[ei];
+    const order = Object.keys(VARIANTS);
+    const next = order[(order.indexOf(variantOf(en.sets[si])) + 1) % order.length];
+    changeVariant(en, si, next);
+    recalcSets(ei); saveDraft(); render();
   },
   'set-step': el => {
     findDay(current.params.id).exercises[el.dataset.i].step = Number(el.dataset.v);

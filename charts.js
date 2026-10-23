@@ -7,7 +7,7 @@ const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1J', 365], ['Alle', 0]];
 
 // mode: 'ex' = Übung, 'bw' = Körpergewicht; metric: 'weight' = schwerster Satz, 'max10' = geschätztes Max.
 // end = rechter Rand des Zeitfensters (null = heute); sel = Zeitpunkt des angetippten Punkts
-const chartState = { mode: 'ex', name: '', metric: 'weight', range: 91, end: null, sel: null };
+const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', range: 91, end: null, sel: null };
 let chartGeo = null;  // Geometrie der zuletzt gezeichneten Grafik (für Antippen und Ziehen)
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE');  // JJJJ-MM-TT
@@ -22,7 +22,7 @@ function historyNames() {
 }
 
 function showChartFor(name) {
-  Object.assign(chartState, { name, sel: null, end: null });
+  Object.assign(chartState, { name, variant: '', sel: null, end: null });
   render();
 }
 
@@ -39,10 +39,12 @@ function chartPoints() {
   for (const s of [...data.sessions].sort((a, b) => a.date.localeCompare(b.date))) {
     const e = s.entries.find(en => nameKey(en.name) === k);
     if (!e) continue;
-    const weighted = e.sets.filter(x => x.weight != null);
+    const sets = ofVariant(e.sets, chartState.variant);  // nur die gewählte Ausführung
+    if (!sets.length) continue;
+    const weighted = sets.filter(x => x.weight != null);
     let v, unit = 'kg';
     if (!weighted.length) {
-      v = Math.max(...e.sets.map(x => x.reps || 0));  // Übung ohne Gewicht -> Wiederholungen
+      v = Math.max(...sets.map(x => x.reps || 0));  // Übung ohne Gewicht -> Wiederholungen
       unit = 'Wdh.';
     } else if (chartState.metric === 'max10') {
       const est = weighted.filter(x => x.reps != null).map(x => x.weight / repFactor(x.reps + (x.rir || 0)));
@@ -51,7 +53,10 @@ function chartPoints() {
     } else {
       v = Math.max(...weighted.map(x => x.weight));
     }
-    pts.push({ t: Date.parse(s.date), v, unit, sets: e.sets, dayName: s.dayName, replacedFrom: e.replacedFrom });
+    pts.push({
+      t: Date.parse(s.date), v, unit, sets,
+      dayName: s.dayName, replacedFrom: e.replacedFrom, deload: !!s.deload,
+    });
   }
   // Gemischte Einheiten: Einträge mit Gewicht haben Vorrang
   return pts.some(p => p.unit === 'kg') ? pts.filter(p => p.unit === 'kg') : pts;
@@ -148,7 +153,8 @@ function drawChart() {
   const sel = vis.find(p => p.t === chartState.sel);
   if (sel) svg += `<line class="c-cross" x1="${X(sel.t)}" x2="${X(sel.t)}" y1="${T}" y2="${T + ph}"/>`;
   const dots = vis.length <= 45 ? vis : [vis[vis.length - 1]];
-  for (const p of dots) svg += `<circle class="c-dot" cx="${X(p.t)}" cy="${Y(p.v)}" r="4.5"/>`;
+  // Deload-Trainings als hohle Punkte
+  for (const p of dots) svg += `<circle class="c-dot ${p.deload ? 'deload' : ''}" cx="${X(p.t)}" cy="${Y(p.v)}" r="4.5"/>`;
   if (sel) svg += `<circle class="c-dot sel" cx="${X(sel.t)}" cy="${Y(sel.v)}" r="7"/>`;
   svg += '</g></svg>';
 
@@ -181,7 +187,8 @@ function tooltip(p, unit, x, y, W, H) {
     tip.appendChild(sets);
     const day = document.createElement('div');
     day.className = 'muted';
-    day.textContent = p.dayName + (p.replacedFrom ? ` · statt ${p.replacedFrom}` : '');
+    day.textContent = p.dayName + (p.deload ? ' · Deload-Woche' : '') +
+      (p.replacedFrom ? ` · statt ${p.replacedFrom}` : '');
     tip.appendChild(day);
   }
   tip.style.visibility = 'hidden';
@@ -270,6 +277,16 @@ function renderCharts() {
       <button class="${s.metric === 'weight' ? 'on' : ''}" data-action="chart-metric" data-metric="weight">Gewicht</button>
       <button class="${s.metric === 'max10' ? 'on' : ''}" data-action="chart-metric" data-metric="max10">Max. bei 10 Wdh.</button>
     </div>`;
+    // Ausführungsvarianten nur anbieten, wenn es für diese Übung welche gibt
+    const used = new Set();
+    for (const ses of data.sessions) {
+      for (const e of ses.entries) if (nameKey(e.name) === nameKey(s.name)) e.sets.forEach(x => used.add(variantOf(x)));
+    }
+    if ([...used].some(v => v)) {
+      h += `<div class="seg small">${Object.entries(VARIANTS).filter(([v]) => v === '' || used.has(v)).map(([v, label]) =>
+        `<button class="${s.variant === v ? 'on' : ''}" data-action="chart-variant" data-v="${v}">${label}</button>`).join('')}
+      </div>`;
+    }
   } else {
     h += `<div class="card">
       <label class="row"><span>Körpergewicht</span>
@@ -282,7 +299,7 @@ function renderCharts() {
 
   h += rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
   if (s.mode === 'bw') h += bwList();
-  else h += '<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen.</p>';
+  else h += '<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. Hohle Punkte = Deload-Woche.</p>';
   return h;
 }
 
@@ -291,6 +308,7 @@ views.charts = { title: 'Diagramme', tab: 'charts', render: renderCharts, after:
 Object.assign(actions, {
   'chart-mode': el => { Object.assign(chartState, { mode: el.dataset.mode, sel: null, end: null }); render(); },
   'chart-pick': el => showChartFor(el.dataset.name),
+  'chart-variant': el => { Object.assign(chartState, { variant: el.dataset.v, sel: null }); render(); },
   'chart-metric': el => { Object.assign(chartState, { metric: el.dataset.metric, sel: null }); render(); },
   'chart-range': el => { Object.assign(chartState, { range: Number(el.dataset.days), end: null }); render(); },
   'chart-shift': el => {
