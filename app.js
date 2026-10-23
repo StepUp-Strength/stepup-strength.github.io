@@ -108,7 +108,7 @@ const fmtTons = kg => kg >= 1000
   : `${Math.round(kg).toLocaleString('de-DE')} kg`;
 
 function fmtSet(s) {
-  const tank = (s.rir != null ? ` · Tank ${s.rir}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
+  const tank = (s.rir != null ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
   if (s.weight == null) return `${s.reps} Wdh.${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
   return `${fmtNum(s.weight)} kg × ${s.reps}${tank}`;
@@ -1237,7 +1237,11 @@ function renderData() {
     <button class="btn primary" data-action="export">Sicherung exportieren</button>
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
-    <p class="hint">Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>`;
+    <p class="hint">Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
+    <h2>Zum Ausprobieren</h2>
+    <button class="btn outline" data-action="load-demo">Beispieldaten laden (3 Zyklen)</button>
+    <p class="hint">Lädt 15 Wochen Beispieltraining mit dem Standard-Plan. <b>Ersetzt alle Daten auf diesem Gerät!</b>
+      Tipp: Die Seite dafür in Safari öffnen statt in der installierten App – beide haben getrennte Speicher, deine echten Daten bleiben so unberührt.</p>`;
 }
 
 /* ---------- Aktionen ---------- */
@@ -1756,6 +1760,23 @@ const actions = {
 
   export: () => exportData(),
   import: () => document.getElementById('import-file').click(),
+  'load-demo': async () => {
+    if (!confirm('Beispieldaten laden?\n\nAlle Daten auf diesem Gerät (Plan, Trainings, Körpergewicht) werden ersetzt.')) return;
+    try {
+      const d = await (await fetch('demo.json', { cache: 'no-store' })).json();
+      if (!isValidData(d)) throw new Error('ungültig');
+      data = upgradeData({
+        app: 'trainingsapp', version: 1,
+        days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume,
+      });
+      saveData();
+      draft = null; saveDraft();
+      toast('Beispieldaten geladen ✔');
+      go('history');
+    } catch (e) {
+      alert('Die Beispieldaten konnten nicht geladen werden. Bist du online?');
+    }
+  },
 };
 
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)

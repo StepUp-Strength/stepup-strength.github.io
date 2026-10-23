@@ -483,6 +483,8 @@ function tonnageStats() {
 
 function chartStats(vis, unit) {
   if (chartState.mode === 'ton') return tonnageStats();
+  // Deload-Trainings sind bewusst leichter und zählen für Aktuell/Veränderung/Bestwert nicht
+  if (vis.some(p => !p.deload)) vis = vis.filter(p => !p.deload);
   if (!vis.length) return '';
   const first = vis[0].v, last = vis[vis.length - 1].v;
   const diff = round1(last - first);
