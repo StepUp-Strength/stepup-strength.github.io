@@ -233,6 +233,13 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
   font-weight: 600;
 }
 
+/* Übung im Training hinzufügen */
+.check-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 17px; }
+.check-row input { width: 26px; height: 26px; flex: none; accent-color: var(--accent); }
+.added-row { display: flex; align-items: center; gap: 10px; margin: -4px 0 10px; font-size: 15px; color: var(--accent); }
+.added-row span { flex: 1; font-weight: 600; }
+.added-row .icon-btn { min-width: 0; height: 36px; font-size: 15px; color: var(--danger); }
+
 /* Übung ersetzen */
 .ex-head { display: flex; align-items: flex-start; gap: 10px; }
 .ex-head h2 { flex: 1; }

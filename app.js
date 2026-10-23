@@ -883,6 +883,10 @@ function renderTraining() {
           data-ei="${ei}" aria-label="Kommentar">💬</button>
         <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
       </div>`;
+    if (en.added) {
+      h += `<div class="added-row"><span>Heute zusätzlich</span>
+        <button class="icon-btn" data-action="added-remove" data-ei="${ei}">Entfernen</button></div>`;
+    }
     if (en.commentOpen) {
       h += `<textarea class="inp comment" rows="3" data-field="tr-comment" data-ei="${ei}"
         placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
@@ -940,6 +944,8 @@ function renderTraining() {
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
       </div></section>`;
   });
+  h += draft.adding ? renderAddExercise()
+    : '<button class="btn center" data-action="add-open">+ Übung hinzufügen</button>';
   h += `<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam). Sätze mit Pause oder langsam werden nur mit gleich ausgeführten Sätzen verglichen.</p>
     <button class="btn primary" data-action="tr-save">Training speichern</button>
     <div class="spacer"></div>
@@ -963,6 +969,29 @@ function renderReplace(en, ei) {
     <div class="row">
       <button class="btn" data-action="rep-cancel" data-ei="${ei}">Abbrechen</button>
       <button class="btn primary" data-action="rep-ok" data-ei="${ei}">Ersetzen</button>
+    </div>
+  </div>`;
+}
+
+// Im laufenden Training eine Übung ergänzen (Vorschläge, Max.-Gewicht, Satzzahl, optional in den Plan)
+function renderAddExercise() {
+  return `<div class="card replace add-ex">
+    <p class="lbl">Übung hinzufügen</p>
+    <input class="inp" type="text" data-field="add-name"
+      autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
+    <div class="suggest" hidden></div>
+    <label class="row">
+      <span>Max. kg bei 10 Wdh.</span>
+      <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="rep-max" placeholder="kg">
+    </label>
+    <label class="row"><span>Sätze</span>
+      <select class="inp sel" id="add-sets">${[1, 2, 3, 4, 5, 6].map(n =>
+        `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    </label>
+    <label class="check-row"><input type="checkbox" id="add-keep"> Auch dauerhaft in den Trainingsplan übernehmen</label>
+    <div class="row">
+      <button class="btn" data-action="add-cancel">Abbrechen</button>
+      <button class="btn primary" data-action="add-ok">Hinzufügen</button>
     </div>
   </div>`;
 }
@@ -1653,6 +1682,48 @@ const actions = {
     if (input) input.focus();
   },
   'rep-cancel': el => { draft.entries[el.dataset.ei].replacing = false; render(); },
+  'add-open': () => {
+    draft.adding = true;
+    saveDraft(); render();
+    const input = $view.querySelector('[data-field="add-name"]');
+    if (input) { input.scrollIntoView({ block: 'center' }); input.focus(); }
+  },
+  'add-cancel': () => { draft.adding = false; saveDraft(); render(); },
+  'add-ok': el => {
+    const panel = el.closest('.replace');
+    const name = panel.querySelector('[data-field="add-name"]').value.trim();
+    if (!name) { alert('Bitte eine Übung eingeben.'); return; }
+    const max10 = parseNum(panel.querySelector('[data-field="rep-max"]').value);
+    const sets = Number(panel.querySelector('#add-sets').value);
+    const keep = panel.querySelector('#add-keep').checked;
+    const day = findDay(draft.dayId);
+    const ex = withDefaults({ id: uid(), name, sets, setsEnd: sets, max10 });
+    // Ziele wie bei einer Plan-Übung: Wdh. nach Tag-Typ, Tank nach Art und Zykluswoche; Satzzahl wie gewählt
+    const bw = data.cycle.buildWeeks;
+    const week = draft.deload ? bw : draft.week || 1;
+    const en = { name, added: true };
+    setupEntry(en, {
+      sets, fixedSets: true, reps: repsFor(day, ex),
+      rir: rirFor(kindOf(ex), week, bw), rirText: rirLabel(kindOf(ex), week, bw),
+      max10, step: stepFor(ex),
+    });
+    draft.entries.push(en);
+    draft.adding = false;
+    if (keep && day) {
+      day.exercises.push(ex);
+      saveData();
+    }
+    saveDraft(); render();
+    const cards = $view.querySelectorAll('section.card');
+    if (cards.length) cards[cards.length - 1].scrollIntoView({ block: 'start' });
+    toast(keep ? `${name} hinzugefügt und im Plan gespeichert` : `${name} für heute hinzugefügt`);
+  },
+  'added-remove': el => {
+    const en = draft.entries[el.dataset.ei];
+    if (en.sets.some(s => s.touched) && !confirm(`„${en.name}“ mit den eingetragenen Sätzen entfernen?`)) return;
+    draft.entries.splice(el.dataset.ei, 1);
+    saveDraft(); render();
+  },
   'rep-ok': el => {
     const en = draft.entries[el.dataset.ei];
     const panel = el.closest('.replace');
@@ -1813,6 +1884,7 @@ const fields = {
     showSuggestions(el);
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
+  'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'cycle-start': el => {
     if (!el.value) return;
     data.cycle.start = mondayISO(el.value + 'T12:00:00');  // immer auf den Montag dieser Woche
@@ -1880,7 +1952,7 @@ document.addEventListener('pointerdown', e => {
 // Vorschläge schließen, wenn man das Feld verlässt
 document.addEventListener('focusout', e => {
   const f = e.target.dataset && e.target.dataset.field;
-  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name') {
+  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name') {
     const box = e.target.nextElementSibling;
     setTimeout(() => { box.hidden = true; }, 200);
   }
