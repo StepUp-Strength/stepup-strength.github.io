@@ -1,0 +1,218 @@
+:root {
+  --bg: #f2f2f7;
+  --card: #ffffff;
+  --text: #111111;
+  --muted: #6b6b70;
+  --line: #d8d8de;
+  --accent: #1e6fd9;
+  --danger: #d33a2c;
+  --input: #ffffff;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --card: #1c1c1e;
+    --text: #f2f2f7;
+    --muted: #9a9aa0;
+    --line: #3a3a3c;
+    --accent: #3d8bfd;
+    --danger: #ff5a52;
+    --input: #2c2c2e;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font: 20px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Kopfzeile */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#back {
+  min-height: 48px;
+  padding: 8px 8px 8px 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 20px;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 16px calc(110px + env(safe-area-inset-bottom));
+}
+
+/* Untere Navigation */
+nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+nav button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 66px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+}
+nav button span { font-size: 26px; line-height: 1.1; }
+nav button.active { color: var(--accent); font-weight: 600; }
+
+/* Buttons */
+.btn {
+  display: block;
+  width: 100%;
+  min-height: 62px;
+  margin: 0 0 12px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 21px;
+  font-weight: 600;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+.btn small {
+  display: block;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.btn.primary { background: var(--accent); color: #fff; text-align: center; }
+.btn.center { text-align: center; }
+.btn.danger {
+  background: transparent;
+  border: 2px solid var(--danger);
+  color: var(--danger);
+  text-align: center;
+  box-shadow: none;
+}
+.btn:active, .icon-btn:active, .stepper button:active { opacity: .6; }
+
+/* Karten & Text */
+.card {
+  margin: 0 0 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--card);
+}
+.card.highlight { border: 2px solid var(--accent); }
+h2 { margin: 8px 0 12px; font-size: 22px; }
+.card h2 { margin-top: 0; }
+.hint { color: var(--muted); }
+.sub { margin: 0 0 16px; color: var(--muted); }
+.spacer { height: 16px; }
+
+/* Eingaben */
+.inp, .setgrid input {
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 14px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  font-size: 22px;
+}
+input:focus { outline: none; border-color: var(--accent); }
+.lbl { display: block; margin-bottom: 16px; font-size: 17px; color: var(--muted); }
+.lbl .inp { margin-top: 6px; color: var(--text); }
+
+.row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.row > .btn { flex: 1; margin: 0; text-align: center; }
+
+.stepper { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.stepper b { min-width: 34px; font-size: 26px; text-align: center; }
+.stepper button, .icon-btn {
+  min-width: 58px;
+  height: 58px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--accent);
+  font: inherit;
+  font-size: 26px;
+  font-weight: 600;
+}
+.icon-btn.danger { color: var(--danger); font-size: 19px; margin-left: auto; }
+
+/* Training eintragen */
+.last { margin: -4px 0 12px; font-size: 17px; color: var(--muted); }
+.setgrid {
+  display: grid;
+  grid-template-columns: 34px 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+}
+.setgrid .head { font-size: 16px; color: var(--muted); text-align: center; }
+.setno { font-size: 20px; color: var(--muted); text-align: center; }
+.setgrid input { text-align: center; font-size: 26px; font-weight: 600; }
+
+/* Listen im Verlauf */
+.list { margin: 0 0 16px; padding: 0; list-style: none; }
+.list li { margin-bottom: 10px; padding: 14px 16px; border-radius: 14px; background: var(--card); }
+.list .date { font-weight: 600; }
+.list .date small { font-weight: 400; color: var(--muted); }
+.list .sets { margin-top: 4px; font-size: 21px; }
+
+/* Hinweis-Meldung */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(90px + env(safe-area-inset-bottom));
+  z-index: 10;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 14px 22px;
+  border-radius: 14px;
+  background: rgba(30, 30, 30, .92);
+  color: #fff;
+  font-size: 19px;
+  text-align: center;
+}

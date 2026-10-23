@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Training</title>
+
+  <!-- PWA / iPhone-Home-Bildschirm -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1e6fd9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Training">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <button id="back" data-action="back" hidden>‹ Zurück</button>
+    <h1 id="title">Training</h1>
+  </header>
+
+  <main id="view"></main>
+
+  <nav id="tabs">
+    <button data-action="tab" data-tab="start"><span>🏋️</span>Training</button>
+    <button data-action="tab" data-tab="plan"><span>📋</span>Plan</button>
+    <button data-action="tab" data-tab="history"><span>📈</span>Verlauf</button>
+    <button data-action="tab" data-tab="data"><span>💾</span>Sicherung</button>
+  </nav>
+
+  <div id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
