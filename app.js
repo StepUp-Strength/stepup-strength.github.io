@@ -1476,10 +1476,7 @@ function renderData() {
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (das „Max. kg bei 10 Wdh.“ wird geleert). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
-    <h2>Zum Ausprobieren</h2>
-    <button class="btn outline" data-action="load-demo">Beispieldaten laden (3 Zyklen)</button>
-    <p class="hint">Lädt 15 Wochen Beispieltraining mit dem Standard-Plan. <b>Ersetzt alle Daten auf diesem Gerät!</b>
-      Tipp: Die Seite dafür in Safari öffnen statt in der installierten App – beide haben getrennte Speicher, deine echten Daten bleiben so unberührt.</p>`;
+`;
 }
 
 /* ---------- Aktionen ---------- */
@@ -2084,23 +2081,6 @@ const actions = {
     draft = null; saveDraft();
     toast('App zurückgesetzt');
     go('start');
-  },
-  'load-demo': async () => {
-    if (!confirm('Beispieldaten laden?\n\nAlle Daten auf diesem Gerät (Plan, Trainings, Körpergewicht) werden ersetzt.')) return;
-    try {
-      const d = await (await fetch('demo.json', { cache: 'no-store' })).json();
-      if (!isValidData(d)) throw new Error('ungültig');
-      data = upgradeData({
-        app: 'trainingsapp', version: 1,
-        days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume, steps: d.steps,
-      });
-      saveData();
-      draft = null; saveDraft();
-      toast('Beispieldaten geladen ✔');
-      go('history');
-    } catch (e) {
-      alert('Die Beispieldaten konnten nicht geladen werden. Bist du online?');
-    }
   },
 };
 
