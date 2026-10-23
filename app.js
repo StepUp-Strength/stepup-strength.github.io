@@ -411,6 +411,15 @@ function fromRef(src, target, plusOne, i) {
   return { weight, reps };
 }
 
+// Kommentar aus dem letzten Training dieser Übung, das einen hatte
+function lastCommentFor(name) {
+  for (const s of sessionsNewestFirst()) {
+    const e = s.entries.find(en => nameKey(en.name) === nameKey(name));
+    if (e && e.comment) return e.comment;
+  }
+  return null;
+}
+
 // Neueste Sätze einer Variante (falls es keine Bezugswoche mit dieser Variante gibt)
 function lastVariantSets(name, v) {
   for (const s of sessionsNewestFirst()) {
@@ -463,9 +472,26 @@ function proposeSet(en, i, v) {
   };
 }
 
+// Schlecht geschlafen / Stress: erwartete Wdh. um pen senken. Fiele der Satz unter MIN_REPS,
+// geht wie sonst auch das Gewicht runter.
+function applyPenalty(set, t, pen) {
+  const r = parseNum(set.reps);
+  if (!pen || r == null) return set;
+  let reps = r - pen;
+  let w = parseNum(set.weight);
+  if (reps < MIN_REPS && w != null) ({ weight: w, reps } = planSet(reps + t.rir, w, { step: 2.5, ...t }, 0));
+  return {
+    ...set,
+    weight: w != null ? fmtNum(w) : set.weight,
+    reps: String(Math.max(1, reps)),
+    baseWeight: w != null ? w : set.baseWeight,
+  };
+}
+
 // Satz i (neu) vorschlagen und den ursprünglichen Vorschlag für die Bremse merken
 function applyProposal(en, i, v) {
-  const { set, rule } = proposeSet(en, i, v);
+  const { set: proposed, rule } = proposeSet(en, i, v);
+  const set = applyPenalty(proposed, en.target, draft.penalty || 0);
   en.sets[i] = set;
   en.planned[i] = { weight: parseNum(set.weight), reps: parseNum(set.reps), variant: v };
   if (i === 0) en.rule = rule;
@@ -483,6 +509,7 @@ const views = {
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
   exercise: { title: p => p.name,     tab: 'history', back: 'history', render: renderExercise },
   session:  { title: 'Training',      tab: 'history', back: 'history', render: renderSession },
+  check:    { title: 'Vor dem Training', tab: 'start', back: 'start', render: renderCheck },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
 };
 
@@ -561,14 +588,25 @@ function renderTraining() {
     : draft.intro
       ? '<p class="intro-note">Intro-Woche: ein Satz mehr als im Deload. Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.</p>'
       : '';
+  if (draft.penalty) {
+    h += `<p class="readiness-note">Heute ${readinessText(draft.readiness)}: pro Übung ${draft.penalty} Wdh. weniger erwartet.</p>`;
+  }
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
     h += `<section class="card">
       <div class="ex-head">
         <h2>${esc(en.name)}</h2>
+        <button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
+          data-ei="${ei}" aria-label="Kommentar">💬</button>
         <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
       </div>`;
+    if (en.commentOpen) {
+      h += `<textarea class="inp comment" rows="3" data-field="tr-comment" data-ei="${ei}"
+        placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
+    }
+    const lastComment = lastCommentFor(en.name);
+    if (lastComment) h += `<p class="last">💬 Letztes Mal: „${esc(lastComment)}“</p>`;
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
     if (en.target) {
@@ -783,7 +821,7 @@ function renderExercise({ name }) {
   const rows = [];
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) rows.push({ session: s, sets: e.sets });
+    if (e) rows.push({ session: s, sets: e.sets, comment: e.comment });
   }
   if (!rows.length) return '<p class="hint">Keine Einträge.</p>';
 
@@ -794,7 +832,8 @@ function renderExercise({ name }) {
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
-      <div class="sets">${r.sets.map(fmtSet).join('<br>')}</div></li>`;
+      <div class="sets">${r.sets.map(fmtSet).join('<br>')}</div>
+      ${r.comment ? `<div class="comment-text">💬 ${esc(r.comment)}</div>` : ''}</li>`;
   }
   return h + '</ul>';
 }
@@ -802,17 +841,42 @@ function renderExercise({ name }) {
 function renderSession({ id }) {
   const s = data.sessions.find(x => x.id === id);
   if (!s) return '<p class="hint">Training nicht gefunden.</p>';
-  let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}</p><ul class="list">`;
+  let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}` +
+    (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p><ul class="list">';
   for (const e of s.entries) {
     const res = e.result
       ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
       : '';
     const instead = e.replacedFrom ? ` <small>statt ${esc(e.replacedFrom)}</small>` : '';
+    const comment = e.comment ? `<div class="comment-text">💬 ${esc(e.comment)}</div>` : '';
     h += `<li><div class="date">${esc(e.name)}${instead}</div>
-      <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div>${res}</li>`;
+      <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
+
+function renderCheck({ id, step }) {
+  const q = step === 1 ? 'Hast du gut geschlafen?' : 'Hattest du sonst viel Stress?';
+  const hint = step === 1 ? 'Bei „Nein“ wird pro Übung 1 Wiederholung weniger erwartet.'
+    : 'Bei „Ja“ wird pro Übung 1 Wiederholung weniger erwartet.';
+  return `<div class="card check">
+    <p class="sub">${esc(findDay(id).name)} · Frage ${step} von 2</p>
+    <h2 class="question">${q}</h2>
+    <div class="row">
+      <button class="btn primary" data-action="check-answer" data-answer="yes">Ja</button>
+      <button class="btn primary" data-action="check-answer" data-answer="no">Nein</button>
+    </div>
+    <p class="hint">${hint}</p>
+  </div>`;
+}
+
+const readinessText = r => {
+  if (!r) return '';
+  const parts = [];
+  if (!r.sleptWell) parts.push('schlecht geschlafen');
+  if (r.stress) parts.push('viel Stress');
+  return parts.join(', ');
+};
 
 function renderData() {
   return `<div class="card">
@@ -828,14 +892,22 @@ function renderData() {
 
 /* ---------- Aktionen ---------- */
 
-function startDay(id) {
+// Vor dem Training: zwei kurze Fragen, danach startDay mit dem Abzug
+function beginCheck(id) {
   const day = findDay(id);
-  const exercises = day.exercises.filter(e => e.name.trim());
-  if (!exercises.length) {
+  if (!day.exercises.some(e => e.name.trim())) {
     alert('Dieser Trainingstag hat noch keine Übungen. Lege sie unter „Plan“ an.');
     return;
   }
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+  go('check', { id, step: 1 });
+}
+
+// readiness = { sleptWell, stress }; jede negative Antwort zieht 1 Wdh. pro Übung ab
+function startDay(id, readiness = { sleptWell: true, stress: false }) {
+  const day = findDay(id);
+  const exercises = day.exercises.filter(e => e.name.trim());
+  if (!exercises.length) return;
 
   const ci = cycleInfo();
   draft = {
@@ -846,6 +918,8 @@ function startDay(id) {
     intro: ci.intro,
     cycleStart: ci.cycleStart,
     week: ci.week,
+    readiness,
+    penalty: (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
     entries: [],
   };
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
@@ -939,6 +1013,7 @@ function saveTraining() {
       ...(en.replacedFrom ? { replacedFrom: en.replacedFrom } : {}),
       target: en.target,
       planned: en.planned,
+      ...((en.comment || '').trim() ? { comment: en.comment.trim() } : {}),
       // Nur Sätze, die man angefasst hat – unveränderte Vorschläge zählen nicht als erledigt
       sets: en.sets
         .filter(s => s.touched)
@@ -970,6 +1045,7 @@ function saveTraining() {
 
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
   if (draft.deload) session.deload = true;
+  if (draft.penalty) session.readiness = draft.readiness;
   if (draft.cycleStart) Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
   data.sessions.push(session);
   saveData();
@@ -1095,7 +1171,19 @@ const actions = {
   tab: el => go(el.dataset.tab),
   back: () => go(views[current.view].back),
   resume: () => go('training'),
-  'start-day': el => startDay(el.dataset.id),
+  'start-day': el => beginCheck(el.dataset.id),
+  'check-answer': el => {
+    const yes = el.dataset.answer === 'yes';
+    const { id, step } = current.params;
+    if (step === 1) go('check', { id, step: 2, sleptWell: yes });
+    else startDay(id, { sleptWell: current.params.sleptWell, stress: yes });
+  },
+  'comment-toggle': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.commentOpen = !en.commentOpen;
+    saveDraft(); render();
+    if (en.commentOpen) $view.querySelector(`[data-field="tr-comment"][data-ei="${el.dataset.ei}"]`).focus();
+  },
 
   'tr-add-set': el => {
     const sets = draft.entries[el.dataset.ei].sets;
@@ -1282,6 +1370,13 @@ const fields = {
     s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
     s.touched = true;
     recalcSets(+el.dataset.ei);
+    saveDraft();
+  },
+  'tr-comment': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.comment = el.value;
+    const bubble = $view.querySelector(`[data-action="comment-toggle"][data-ei="${el.dataset.ei}"]`);
+    if (bubble) bubble.classList.toggle('has', !!el.value.trim());
     saveDraft();
   },
   'tr-rir': el => {

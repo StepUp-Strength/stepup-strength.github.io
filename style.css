@@ -164,6 +164,24 @@ input:focus { outline: none; border-color: var(--accent); }
 .lbl { display: block; margin-bottom: 16px; font-size: 17px; color: var(--muted); }
 .lbl .inp { margin-top: 6px; color: var(--text); }
 
+/* Kommentar & Tagesform */
+.icon-btn.bubble { min-width: 44px; height: 44px; padding: 0; font-size: 20px; opacity: .55; }
+.icon-btn.bubble.has { opacity: 1; background: var(--accent); }
+.inp.comment { min-height: 0; margin: 0 0 12px; font-size: 18px; line-height: 1.35; resize: vertical; }
+.comment-text { margin-top: 6px; font-size: 17px; color: var(--muted); }
+.check { padding-block: 24px; text-align: center; }
+.check .question { margin: 8px 0 20px; font-size: 28px; }
+.check .row .btn { min-height: 76px; font-size: 26px; }
+.readiness-note {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 2px solid #e8a317;
+  font-size: 18px;
+  font-weight: 600;
+}
+
 /* Übung ersetzen */
 .ex-head { display: flex; align-items: flex-start; gap: 10px; }
 .ex-head h2 { flex: 1; }
