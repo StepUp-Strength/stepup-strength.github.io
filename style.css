@@ -262,6 +262,15 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
 .area-grid .vchip { min-height: 52px; font-size: 18px; background: var(--bg); }
 .area-grid .vchip.on { background: #e8a317; color: #111; }
 
+/* Aufwärmen */
+.warmup { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: 16px; }
+.warmup:empty { display: none; }
+.warm-title { margin-bottom: 4px; font-weight: 700; }
+.warm-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+.warm-row span { color: var(--muted); }
+.warm-row.work { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.warmup small { display: block; margin-top: 4px; font-size: 13px; color: var(--muted); }
+
 /* Übung im Training hinzufügen */
 .check-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 17px; }
 .check-row input { width: 26px; height: 26px; flex: none; accent-color: var(--accent); }

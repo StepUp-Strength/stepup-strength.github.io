@@ -886,6 +886,51 @@ function stagnationText(h) {
     'Volumen anpassen (Sätze pro Muskelgruppe ±1) oder Intensität ändern (anderer Wdh.-Bereich, Ausführung „mit Pause“ oder „langsam“).';
 }
 
+/* ---------- Aufwärmen bei Grundübungen ---------- */
+
+const BAR_KG = 20;
+const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+
+// Grundübungen mit Langhantel (nicht z. B. Dips)
+const hasWarmup = en => kindOf({ name: en.name }) === 'compound' && !/dips/.test(norm(en.name)) && !!en.sets.length;
+
+// Stange, dann +20 kg, bis der Abstand zum Arbeitssatz unter 20 kg liegt, dann noch einmal +10 kg
+function warmupSets(work) {
+  if (!work || work <= BAR_KG) return [];
+  const list = [BAR_KG];
+  let w = BAR_KG;
+  while (work - w >= 20 && w + 20 < work) { w += 20; list.push(w); }
+  if (w + 10 < work) list.push(w + 10);
+  return list;
+}
+
+// Wiederholungen beim Aufwärmen: Stange 10, danach weniger, je näher am Arbeitsgewicht
+function warmupReps(w, work) {
+  if (w <= BAR_KG) return 10;
+  const p = w / work;
+  return p <= 0.5 ? 8 : p <= 0.7 ? 5 : p <= 0.85 ? 3 : 2;
+}
+
+// Scheiben pro Seite, z. B. 80 kg -> „25 + 5“
+function platesPerSide(total) {
+  let rest = Math.round((total - BAR_KG) / 2 * 100) / 100;
+  if (rest <= 0) return 'nur Stange';
+  const out = [];
+  for (const p of PLATES) {
+    while (rest >= p - 1e-9) { out.push(p); rest = Math.round((rest - p) * 100) / 100; }
+  }
+  return out.map(fmtNum).join(' + ') + (rest > 0 ? ` (+ ${fmtNum(rest)})` : '');
+}
+
+function warmupHtml(work) {
+  const sets = warmupSets(work);
+  if (!sets.length) return '';
+  return `<div class="warm-title">🔥 Aufwärmen</div>` +
+    sets.map(w => `<div class="warm-row"><b>${fmtNum(w)} kg × ${warmupReps(w, work)}</b><span>${platesPerSide(w)}</span></div>`).join('') +
+    `<div class="warm-row work"><b>Arbeitssatz ${fmtNum(work)} kg</b><span>${platesPerSide(work)}</span></div>
+    <small>Rechts: Scheiben pro Seite (Stange ${BAR_KG} kg)</small>`;
+}
+
 /* ---------- Bildschirme ---------- */
 
 const views = {
@@ -997,9 +1042,6 @@ function renderTraining() {
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
     <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
-  if (draft.penalty) {
-    h += `<p class="readiness-note">Heute ${readinessText(draft.readiness)}: pro Übung ${draft.penalty} Wdh. weniger erwartet.</p>`;
-  }
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
@@ -1038,6 +1080,7 @@ function renderTraining() {
     }
     const stall = stalls.find(s => s.key === nameKey(en.name));
     if (stall) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
+    if (hasWarmup(en)) h += `<div class="warmup" data-warm="${ei}">${warmupHtml(parseNum(en.sets[0].weight))}</div>`;
     const lastComment = lastCommentFor(en.name);
     if (lastComment) {
       h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
@@ -1429,6 +1472,10 @@ function renderData() {
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
     <p class="hint">Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
+    <h2>Daten löschen</h2>
+    <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
+    <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
+    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (das „Max. kg bei 10 Wdh.“ wird geleert). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
     <h2>Zum Ausprobieren</h2>
     <button class="btn outline" data-action="load-demo">Beispieldaten laden (3 Zyklen)</button>
     <p class="hint">Lädt 15 Wochen Beispieltraining mit dem Standard-Plan. <b>Ersetzt alle Daten auf diesem Gerät!</b>
@@ -2017,6 +2064,27 @@ const actions = {
 
   export: () => exportData(),
   import: () => document.getElementById('import-file').click(),
+  'reset-trainings': () => {
+    if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht und Schritte löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
+    if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {} });
+    // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
+    data.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; }));
+    data.cycle.start = mondayISO(new Date());
+    saveData();
+    draft = null; saveDraft();
+    toast('Trainings gelöscht – Plan ist noch da');
+    go('plan');
+  },
+  'reset-all': () => {
+    if (!confirm('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte und Einstellungen werden entfernt.')) return;
+    if (!confirm('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
+    data = upgradeData(emptyData());
+    saveData();
+    draft = null; saveDraft();
+    toast('App zurückgesetzt');
+    go('start');
+  },
   'load-demo': async () => {
     if (!confirm('Beispieldaten laden?\n\nAlle Daten auf diesem Gerät (Plan, Trainings, Körpergewicht) werden ersetzt.')) return;
     try {
@@ -2078,6 +2146,9 @@ const fields = {
   'tr-weight': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.weight = el.value;
+    // Aufwärmen richtet sich nach dem ersten Arbeitssatz
+    const warm = +el.dataset.si === 0 && $view.querySelector(`[data-warm="${el.dataset.ei}"]`);
+    if (warm) warm.innerHTML = warmupHtml(parseNum(el.value));
     s.manualWeight = true;  // selbst gewähltes Gewicht -> nur noch Wdh. anpassen
     s.touched = true;
     recalcSets(+el.dataset.ei);
