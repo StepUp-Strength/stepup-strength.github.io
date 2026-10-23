@@ -332,11 +332,14 @@ const RIR_PLAN = { 4: [2, 2, 1.5, 1], 5: [2, 2, 1.5, 1, [0.5, 1]] };
 // Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
 const KINDS = { compound: 'Grundübung', normal: 'Normal', assist: 'Assistenz' };
 const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
-const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken|kreuzheben|schulterdrucken langhantel|klimmzuge|rudern langhantel|rudern t-bar|hackenschmidt|beinpresse|dips|hip thrust langhantel|umsetzen|reissen)/;
-const ASSIST = /curls|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
+const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken[^(]*\(langhantel|kreuzheben|schulterdrucken langhantel|rudern langhantel|dips|umsetzen|reissen)/;
+const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
 
+// Übungsart: selbst gewählt > Übungsliste > Vermutung anhand des Namens
 function kindOf(ex) {
   if (ex.kind) return ex.kind;
+  const listed = EXERCISE_KINDS.get(nameKey(ex.name || ''));
+  if (listed) return listed;
   const n = norm(ex.name || '');
   return COMPOUND.test(n) ? 'compound' : ASSIST.test(n) ? 'assist' : 'normal';
 }
