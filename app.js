@@ -35,6 +35,8 @@ function upgradeData(d) {
   d.days.forEach(day => day.exercises.forEach(withDefaults));
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
+  if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
+  if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   // Sätze pro Muskelgruppe und Training (im Plan einstellbar)
   if (!d.volume) d.volume = defaultVolume();
   // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
@@ -767,11 +769,128 @@ function applyProposal(en, i, v) {
 
 const weekLabel = w => w === 1 ? 'Intro-Woche' : `Woche ${w}`;
 
+/* ---------- Trainingsdauer ---------- */
+
+const fmtDur = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min`;
+
+function fmtClock(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return (h ? `${h}:${String(m).padStart(2, '0')}` : String(m)) + ':' + String(sec).padStart(2, '0');
+}
+
+// Dauer des letzten Trainings dieses Trainingstags (in Minuten)
+function lastDuration(dayId) {
+  const s = sessionsNewestFirst().find(x => x.dayId === dayId && x.duration);
+  return s ? s.duration : null;
+}
+
+// Uhr im Training: läuft ab dem Start (draft.date), auch wenn die App zwischendurch geschlossen war
+let trTimer = null;
+function startTrainingTimer() {
+  clearInterval(trTimer);
+  const tick = () => {
+    const el = document.getElementById('tr-timer');
+    if (!el || !draft) { clearInterval(trTimer); return; }
+    el.textContent = fmtClock(Date.now() - Date.parse(draft.date));
+  };
+  tick();
+  trTimer = setInterval(tick, 1000);
+}
+
+/* ---------- Beschwerden (einmal pro Zyklus abgefragt) ---------- */
+
+const BODY_AREAS = {
+  schulter: { label: 'Schulter', groups: ['brust', 'schulter_vorne', 'schulter_seite', 'schulter_hinten'], match: /dips/,
+    tip: 'Griff etwas enger, lieber Kurzhantel oder Maschine, Bewegung nicht ganz ausreizen' },
+  ellenbogen: { label: 'Ellenbogen', groups: ['bizeps', 'trizeps', 'unterarme'],
+    tip: 'Seil oder SZ-Stange statt gerader Stange, lieber etwas leichter' },
+  handgelenk: { label: 'Handgelenk', groups: ['bizeps', 'unterarme'], match: /bankdrucken|liegestutz/,
+    tip: 'Handgelenk gerade halten, Neutralgriff oder Bandagen nutzen' },
+  ruecken: { label: 'Rücken', groups: ['ruecken_unten'], match: /kniebeugen|kreuzheben|rudern langhantel|good mornings|t-bar/,
+    tip: 'Rücken gerade, Gewicht reduzieren, lieber Maschine (z. B. Beinpresse, brustgestütztes Rudern)' },
+  huefte: { label: 'Hüfte', groups: ['gesaess', 'adduktoren', 'abduktoren'], match: /kniebeugen|ausfallschritte|bulgarian|kreuzheben/,
+    tip: 'Bewegungsumfang etwas verkürzen, Gewicht reduzieren' },
+  knie: { label: 'Knie', groups: ['quadrizeps'],
+    tip: 'Tiefe begrenzen, lieber Beinpresse oder Hackenschmidt, Beinstrecker leichter' },
+  sprunggelenk: { label: 'Sprunggelenk', groups: ['waden'], match: /ausfallschritte|step-ups/,
+    tip: 'Gewicht reduzieren, Waden lieber sitzend' },
+};
+
+// Beschwerden für den aktuellen Zyklus (null = noch nicht abgefragt)
+function currentComplaints() {
+  const ci = cycleInfo();
+  const c = data.complaints.find(x => x.cycleStart === ci.cycleStart);
+  return c ? c.areas : null;
+}
+
+// Hinweise für eine Übung aus den Beschwerden dieses Zyklus
+function complaintTips(name) {
+  const areas = currentComplaints() || [];
+  const g = groupOf({ name }), n = norm(name);
+  return areas.filter(a => BODY_AREAS[a] && (BODY_AREAS[a].groups.includes(g) || (BODY_AREAS[a].match && BODY_AREAS[a].match.test(n))))
+    .map(a => ({ label: BODY_AREAS[a].label, tip: BODY_AREAS[a].tip }));
+}
+
+/* ---------- Stillstand erkennen ---------- */
+
+// Geschätztes Max. bei 10 Wdh. pro Übung und abgeschlossenem Zyklus (Deload zählt nicht).
+// Weniger als 1 % Zuwachs gegenüber dem Zyklus davor = Stillstand.
+function stagnationHints() {
+  const ci = cycleInfo();
+  const byEx = {};
+  for (const s of data.sessions) {
+    if (s.deload) continue;
+    const cs = sessionCycle(s).cycleStart;
+    if (cs >= ci.cycleStart) continue;  // nur abgeschlossene Zyklen
+    for (const e of s.entries) {
+      const est = e.sets.filter(x => !x.variant && x.weight != null && x.reps != null)
+        .map(x => x.weight / repFactor(x.reps + (x.rir != null ? x.rir : 0)));
+      if (!est.length) continue;
+      const k = nameKey(e.name);
+      const o = byEx[k] = byEx[k] || { name: e.name, cycles: {} };
+      o.cycles[cs] = Math.max(o.cycles[cs] || 0, ...est);
+    }
+  }
+  const inPlan = new Set(data.days.flatMap(d => d.exercises.map(e => nameKey(e.name))));
+  const hints = [];
+  for (const [k, o] of Object.entries(byEx)) {
+    if (!inPlan.has(k) || data.hintsDismissed[k] === ci.cycleStart) continue;
+    const vals = Object.keys(o.cycles).sort().map(c => o.cycles[c]);
+    if (vals.length < 2) continue;
+    const last = vals[vals.length - 1], prev = vals[vals.length - 2];
+    if (last > prev * 1.01) continue;
+    // wie viele Zyklen in Folge ohne Fortschritt?
+    let stalled = 1;
+    for (let i = vals.length - 2; i > 0 && vals[i] <= vals[i - 1] * 1.01; i--) stalled++;
+    hints.push({ key: k, name: o.name, prev: round1(prev), last: round1(last), stalled });
+  }
+  return hints;
+}
+
+// Alternative Übungen derselben Muskelgruppe (bevorzugt gleiche Art), die noch nicht im Plan stehen
+function alternativesFor(name) {
+  const g = groupOf({ name }), kind = kindOf({ name });
+  const inPlan = new Set(data.days.flatMap(d => d.exercises.map(e => nameKey(e.name))));
+  return EXERCISE_LIST
+    .filter(([n, k, gr]) => gr === g && !inPlan.has(nameKey(n)) && nameKey(n) !== nameKey(name))
+    .sort((a, b) => (b[1] === kind) - (a[1] === kind))
+    .slice(0, 2).map(([n]) => n);
+}
+
+function stagnationText(h) {
+  const alts = alternativesFor(h.name);
+  return `Geschätztes Max. bei 10 Wdh.: ${fmtNum(h.prev)} → ${fmtNum(h.last)} kg` +
+    (h.stalled > 1 ? ` (${h.stalled} Zyklen ohne Fortschritt)` : '') +
+    `<br>Ideen: ${alts.length ? `Variante wechseln (z. B. ${alts.map(esc).join(' oder ')}), ` : ''}` +
+    'Volumen anpassen (Sätze pro Muskelgruppe ±1) oder Intensität ändern (anderer Wdh.-Bereich, Ausführung „mit Pause“ oder „langsam“).';
+}
+
 /* ---------- Bildschirme ---------- */
 
 const views = {
   start:    { title: 'Training',      tab: 'start',   render: renderStart },
-  training: { title: () => draft ? draft.dayName : 'Training', tab: 'start', back: 'start', render: renderTraining },
+  training: { title: () => draft ? draft.dayName : 'Training', tab: 'start', back: 'start', render: renderTraining, after: startTrainingTimer },
   plan:     { title: 'Trainingsplan', tab: 'plan',    render: renderPlan },
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
@@ -825,8 +944,25 @@ function cycleCard(ci) {
   </div>`;
 }
 
+// Start-Bildschirm: Stillstand-Hinweise und Beschwerden dieses Zyklus
+function hintsCard() {
+  const hints = stagnationHints();
+  const areas = currentComplaints() || [];
+  if (!hints.length && !areas.length) return '';
+  let h = '<div class="card hints"><h2>💡 Hinweise</h2>';
+  if (areas.length) {
+    h += `<p><b>Beschwerden in diesem Zyklus:</b> ${areas.map(a => BODY_AREAS[a].label).join(', ')}.
+      Betroffene Übungen sind im Training markiert. Bei Schmerzen den Satz abbrechen.</p>`;
+  }
+  for (const s of hints) {
+    h += `<div class="hint-item"><div><b>Stillstand bei ${esc(s.name)}</b><br><small>${stagnationText(s)}</small></div>
+      <button class="icon-btn" data-action="hint-dismiss" data-key="${esc(s.key)}" aria-label="Hinweis ausblenden">✕</button></div>`;
+  }
+  return h + '</div>';
+}
+
 function renderStart() {
-  let h = cycleCard(cycleInfo());
+  let h = cycleCard(cycleInfo()) + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -842,7 +978,9 @@ function renderStart() {
   const sessions = sessionsNewestFirst();
   for (const day of data.days) {
     const last = sessions.find(s => s.dayId === day.id);
-    const info = `${day.exercises.length} Übungen` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '');
+    const dur = lastDuration(day.id);
+    const info = `${day.exercises.length} Übungen` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
+      (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     h += `<button class="btn" data-action="start-day" data-id="${day.id}">
       ${esc(day.name)}<small>${info}</small></button>`;
   }
@@ -856,6 +994,9 @@ function renderTraining() {
     : draft.intro
       ? '<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.</p>'
       : '';
+  const lastDur = lastDuration(draft.dayId);
+  h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
+    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
   if (draft.penalty) {
     h += `<p class="readiness-note">Heute ${readinessText(draft.readiness)}: pro Übung ${draft.penalty} Wdh. weniger erwartet.</p>`;
   }
@@ -874,6 +1015,7 @@ function renderTraining() {
   }
   h += '<button class="btn outline" data-action="reorder-toggle">⇅ Reihenfolge ändern</button>';
 
+  const stalls = stagnationHints();
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
     h += `<section class="card">
@@ -891,6 +1033,11 @@ function renderTraining() {
       h += `<textarea class="inp comment" rows="3" data-field="tr-comment" data-ei="${ei}"
         placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
     }
+    for (const c of complaintTips(en.name)) {
+      h += `<p class="complaint-note">⚠️ ${c.label}: ${c.tip}. Bei Schmerz Satz abbrechen.</p>`;
+    }
+    const stall = stalls.find(s => s.key === nameKey(en.name));
+    if (stall) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
     const lastComment = lastCommentFor(en.name);
     if (lastComment) {
       h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
@@ -1187,7 +1334,7 @@ function renderHistory() {
   h += '<h2>Alle Trainings</h2>';
   for (const s of sessionsNewestFirst()) {
     h += `<button class="btn" data-action="open-session" data-id="${s.id}">
-      ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.deload ? ' · Deload' : ''}</small></button>`;
+      ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.deload ? ' · Deload' : ''}</small></button>`;
   }
   return h;
 }
@@ -1220,7 +1367,8 @@ function renderSession({ id, fresh }) {
   const won = fresh || [];
   const top = (won.length ? `<div class="card award-new">${won.map(a =>
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
-    `<div class="stats one"><div class="stat"><span>Heute bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div></div>`;
+    `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
+      <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
   let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}` +
     (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p><ul class="list">';
   for (const e of s.entries) {
@@ -1235,18 +1383,31 @@ function renderSession({ id, fresh }) {
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
 
-function renderCheck({ id, step }) {
-  const q = step === 1 ? 'Hast du gut geschlafen?' : 'Hattest du sonst viel Stress?';
-  const hint = step === 1 ? 'Bei „Nein“ wird pro Übung 1 Wiederholung weniger erwartet.'
-    : 'Bei „Ja“ wird pro Übung 1 Wiederholung weniger erwartet.';
+function renderCheck({ id, step, areas }) {
+  const total = currentComplaints() == null ? 3 : 2;  // Beschwerden nur einmal pro Zyklus
+  if (step === 3) {
+    const sel = areas || [];
+    return `<div class="card check">
+      <p class="sub">${esc(findDay(id).name)} · Frage 3 von 3 · einmal pro Zyklus</p>
+      <h2 class="question">Hast du aktuell Beschwerden oder Schmerzen?</h2>
+      <div class="area-grid">${Object.entries(BODY_AREAS).map(([k, a]) =>
+        `<button class="vchip ${sel.includes(k) ? 'on' : ''}" data-action="check-area" data-k="${k}">${a.label}</button>`).join('')}</div>
+      <div class="row">
+        <button class="btn" data-action="check-areas-done" data-none="1">Keine</button>
+        <button class="btn primary" data-action="check-areas-done">Weiter</button>
+      </div>
+      <p class="hint">Mehrere antippen möglich. Betroffene Übungen bekommen in diesem Zyklus einen Hinweis.</p>
+    </div>`;
+  }
+  const [emoji, q] = step === 1 ? ['😴', 'Hast du gut geschlafen?'] : ['😫', 'Hattest du sonst viel Stress?'];
   return `<div class="card check">
-    <p class="sub">${esc(findDay(id).name)} · Frage ${step} von 2</p>
+    <p class="sub">${esc(findDay(id).name)} · Frage ${step} von ${total}</p>
+    <div class="check-emoji" aria-hidden="true">${emoji}</div>
     <h2 class="question">${q}</h2>
     <div class="row">
       <button class="btn primary" data-action="check-answer" data-answer="yes">Ja</button>
       <button class="btn primary" data-action="check-answer" data-answer="no">Nein</button>
     </div>
-    <p class="hint">${hint}</p>
   </div>`;
 }
 
@@ -1326,6 +1487,8 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   });
   saveDraft();
   go('training');
+  const dur = lastDuration(day.id);
+  if (dur) toast(`⏱ Letztes Mal hat „${day.name}“ ${fmtDur(dur)} gedauert`);
 }
 
 // Ziel und vorgeschlagene Sätze einer Übung je nach Zykluswoche festlegen:
@@ -1443,6 +1606,9 @@ function saveTraining() {
   if (draft.deload) session.deload = true;
   if (draft.penalty) session.readiness = draft.readiness;
   if (draft.cycleStart) Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
+  // Trainingsdauer in Minuten (über 10 Stunden = vermutlich vergessen zu speichern -> nicht werten)
+  const minutes = Math.round((Date.now() - Date.parse(draft.date)) / 60000);
+  if (minutes > 0 && minutes < 600) session.duration = minutes;
   const before = unlockedIds();
   data.sessions.push(session);
   const fresh = achievementProgress().done.filter(a => !before.has(a.id))
@@ -1495,6 +1661,7 @@ function importData(file) {
     data = upgradeData({
       app: 'trainingsapp', version: 1,
       days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume, steps: d.steps,
+      complaints: d.complaints, hintsDismissed: d.hintsDismissed,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -1578,7 +1745,25 @@ const actions = {
     const yes = el.dataset.answer === 'yes';
     const { id, step } = current.params;
     if (step === 1) go('check', { id, step: 2, sleptWell: yes });
+    else if (currentComplaints() == null) go('check', { id, step: 3, sleptWell: current.params.sleptWell, stress: yes, areas: [] });
     else startDay(id, { sleptWell: current.params.sleptWell, stress: yes });
+  },
+  'check-area': el => {
+    const areas = current.params.areas || [];
+    const k = el.dataset.k;
+    current.params.areas = areas.includes(k) ? areas.filter(a => a !== k) : [...areas, k];
+    render();
+  },
+  'check-areas-done': el => {
+    const { id, sleptWell, stress } = current.params;
+    const areas = el.dataset.none ? [] : current.params.areas || [];
+    data.complaints.push({ cycleStart: cycleInfo().cycleStart, date: new Date().toISOString(), areas });
+    saveData();
+    startDay(id, { sleptWell, stress });
+  },
+  'hint-dismiss': el => {
+    data.hintsDismissed[el.dataset.key] = cycleInfo().cycleStart;  // gilt bis zum nächsten Zyklus
+    saveData(); render();
   },
   // Hinweis auf den letzten Kommentar ausblenden (im Verlauf bleibt der Kommentar stehen)
   'reorder-toggle': () => {

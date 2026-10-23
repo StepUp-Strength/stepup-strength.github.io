@@ -222,6 +222,7 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
 .last-comment .icon-btn { min-width: 44px; height: 44px; padding: 0; font-size: 18px; color: var(--muted); }
 .check { padding-block: 24px; text-align: center; }
 .check .question { margin: 8px 0 20px; font-size: 28px; }
+.check-emoji { margin-top: 8px; font-size: 64px; line-height: 1; }
 .check .row .btn { min-height: 76px; font-size: 26px; }
 .readiness-note {
   margin: 0 0 12px;
@@ -232,6 +233,34 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
   font-size: 18px;
   font-weight: 600;
 }
+
+/* Trainingsdauer, Hinweise, Beschwerden */
+.timer-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 16px;
+  color: var(--muted);
+}
+.timer-bar b { font-size: 24px; color: var(--text); font-variant-numeric: tabular-nums; }
+.stats.two { grid-template-columns: 1fr 1fr; }
+.card.hints { border: 2px solid var(--accent); }
+.card.hints p { margin: 0 0 10px; font-size: 17px; }
+.hint-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.hint-item > div { flex: 1; }
+.hint-item small { display: block; margin-top: 4px; font-size: 15px; line-height: 1.4; color: var(--muted); }
+.hint-item .icon-btn { min-width: 40px; height: 40px; padding: 0; font-size: 16px; color: var(--muted); }
+.complaint-note, .stall-note { margin: -4px 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 15px; line-height: 1.4; }
+.complaint-note { border-left: 4px solid #e8a317; background: var(--bg); }
+.stall-note { border-left: 4px solid var(--accent); background: var(--bg); color: var(--muted); }
+.area-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 16px; }
+.area-grid .vchip { min-height: 52px; font-size: 18px; background: var(--bg); }
+.area-grid .vchip.on { background: #e8a317; color: #111; }
 
 /* Übung im Training hinzufügen */
 .check-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 17px; }
