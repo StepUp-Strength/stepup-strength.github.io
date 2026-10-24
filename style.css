@@ -262,6 +262,50 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
 .area-grid .vchip { min-height: 52px; font-size: 18px; background: var(--bg); }
 .area-grid .vchip.on { background: #e8a317; color: #111; }
 
+/* Pläne */
+.plan-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 6px 8px 6px 0; border-radius: 14px; background: var(--card); border: 2px solid transparent; }
+.plan-row.active { border-color: var(--accent); }
+.plan-pick { flex: 1; min-width: 0; min-height: 56px; padding: 8px 14px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.plan-pick b { display: block; font-size: 20px; }
+.plan-pick small { font-size: 15px; color: var(--muted); }
+.plan-row.active small { color: var(--accent); font-weight: 600; }
+.plan-row .icon-btn { min-width: 46px; height: 46px; padding: 0; font-size: 19px; }
+
+/* Plan-Assistent */
+.wiz-steps .pill { flex: 1; }
+.variants.count .vchip { flex: 1; min-width: 0; }
+.split-opt {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.split-opt b { display: block; font-size: 18px; }
+.split-opt small { font-size: 14px; color: var(--muted); }
+.split-opt.on { border-color: var(--accent); background: var(--bg); }
+.split-opt.on b { color: var(--accent); }
+.wiz-day .variants { margin-top: 10px; }
+.wiz-day .variants .vchip { flex: 1; }
+.group-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gchip {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+}
+.gchip.on { border-color: var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
+table.vol tr.all-row td { padding-bottom: 10px; border-bottom: 2px solid var(--accent); }
+
 /* Aufwärmen */
 .warmup { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: 16px; }
 .warmup:empty { display: none; }

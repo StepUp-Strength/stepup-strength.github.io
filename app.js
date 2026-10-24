@@ -14,7 +14,7 @@ function emptyData() {
 }
 
 function isValidData(d) {
-  return d && Array.isArray(d.days) && Array.isArray(d.sessions);
+  return d && Array.isArray(d.sessions) && (Array.isArray(d.plans) || Array.isArray(d.days));
 }
 
 // Fehlende Felder ergänzen (z. B. bei Daten aus einer älteren App-Version)
@@ -31,14 +31,51 @@ function withDefaults(ex) {
   return ex;
 }
 
+/* Mehrere Pläne: data.plans = [{ id, name, days, volume, rirPlan }], data.activePlanId.
+   data.days / data.volume / data.rirPlan zeigen immer auf den aktiven Plan (nicht mitgespeichert). */
+function activePlan(d = data) {
+  return d.plans.find(p => p.id === d.activePlanId) || d.plans[0];
+}
+
+function newPlan(name, days = []) {
+  return { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, days, volume: defaultVolume(), rirPlan: {} };
+}
+
+function bindPlanAccessors(d) {
+  for (const key of ['days', 'volume', 'rirPlan']) {
+    Object.defineProperty(d, key, {
+      configurable: true,
+      enumerable: false,
+      get: () => activePlan(d)[key],
+      set: v => { activePlan(d)[key] = v; },
+    });
+  }
+}
+
 function upgradeData(d) {
-  d.days.forEach(day => day.exercises.forEach(withDefaults));
+  // ältere Daten: ein einzelner Plan direkt in d -> als „Mein Plan“ übernehmen
+  if (!Array.isArray(d.plans)) {
+    const p = newPlan('Mein Plan', d.days || []);
+    if (d.volume) p.volume = d.volume;
+    if (d.rirPlan) p.rirPlan = d.rirPlan;
+    d.plans = [p];
+    d.activePlanId = p.id;
+  }
+  delete d.days; delete d.volume; delete d.rirPlan;
+  if (!d.plans.length) d.plans.push(newPlan('Mein Plan'));
+  for (const p of d.plans) {
+    if (!Array.isArray(p.days)) p.days = [];
+    p.days.forEach(day => day.exercises.forEach(withDefaults));
+    if (!p.volume) p.volume = defaultVolume();  // Sätze pro Muskelgruppe und Training
+    if (!p.rirPlan) p.rirPlan = {};             // Muskelgruppe -> Tank-Ziel je Woche (normale Übungen)
+  }
+  if (!d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
+  bindPlanAccessors(d);
+
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
-  // Sätze pro Muskelgruppe und Training (im Plan einstellbar)
-  if (!d.volume) d.volume = defaultVolume();
   // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: mondayISO(new Date()) };
   d.cycle.buildWeeks = Math.min(5, Math.max(4, d.cycle.buildWeeks));  // 4–5 Trainingswochen
@@ -360,37 +397,55 @@ function kindOf(ex) {
   return COMPOUND.test(n) ? 'compound' : ASSIST.test(n) ? 'assist' : 'normal';
 }
 
-// Tank-Ziel als Bereich [min, max] für Übungsart und Woche
-function rirRange(kind, week, buildWeeks) {
-  const plan = RIR_PLAN[buildWeeks] || RIR_PLAN[5];
-  const base = plan[Math.min(plan.length, Math.max(1, week)) - 1];
+// Tank-Ziel als Bereich [min, max] für Übungsart und Woche. Hat die Muskelgruppe eigene Werte
+// (data.rirPlan, aus dem Plan-Assistenten), gelten diese als Basis für normale Übungen.
+function rirRange(kind, week, buildWeeks, group) {
+  const custom = group && data.rirPlan && data.rirPlan[group];
+  let base;
+  if (custom) {
+    base = custom[Math.min(Math.max(week, 1), custom.length) - 1];  // eine 5. Woche übernimmt W4
+  } else {
+    const plan = RIR_PLAN[buildWeeks] || RIR_PLAN[5];
+    base = plan[Math.min(plan.length, Math.max(1, week)) - 1];
+  }
   const [lo, hi] = Array.isArray(base) ? base : [base, base];
   const off = KIND_OFFSET[kind || 'normal'];
   return [Math.max(0, lo + off), Math.max(0, hi + off)];
 }
 
-const rirFor = (kind, week, buildWeeks) => {
-  const [lo, hi] = rirRange(kind, week, buildWeeks);
+const rirFor = (kind, week, buildWeeks, group) => {
+  const [lo, hi] = rirRange(kind, week, buildWeeks, group);
   return (lo + hi) / 2;
 };
 
-const rirLabel = (kind, week, buildWeeks) => {
-  const [lo, hi] = rirRange(kind, week, buildWeeks);
+const rirLabel = (kind, week, buildWeeks, group) => {
+  const [lo, hi] = rirRange(kind, week, buildWeeks, group);
   return lo === hi ? fmtNum(lo) : `${fmtNum(lo)}–${fmtNum(hi)}`;
 };
 
 // Ziel im Tank, wie es angezeigt wird (Bereich statt Mittelwert, im Deload „mind. 3“)
 const targetRirText = t => t.deload ? `mind. ${fmtNum(t.rir)}` : (t.rirText || fmtNum(t.rir));
 
-function weekRirText(kind) {
+function weekRirText(kind, group) {
   const ci = cycleInfo();
   if (ci.deload) return `Deload – mind. ${DELOAD_RIR}`;
-  return `${rirLabel(kind, ci.week, ci.buildWeeks)} (${weekLabel(ci.week)})`;
+  return `${rirLabel(kind, ci.week, ci.buildWeeks, group)} (${weekLabel(ci.week)})`;
 }
 
 function rirTable(buildWeeks) {
   const plan = RIR_PLAN[buildWeeks];
   const ci = cycleInfo();
+  const custom = Object.keys(data.rirPlan || {});
+  if (custom.length) {
+    // eigene Werte pro Muskelgruppe (normale Übungen)
+    let h = '<div class="table-wrap"><table class="rir"><tr><th>Tank (normal)</th>' +
+      plan.map((_, i) => `<th class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${i === 0 ? 'Intro' : 'W' + (i + 1)}</th>`).join('') + '</tr>';
+    for (const g of custom) {
+      h += `<tr><td>${MUSCLES[g] || g}</td>` + plan.map((_, i) =>
+        `<td class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${rirLabel('normal', i + 1, buildWeeks, g)}</td>`).join('') + '</tr>';
+    }
+    return h + `</table></div><p class="hint">Grundübungen +1, Assistenzübungen −1 (nie unter 0). Deload: mind. ${DELOAD_RIR}.</p>`;
+  }
   let h = '<div class="table-wrap"><table class="rir"><tr><th>Ziel im Tank</th>';
   plan.forEach((_, i) => { h += `<th class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${i === 0 ? 'Intro' : 'W' + (i + 1)}</th>`; });
   h += '<th>Deload</th></tr>';
@@ -460,8 +515,18 @@ function groupOf(ex) {
   return hit ? hit[1] : '';
 }
 
-const dayIntensity = day => day && day.type ? (day.type.endsWith('heavy') ? 'heavy' : 'light') : null;
-const dayHalf = day => day && day.type ? day.type.split('-')[0] : null;
+// Tag-Intensität: 'heavy' / 'light' = Sätze und Wdh. automatisch, null = frei.
+// (Ältere Tage haben noch type: 'upper-heavy' usw.)
+const dayIntensity = day => !day ? null
+  : day.intensity !== undefined ? day.intensity
+  : day.type ? (day.type.endsWith('heavy') ? 'heavy' : 'light') : null;
+
+// Muskelgruppen, die an diesem Tag geplant sind (für die Kontrolltabelle)
+function dayGroups(day) {
+  const planned = day.groups || (day.type ? DAY_GROUPS[day.type.split('-')[0]] : []);
+  const present = day.exercises.filter(e => e.name.trim()).map(groupOf);
+  return [...new Set([...planned, ...present])].filter(g => data.volume[g]);
+}
 
 // Ziel-Wdh. (unteres Ende des Bereichs) laut Tag-Typ, sonst laut Plan
 function repsFor(day, ex) {
@@ -475,8 +540,8 @@ function repRangeText(day, ex) {
 }
 
 const VOL_WEEKS = 4;  // Intro, W2, W3, W4 (eine 5. Woche übernimmt die Werte von W4)
-const volumeFor = (g, week) => data.volume[g][Math.min(Math.max(week, 1), VOL_WEEKS) - 1];
-const deloadVolume = g => Math.ceil(data.volume[g][VOL_WEEKS - 1] / 2);
+const volumeFor = (g, week, vol = data.volume) => vol[g][Math.min(Math.max(week, 1), VOL_WEEKS) - 1];
+const deloadVolume = (g, vol = data.volume) => Math.ceil(vol[g][VOL_WEEKS - 1] / 2);
 
 // Sätze pro Woche einer Muskelgruppe über alle Trainingstage mit Tag-Typ: [Intro, W2, W3, W4, Deload]
 function weeklyVolume(g) {
@@ -551,23 +616,24 @@ function addSets(exs, sets, count, state) {
 }
 
 // Sätze pro Übung eines Trainingstags (nur bei Tag-Typ und Muskelgruppen aus der Volumen-Tabelle)
-function autoSetsForDay(day, week, deload) {
+// vol: Volumen-Tabelle (Standard: data.volume; der Plan-Assistent rechnet mit seinem Entwurf)
+function autoSetsForDay(day, week, deload, vol = data.volume) {
   const res = new Map();
-  if (!day.type) return res;
+  if (!dayIntensity(day)) return res;
   const byGroup = {};
   for (const e of day.exercises) {
     const g = groupOf(e);
-    if (!e.name.trim() || !data.volume[g]) continue;
+    if (!e.name.trim() || !vol[g]) continue;
     (byGroup[g] = byGroup[g] || []).push(e);
   }
   for (const [g, exs] of Object.entries(byGroup)) {
     let sets;
     if (deload) {
-      sets = distributeStart(exs, deloadVolume(g));
+      sets = distributeStart(exs, deloadVolume(g, vol));
     } else {
-      sets = distributeStart(exs, volumeFor(g, 1));
+      sets = distributeStart(exs, volumeFor(g, 1, vol));
       const state = { k: 0 };
-      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, volumeFor(g, w) - volumeFor(g, w - 1)), state);
+      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, volumeFor(g, w, vol) - volumeFor(g, w - 1, vol)), state);
     }
     sets.forEach((v, id) => res.set(id, v));
   }
@@ -1019,7 +1085,7 @@ function renderStart() {
     return h + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
       <button class="btn primary" data-action="tab" data-tab="plan">Trainingsplan anlegen</button>`;
   }
-  h += '<h2>Welcher Trainingstag?</h2>';
+  h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
   const sessions = sessionsNewestFirst();
   for (const day of data.days) {
     const last = sessions.find(s => s.dayId === day.id);
@@ -1186,9 +1252,31 @@ function renderAddExercise() {
   </div>`;
 }
 
+// Plan-Reiter: alle Pläne, Assistent, Trainingstage des aktiven Plans (nur Namen), Periodisierung
 function renderPlan() {
   const c = data.cycle;
-  let h = `<h2>Periodisierung</h2>
+  const active = activePlan();
+  let h = '<h2>Meine Pläne</h2>';
+  for (const p of data.plans) {
+    const isActive = p.id === active.id;
+    h += `<div class="plan-row ${isActive ? 'active' : ''}">
+      <button class="plan-pick" data-action="plan-activate" data-id="${p.id}">
+        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${isActive ? ' · aktiv' : ' · antippen zum Aktivieren'}</small>
+      </button>
+      <button class="icon-btn" data-action="plan-rename" data-id="${p.id}" aria-label="Umbenennen">✎</button>
+      <button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>
+    </div>`;
+  }
+  h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
+    <h2>Trainingstage · ${esc(active.name)}</h2>`;
+  if (!data.days.length) {
+    h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
+  }
+  for (const day of data.days) {
+    h += `<button class="btn" data-action="open-day" data-id="${day.id}">${esc(day.name)}</button>`;
+  }
+  h += `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
+    <h2>Periodisierung</h2>
     <div class="card">
       <div class="row" style="margin-top:0">
         <span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
@@ -1205,22 +1293,7 @@ function renderPlan() {
       ${rirTable(c.buildWeeks)}
       <div class="row"><button class="btn outline" data-action="cycle-restart">Neuen Zyklus ab dieser Woche</button></div>
     </div>
-    ${volumeEditor()}
-    <h2>Trainingstage</h2>`;
-  if (!data.days.length) {
-    h += '<p class="hint">Lege Trainingstage an, z. B. „Tag A – Oberkörper“ und „Tag B – Beine“.</p>';
-  }
-  for (const day of data.days) {
-    const names = day.exercises.map(e => e.name.trim()).filter(Boolean).join(', ');
-    h += `<button class="btn" data-action="open-day" data-id="${day.id}">
-      ${esc(day.name)}<small>${names ? esc(names) : 'Noch keine Übungen'}</small></button>`;
-  }
-  h += '<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>';
-  h += `<button class="btn outline" data-action="load-template">Standard-Plan anlegen (2 × Ober-, 2 × Unterkörper)</button>`;
-  if (data.days.length) {
-    h += `<p class="hint">Dein Plan ist gespeichert. Tippe einen Tag an, um ihn zu bearbeiten.</p>
-      <button class="btn primary" data-action="tab" data-tab="start">Zum Training →</button>`;
-  }
+    ${volumeEditor()}`;
   return h;
 }
 
@@ -1257,17 +1330,14 @@ function planCompare(ex, day) {
 
 // Kontrolle im Plan: Sätze pro Muskelgruppe und Woche für diesen Trainingstag
 function volumeSummary(day) {
-  if (!day.type) return '';
+  if (!dayIntensity(day)) return '';
   const bw = data.cycle.buildWeeks;
   const weeks = Array.from({ length: bw }, (_, w) => autoSetsForDay(day, w + 1, false));
   const deload = autoSetsForDay(day, 0, true);
   const sum = (m, g) => day.exercises.filter(e => groupOf(e) === g && m.has(e.id)).reduce((a, e) => a + m.get(e.id), 0);
   let h = '<div class="card"><h2>Sätze pro Muskelgruppe</h2><div class="table-wrap"><table class="rir"><tr><th></th>' +
     weeks.map((_, w) => `<th>${w === 0 ? 'Intro' : 'W' + (w + 1)}</th>`).join('') + '<th>Deload</th></tr>';
-  // feste Gruppen der Körperhälfte plus selbst hinzugefügte, die an diesem Tag vorkommen
-  const extra = Object.keys(data.volume).filter(g => !DAY_GROUPS[dayHalf(day)].includes(g)
-    && day.exercises.some(e => e.name.trim() && groupOf(e) === g));
-  for (const g of [...DAY_GROUPS[dayHalf(day)].filter(g => data.volume[g]), ...extra]) {
+  for (const g of dayGroups(day)) {
     const has = day.exercises.some(e => e.name.trim() && groupOf(e) === g);
     h += `<tr><td>${MUSCLES[g]}</td>` + (has
       ? weeks.map(m => `<td>${sum(m, g)}</td>`).join('') + `<td>${sum(deload, g)}</td>`
@@ -1284,10 +1354,10 @@ function renderDay({ id }) {
   let h = `<label class="lbl">Name des Trainingstags
       <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}">
     </label>
-    <div class="variants plan daytype"><span>Tag-Typ</span>${Object.entries({ ...DAY_TYPES, '': 'Frei' }).map(([t, label]) =>
-      `<button class="vchip ${(day.type || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
+    <div class="variants plan daytype"><span>Intensität</span>${Object.entries({ heavy: 'Schwer', light: 'Leicht', '': 'Frei' }).map(([t, label]) =>
+      `<button class="vchip ${(dayIntensity(day) || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
     </div>
-    <p class="hint">${day.type
+    <p class="hint">${dayIntensity(day)
       ? 'Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.'
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
     ${volumeSummary(day)}
@@ -1316,13 +1386,13 @@ function renderDay({ id }) {
         : `${stepperRow('Sätze Intro', 'sets', i, ex.sets)}
            ${stepperRow('Sätze letzte Woche', 'setsEnd', i, ex.setsEnd)}
            <p class="hint kind-hint">${setsPreview(ex)}</p>
-           ${day.type
+           ${dayIntensity(day)
              ? `<p class="auto-info">Wdh.: ${repRangeText(day, ex)} (Start bei ${repsFor(day, ex)}) · Muskelgruppe ohne Volumen-Vorgabe, Sätze von Hand</p>`
              : stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}`}
       <div class="variants plan"><span>Art${ex.kind == null ? ' <small class="hint">(auto)</small>' : ''}</span>${Object.entries(KINDS).map(([k, label]) =>
         `<button class="vchip ${kindOf(ex) === k ? 'on' : ''}" data-action="plan-kind" data-i="${i}" data-k="${k}">${label}</button>`).join('')}
       </div>
-      <p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex))}</b></p>
+      <p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex), groupOf(ex))}</b></p>
       <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
       </div>
@@ -1519,8 +1589,8 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     const en = { name: ex.name.trim() };
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
     const week = ci.deload ? ci.buildWeeks : ci.week;
-    const rir = rirFor(kindOf(ex), week, ci.buildWeeks);
-    const rirText = rirLabel(kindOf(ex), week, ci.buildWeeks);
+    const rir = rirFor(kindOf(ex), week, ci.buildWeeks, groupOf(ex));
+    const rirText = rirLabel(kindOf(ex), week, ci.buildWeeks, groupOf(ex));
     // Sätze: automatisch aus dem Muskelgruppen-Volumen, sonst laut Wochenplan der Übung
     // (Deload: Sätze der letzten Woche, werden dort halbiert)
     const fixedSets = auto.has(ex.id);
@@ -1701,10 +1771,13 @@ function importData(file) {
       alert('Diese Datei ist keine gültige Trainings-Sicherung.');
       return;
     }
-    if (!confirm(`Sicherung mit ${d.days.length} Trainingstagen und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
+    const plans = Array.isArray(d.plans) ? `${d.plans.length} Plänen` : `${d.days.length} Trainingstagen`;
+    if (!confirm(`Sicherung mit ${plans} und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
     data = upgradeData({
       app: 'trainingsapp', version: 1,
-      days: d.days, sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, volume: d.volume, steps: d.steps,
+      plans: d.plans, activePlanId: d.activePlanId,
+      days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
+      sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed,
     });
     saveData();
@@ -1899,6 +1972,8 @@ const actions = {
       saveData();
     } else if (input.dataset.field === 'chart-name') {
       showChartFor(el.dataset.name);
+    } else if (input.dataset.field === 'wiz-add') {
+      wizAddPick(el.dataset.name);
     } else {
       fillReplaceMax(input);
     }
@@ -1933,7 +2008,7 @@ const actions = {
     const en = { name, added: true };
     setupEntry(en, {
       sets, fixedSets: true, reps: repsFor(day, ex),
-      rir: rirFor(kindOf(ex), week, bw), rirText: rirLabel(kindOf(ex), week, bw),
+      rir: rirFor(kindOf(ex), week, bw, groupOf(ex)), rirText: rirLabel(kindOf(ex), week, bw, groupOf(ex)),
       max10, step: stepFor(ex),
     });
     draft.entries.push(en);
@@ -1973,8 +2048,33 @@ const actions = {
   },
   'ex-up': el => { moveExercise(findDay(current.params.id), +el.dataset.i, -1); saveData(); render(); },
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
+  'plan-activate': el => {
+    if (data.activePlanId === el.dataset.id) return;
+    if (draft && !confirm(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den Plan wechseln?`)) return;
+    data.activePlanId = el.dataset.id;
+    saveData(); render();
+    toast(`„${activePlan().name}“ ist jetzt aktiv`);
+  },
+  'plan-rename': el => {
+    const p = data.plans.find(x => x.id === el.dataset.id);
+    const name = prompt('Neuer Name für den Plan:', p.name);
+    if (name && name.trim()) { p.name = name.trim(); saveData(); render(); }
+  },
+  'plan-delete': el => {
+    const p = data.plans.find(x => x.id === el.dataset.id);
+    if (!confirm(`Plan „${p.name}“ mit ${p.days.length} Trainingstagen löschen?`)) return;
+    if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.\n\nGespeicherte Trainings, Verlauf und Erfolge bleiben erhalten.')) return;
+    data.plans = data.plans.filter(x => x !== p);
+    if (!data.plans.length) data.plans.push(newPlan('Mein Plan'));  // es gibt immer mindestens einen Plan
+    if (!data.plans.some(x => x.id === data.activePlanId)) data.activePlanId = data.plans[0].id;
+    saveData(); render();
+    toast('Plan gelöscht');
+  },
   'day-type': el => {
-    findDay(current.params.id).type = el.dataset.t || null;
+    const day = findDay(current.params.id);
+    if (!day.groups) day.groups = dayGroups(day);  // geplante Muskelgruppen beim Umstellen behalten
+    day.intensity = el.dataset.t || null;
+    delete day.type;
     saveData(); render();
   },
   'load-template': () => {
@@ -2066,7 +2166,7 @@ const actions = {
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
     Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
-    data.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; }));
+    data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     data.cycle.start = mondayISO(new Date());
     saveData();
     draft = null; saveDraft();
@@ -2188,7 +2288,7 @@ document.addEventListener('pointerdown', e => {
 // Vorschläge schließen, wenn man das Feld verlässt
 document.addEventListener('focusout', e => {
   const f = e.target.dataset && e.target.dataset.field;
-  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name') {
+  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name' || f === 'wiz-add') {
     const box = e.target.nextElementSibling;
     setTimeout(() => { box.hidden = true; }, 200);
   }
