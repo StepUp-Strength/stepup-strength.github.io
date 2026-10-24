@@ -590,24 +590,30 @@ function volWeekText(g) {
     : `pro Woche: Intro ${i} · W2 ${w2} · W3 ${w3} · W4 ${w4} · Deload ${d}`;
 }
 
+const MAX_SETS_PER_EX = 3;  // automatische Verteilung: höchstens so viele Sätze pro Übung
+
 // Intro (und Deload): jede Übung 1 Satz, Rest der Reihe nach an Grund → Normal → Assistenz
+// (Übungen mit MAX_SETS_PER_EX Sätzen werden übersprungen; überzählige Sätze fallen weg)
 function distributeStart(exs, total) {
   const sets = new Map(exs.map(e => [e.id, 1]));
   const order = ['compound', 'normal', 'assist'].flatMap(k => exs.filter(e => kindOf(e) === k));
-  for (let rest = total - exs.length, i = 0; rest > 0; rest--, i++) {
+  let rest = total - exs.length;
+  for (let i = 0; rest > 0 && order.some(e => sets.get(e.id) < MAX_SETS_PER_EX); i++) {
     const e = order[i % order.length];
+    if (sets.get(e.id) >= MAX_SETS_PER_EX) continue;
     sets.set(e.id, sets.get(e.id) + 1);
+    rest--;
   }
   return sets;
 }
 
 // Steigerung: zusätzliche Sätze reihum an Assistenz → Grund → Normal, innerhalb der Art an die
-// Übung mit den wenigsten Sätzen. state.k merkt sich, wer als Nächstes dran ist.
+// Übung mit den wenigsten Sätzen (höchstens MAX_SETS_PER_EX). state.k merkt sich, wer als Nächstes dran ist.
 function addSets(exs, sets, count, state) {
   for (let n = 0; n < count; n++) {
     for (let tries = 0; tries < 3; tries++) {
       const kind = ['assist', 'compound', 'normal'][state.k++ % 3];
-      const cands = exs.filter(e => kindOf(e) === kind);
+      const cands = exs.filter(e => kindOf(e) === kind && sets.get(e.id) < MAX_SETS_PER_EX);
       if (!cands.length) continue;
       const e = cands.reduce((a, b) => sets.get(b.id) < sets.get(a.id) ? b : a);
       sets.set(e.id, sets.get(e.id) + 1);
@@ -1088,14 +1094,19 @@ function renderStart() {
   }
   h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
   const sessions = sessionsNewestFirst();
-  for (const day of data.days) {
+  // als Nächstes dran: der Tag nach dem zuletzt trainierten Tag dieses Plans
+  const lastOwn = sessions.find(s => findDay(s.dayId));
+  const nextId = !draft && lastOwn ? data.days[(data.days.indexOf(findDay(lastOwn.dayId)) + 1) % data.days.length].id : null;
+  data.days.forEach((day, i) => {
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
     const info = `${day.exercises.length} Übungen` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
       (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
-    h += `<button class="btn" data-action="start-day" data-id="${day.id}">
-      ${esc(day.name)}<small>${info}</small></button>`;
-  }
+    const next = day.id === nextId;
+    h += `<button class="btn nav day-btn ${next ? 'next' : ''}" data-action="start-day" data-id="${day.id}">
+      <span class="day-no">${i + 1}</span>
+      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}<small>${info}</small></span></button>`;
+  });
   return h;
 }
 
@@ -1273,9 +1284,10 @@ function renderPlan() {
   if (!data.days.length) {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
   }
-  for (const day of data.days) {
-    h += `<button class="btn" data-action="open-day" data-id="${day.id}">${esc(day.name)}</button>`;
-  }
+  data.days.forEach((day, i) => {
+    h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
+      <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}</span></button>`;
+  });
   h += `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
     <h2>Periodisierung</h2>
     <div class="card">
@@ -1442,12 +1454,12 @@ function renderHistory() {
 
   let h = '<h2>Übungen</h2>';
   for (const ex of exercises) {
-    h += `<button class="btn" data-action="open-exercise" data-name="${esc(ex.name)}">
+    h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
       ${esc(ex.name)}<small>${ex.count}× trainiert · zuletzt ${fmtDate(ex.last)}</small></button>`;
   }
   h += '<h2>Alle Trainings</h2>';
   for (const s of sessionsNewestFirst()) {
-    h += `<button class="btn" data-action="open-session" data-id="${s.id}">
+    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}">
       ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.deload ? ' · Deload' : ''}</small></button>`;
   }
   return h;

@@ -7,7 +7,8 @@
 
   <!-- PWA / iPhone-Home-Bildschirm -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#1e6fd9">
+  <meta name="theme-color" content="#f2f3f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0d10" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -20,18 +21,18 @@
 </head>
 <body>
   <header>
-    <button id="back" data-action="back" hidden>‹ Zurück</button>
+    <button id="back" data-action="back" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Zurück</button>
     <h1 id="title">Training</h1>
   </header>
 
   <main id="view"></main>
 
   <nav id="tabs">
-    <button data-action="tab" data-tab="start"><span>🏋️</span>Training</button>
-    <button data-action="tab" data-tab="plan"><span>📋</span>Plan</button>
-    <button data-action="tab" data-tab="history"><span>📅</span>Verlauf</button>
-    <button data-action="tab" data-tab="charts"><span>📈</span>Diagramme</button>
-    <button data-action="tab" data-tab="data"><span>💾</span>Sicherung</button>
+    <button data-action="tab" data-tab="start"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/><rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg>Training</button>
+    <button data-action="tab" data-tab="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4" width="15" height="17" rx="3"/><path d="M9 3v2.5h6V3M8.5 11h7M8.5 15h7M8.5 19h4"/></svg>Plan</button>
+    <button data-action="tab" data-tab="history"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg>Verlauf</button>
+    <button data-action="tab" data-tab="charts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16"/><path d="M7.5 15l3.5-4.5 3 2.5 5.5-6.5"/></svg>Diagramme</button>
+    <button data-action="tab" data-tab="data"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M8.8 12.2l2.2 2.2 4.3-4.4"/></svg>Sicherung</button>
   </nav>
 
   <div id="toast" hidden></div>

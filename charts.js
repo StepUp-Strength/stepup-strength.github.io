@@ -739,7 +739,7 @@ function renderCharts() {
       <div class="suggest" hidden></div>`;
     if (!s.name) {
       return h + '<p class="lbl chips-title">Zuletzt trainiert</p>' + names.slice(0, 8).map(n =>
-        `<button class="btn" data-action="chart-pick" data-name="${esc(n)}">${esc(n)}</button>`).join('');
+        `<button class="btn nav" data-action="chart-pick" data-name="${esc(n)}">${esc(n)}</button>`).join('');
     }
     h += `<div class="seg small">
       <button class="${s.metric === 'weight' ? 'on' : ''}" data-action="chart-metric" data-metric="weight">Gewicht</button>

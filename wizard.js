@@ -48,7 +48,7 @@ const WEEKLY_TARGET = {
   adduktoren: [2, 2, 4, 4], abduktoren: [2, 2, 4, 4], waden: [4, 4, 6, 6], bauch: [4, 4, 6, 6],
   ruecken_unten: [2, 2, 3, 3],
 };
-const SESSION_CAP = 24;  // höchstens so viele Sätze pro Training in der Intro-Woche
+const SESSION_CAP = 25;  // höchstens so viele Sätze pro Training – in jeder Woche des Zyklus
 
 // Standard-Auswahl je Muskelgruppe (komplexe Übungen zuerst)
 const DEFAULT_PICKS = {
@@ -87,10 +87,12 @@ const daysWith = g => wiz.days.filter(d => d.groups.includes(g)).length;
 // Schwerpunkt: +2 Sätze/Woche bei Priorität, −2 bei „low“
 const focusAdj = g => wiz.prio.includes(g) ? FOCUS_SETS : wiz.low.includes(g) ? -FOCUS_SETS : 0;
 
-// Weniger Volumen = weniger, dafür komplexere Übungen
+// Weniger Volumen = weniger, dafür komplexere Übungen – aber mindestens so viele Übungen,
+// dass keine mehr als MAX_SETS_PER_EX Sätze braucht (gemessen an der Woche mit den meisten Sätzen)
 function exercisesNeeded(g) {
   const v = wiz.volume[g][0];
-  return v <= 2 ? 1 : v <= 4 ? 2 : 3;
+  const base = v <= 2 ? 1 : v <= 4 ? 2 : 3;
+  return Math.max(base, Math.ceil(Math.max(...wiz.volume[g]) / MAX_SETS_PER_EX));
 }
 
 // Automatische Auswahl: je Übung eine Stufe – 1. Grundübung, 2. normale, 3. Assistenzübung.
@@ -99,13 +101,15 @@ function exercisesNeeded(g) {
 function autoPicks(g) {
   const n = exercisesNeeded(g);
   const existing = existingFor(g);
-  const pool = byKind(DEFAULT_PICKS[g] || EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name));
+  // Standard-Vorschläge zuerst, danach alle übrigen Übungen der Muskelgruppe aus der Liste
+  const pool = uniqueNames([...(DEFAULT_PICKS[g] || []), ...byKind(EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name))]);
   const picks = [];
   const free = list => list.filter(x => !picks.some(p => nameKey(p) === nameKey(x)));
   const ofKind = (list, k) => free(list).find(x => kindOf({ name: x }) === k);
-  const slots = ['compound', 'normal', 'assist'];
+  // ab der 4. Übung abwechselnd normale und Assistenzübungen
+  const slots = ['compound', 'normal', 'assist', 'normal', 'assist', 'normal', 'assist'];
   for (let i = 0; i < n; i++) {
-    const k = slots[Math.min(i, 2)];
+    const k = slots[Math.min(i, slots.length - 1)];
     const pick = ofKind(existing, k) || ofKind(pool, k) || free(existing)[0] || free(pool)[0];
     if (pick) picks.push(pick);
   }
@@ -152,6 +156,7 @@ function wizStart() {
     split: null,   // gewählte Vorlage
     days: [],
     newDay: { name: '', intensity: 'heavy', groups: [] },
+    startWeek: mondayISO(new Date()),  // Montag der Intro-Woche des neuen Plans
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -167,22 +172,64 @@ function templateVolume(groups) {
     const adj = focusAdj(g);
     vol[g] = (WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w + adj) / freq)));
   }
-  // Priorisierte Muskelgruppen werden nicht gekürzt – die übrigen des Tages teilen sich den Rest
-  const factor = Object.fromEntries(groups.map(g => [g, 1]));
+  capSessions(vol);
+  return vol;
+}
+
+// Muskelgruppen, die fast nur mit Assistenzübungen trainiert werden – sie werden zuerst gekürzt.
+const ASSIST_GROUPS = ['schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps', 'unterarme', 'trapez',
+  'waden', 'bauch', 'adduktoren', 'abduktoren'];
+const ASSIST_FLOOR = 0.5; // bis auf diesen Anteil werden Assistenzgruppen gekürzt, bevor andere nachziehen
+
+// Kein Training über SESSION_CAP Sätze, in keiner Woche. Priorisierte Gruppen bleiben bis zuletzt verschont.
+// 1. Anteilig, gemessen an der vollsten Woche (so bleibt der Anstieg über den Zyklus erhalten):
+//    erst die Assistenzgruppen bis auf ASSIST_FLOOR, dann die übrigen Gruppen ebenfalls bis auf
+//    ASSIST_FLOOR, reicht das nicht, beide gemeinsam weiter.
+// 2. Rundungsreste: an noch zu vollen Tagen um je 1 Satz kürzen, in derselben Reihenfolge.
+function capSessions(vol) {
+  const orig = Object.fromEntries(Object.keys(vol).map(g => [g, vol[g].slice()]));
+  const isAssist = g => ASSIST_GROUPS.includes(g);
+  const factor = Object.fromEntries(Object.keys(vol).map(g => [g, 1]));
   for (const d of wiz.days) {
-    const intro = g => (vol[g] ? vol[g][0] : 0);
-    const total = d.groups.reduce((a, g) => a + intro(g), 0);
-    const prioSum = d.groups.filter(g => wiz.prio.includes(g)).reduce((a, g) => a + intro(g), 0);
-    const rest = total - prioSum;
-    if (total > SESSION_CAP && rest > 0) {
-      const f = Math.max(0, SESSION_CAP - prioSum) / rest;
-      d.groups.filter(g => !wiz.prio.includes(g)).forEach(g => { factor[g] = Math.min(factor[g], f); });
+    const free = d.groups.filter(g => vol[g] && !wiz.prio.includes(g));
+    for (let w = 0; w < 4; w++) {
+      const sum = gs => gs.reduce((a, g) => a + (vol[g] ? vol[g][w] : 0), 0);
+      let excess = sum(d.groups) - SESSION_CAP;
+      if (excess <= 0) continue;
+      const A = sum(free.filter(isAssist)), N = sum(free.filter(g => !isAssist(g)));
+      const cutA = Math.min(excess, A * (1 - ASSIST_FLOOR)); excess -= cutA;
+      const cutN = Math.min(excess, N * (1 - ASSIST_FLOOR)); excess -= cutN;
+      let fA = A ? 1 - cutA / A : 1, fN = N ? 1 - cutN / N : 1;
+      const left = (A + N) * ASSIST_FLOOR;
+      if (excess > 0 && left > 0) {
+        const f = Math.max(0, 1 - excess / left);
+        fA *= f; fN *= f;
+      }
+      free.forEach(g => { factor[g] = Math.min(factor[g], isAssist(g) ? fA : fN); });
     }
   }
-  for (const g of groups) {
+  for (const g of Object.keys(vol)) {
     if (factor[g] < 1) vol[g] = vol[g].map(v => Math.max(1, Math.round(v * factor[g])));
   }
-  return vol;
+  for (let w = 3; w >= 0; w--) {
+    // frühere Wochen nie mehr Sätze als die Woche danach (die Verteilung kann nur hinzufügen)
+    if (w < 3) for (const g of Object.keys(vol)) vol[g][w] = Math.min(vol[g][w], vol[g][w + 1]);
+    for (let guard = 0; guard < 500; guard++) {
+      const over = wiz.days.find(d => d.groups.reduce((a, g) => a + (vol[g] ? vol[g][w] : 0), 0) > SESSION_CAP);
+      if (!over) break;
+      const cands = over.groups.filter(g => vol[g] && vol[g][w] > 1);
+      const free = cands.filter(g => !wiz.prio.includes(g));
+      const floor = g => Math.max(1, Math.ceil(orig[g][w] * ASSIST_FLOOR));
+      const pool = [
+        free.filter(g => isAssist(g) && vol[g][w] > floor(g)),
+        free.filter(g => !isAssist(g) && vol[g][w] > floor(g)),
+        free, cands,
+      ].find(p => p.length);
+      if (!pool) break;
+      const g = pool.reduce((a, b) => vol[b][w] > vol[a][w] ? b : a);
+      vol[g][w]--;
+    }
+  }
 }
 
 // Volumen/RIR/Auswahl an die Muskelgruppen der Tage anpassen. Volumen wird neu berechnet, wenn eine
@@ -259,6 +306,20 @@ function dayCard(d, di, removable) {
   </div>`;
 }
 
+// Startwoche: diese oder nächste Woche oder ein beliebiges Datum (zählt ab dessen Montag)
+function startWeekRow() {
+  const thisWeek = mondayISO(new Date());
+  const nextWeek = addWeeks(thisWeek, 1);
+  return `<p class="lbl chips-title">Start (Intro-Woche)</p>
+    <div class="variants">
+      <button class="vchip ${wiz.startWeek === thisWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${thisWeek}">Diese Woche</button>
+      <button class="vchip ${wiz.startWeek === nextWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${nextWeek}">Nächste Woche</button>
+    </div>
+    <label class="row"><span>oder Woche wählen</span>
+      <input class="inp date" type="date" data-field="wiz-start-date" value="${wiz.startWeek}"></label>
+    <p class="hint">Intro-Woche ab <b>${fmtDate(wiz.startWeek + 'T12:00:00')}</b>, Deload ab ${fmtDate(addWeeks(wiz.startWeek, wiz.weeks) + 'T12:00:00')}.</p>`;
+}
+
 function renderWizDays() {
   // 1. Vorauswahl: nur die Arten der Aufteilung
   if (!wiz.cat) {
@@ -287,7 +348,8 @@ function renderWizDays() {
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
       <div class="row" style="margin-top:0"><span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
         <div class="stepper">${[4, 5].map(n =>
-          `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>` : ''}
+          `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
+      ${startWeekRow()}` : ''}
   </div>`;
   if (!custom && !wiz.split) return h + navRow('cancel', null);
 
@@ -427,6 +489,12 @@ function renderWizard() {
   }
   const empty = groups.filter(g => !(wiz.picks[g] || []).length);
   if (empty.length) h += `<p class="complaint-note">Ohne Übung: ${empty.map(g => MUSCLES[g]).join(', ')} – diese Sätze fallen weg.</p>`;
+  // höchstens 3 Sätze pro Übung: zu wenige Übungen für das Volumen?
+  const tight = groups.filter(g => (wiz.picks[g] || []).length && wiz.picks[g].length * MAX_SETS_PER_EX < Math.max(...wiz.volume[g]));
+  if (tight.length) {
+    h += `<p class="complaint-note">Zu wenige Übungen für höchstens ${MAX_SETS_PER_EX} Sätze pro Übung: ${tight.map(g =>
+      `${MUSCLES[g]} (${Math.max(...wiz.volume[g])} Sätze → mind. ${Math.ceil(Math.max(...wiz.volume[g]) / MAX_SETS_PER_EX)} Übungen)`).join(', ')}. Überzählige Sätze fallen weg.</p>`;
+  }
   return h + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>
     <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
@@ -458,6 +526,7 @@ Object.assign(actions, {
   'wiz-start': () => wizStart(),
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
+  'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
   'wiz-cat': el => {
     wiz.cat = el.dataset.cat || null;
@@ -564,6 +633,7 @@ Object.assign(actions, {
     data.plans.push(plan);
     data.activePlanId = plan.id;
     data.cycle.buildWeeks = wiz.weeks;
+    data.cycle.start = wiz.startWeek;  // der neue Plan beginnt mit seiner Intro-Woche
     saveData();
     wiz = null;
     toast(`„${plan.name}“ erstellt und aktiv ✔`);
@@ -573,6 +643,11 @@ Object.assign(actions, {
 
 Object.assign(fields, {
   'wiz-name': el => { wiz.name = el.value; },
+  'wiz-start-date': el => {
+    if (!el.value) return;
+    wiz.startWeek = mondayISO(el.value + 'T12:00:00');
+    render();
+  },
   'wiz-dayname': el => { wiz.days[el.dataset.d].name = el.value; },
   'wiz-newday-name': el => { wiz.newDay.name = el.value; },
   'wiz-vol': el => {
