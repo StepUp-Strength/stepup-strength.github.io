@@ -290,6 +290,25 @@ table.rir .missing-cell { color: #e8a317; font-style: italic; }
 .split-opt small { font-size: 14px; color: var(--muted); }
 .split-opt.on { border-color: var(--accent); background: var(--bg); }
 .split-opt.on b { color: var(--accent); }
+.split-tag {
+  float: right;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.split-opt.cat { position: relative; min-height: 72px; padding-left: 64px; background: var(--card); }
+.cat-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 32px; }
+.link-btn { margin: 0 0 10px; padding: 8px 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 18px; }
+.focus { font-size: 13px; font-weight: 700; }
+.focus.up { color: #e8a317; }
+.focus.down { color: var(--muted); }
+.area-grid .vchip:disabled { opacity: .3; }
+.new-day .variants { margin-top: 10px; }
+.wiz-day .ex-head .inp { flex: 1; }
 .wiz-day .variants { margin-top: 10px; }
 .wiz-day .variants .vchip { flex: 1; }
 .group-chips { display: flex; flex-wrap: wrap; gap: 6px; }
