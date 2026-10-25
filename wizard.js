@@ -158,6 +158,7 @@ function wizStart() {
     newDay: { name: '', intensity: 'heavy', groups: [] },
     startWeek: mondayISO(new Date()),  // Montag der ersten Trainingswoche des neuen Plans
     entry: 1,                          // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
+    progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -365,7 +366,10 @@ function renderWizDays() {
       <div class="row" style="margin-top:0"><span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
         <div class="stepper">${[4, 5].map(n =>
           `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
-      ${startWeekRow()}` : ''}
+      ${startWeekRow()}
+      <p class="lbl chips-title">Progression (Grundeinstellung)</p>
+      <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>
+      <p class="hint">Volumen = mehr Sätze von Woche zu Woche, Gewicht & Wdh. = Steigerung von Training zu Training. Ausgeschaltet bleiben die Sätze bzw. Gewichte und Wdh. auf dem Stand davor. Lässt sich später im Plan für den ganzen Zyklus oder einzelne Wochen und im Training für ein einzelnes Training ändern.</p>` : ''}
   </div>`;
   if (!custom && !wiz.split) return h + navRow('cancel', null);
 
@@ -543,6 +547,7 @@ Object.assign(actions, {
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
+  'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
   'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
   'wiz-cat': el => {
@@ -647,6 +652,7 @@ Object.assign(actions, {
     const plan = newPlan(wiz.name.trim() || 'Neuer Plan', days);
     plan.volume = wiz.volume;
     plan.rirPlan = wiz.rir;
+    plan.progression = { ...wiz.progression };
     data.plans.push(plan);
     data.activePlanId = plan.id;
     data.cycle.buildWeeks = wiz.weeks;

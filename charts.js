@@ -8,7 +8,8 @@ const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1J', 365], ['Alle', 0]];
 // mode: 'ex' = Übung, 'bw' = Körpergewicht, 'ton' = Tonnage, 'awards' = Erfolge
 // metric: 'weight' = schwerster Satz, 'max10' = geschätztes Max.; tonBy: 'session' | 'week'
 // end = rechter Rand des Zeitfensters (null = heute); sel = Zeitpunkt des angetippten Punkts
-const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', tonBy: 'session', range: 91, end: null, sel: null };
+// withDeload: Übungen – Trainings aus Deload-Wochen mitzeigen (sonst verzerren sie den Verlauf)
+const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', withDeload: false, tonBy: 'session', range: 91, end: null, sel: null };
 let chartGeo = null;  // Geometrie der zuletzt gezeichneten Grafik (für Antippen und Ziehen)
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE');  // JJJJ-MM-TT
@@ -360,6 +361,7 @@ function chartPoints() {
   if (!k) return [];
   const pts = [];
   for (const s of [...data.sessions].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (s.deload && !chartState.withDeload) continue;
     const e = s.entries.find(en => nameKey(en.name) === k);
     if (!e) continue;
     const sets = ofVariant(e.sets, chartState.variant);  // nur die gewählte Ausführung
@@ -755,6 +757,8 @@ function renderCharts() {
         `<button class="${s.variant === v ? 'on' : ''}" data-action="chart-variant" data-v="${v}">${label}</button>`).join('')}
       </div>`;
     }
+    h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
+      ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
   } else {
     h += healthCard() + `<div class="card">
       <label class="row"><span>Körpergewicht</span>
@@ -768,7 +772,8 @@ function renderCharts() {
   h += rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
   if (s.mode === 'bw') h += bwList();
   else if (s.mode === 'ton') h += '<p class="hint">Tonnage = Gewicht × Wiederholungen aller Sätze. Sätze ohne Gewicht zählen nicht mit.</p>';
-  else h += '<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. Hohle Punkte = Deload-Woche.</p>';
+  else h += `<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
+    ? 'Hohle Punkte = Deload-Woche.' : 'Deload-Wochen sind ausgeblendet.'}</p>`;
   return h;
 }
 
@@ -780,6 +785,7 @@ Object.assign(actions, {
   'ton-by': el => { Object.assign(chartState, { tonBy: el.dataset.by, sel: null, end: null }); render(); },
   'chart-variant': el => { Object.assign(chartState, { variant: el.dataset.v, sel: null }); render(); },
   'chart-metric': el => { Object.assign(chartState, { metric: el.dataset.metric, sel: null }); render(); },
+  'chart-deload': () => { Object.assign(chartState, { withDeload: !chartState.withDeload, sel: null }); render(); },
   'chart-range': el => { Object.assign(chartState, { range: Number(el.dataset.days), end: null }); render(); },
   'chart-shift': el => {
     if (!chartGeo) return;

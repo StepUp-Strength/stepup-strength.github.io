@@ -38,7 +38,10 @@ function activePlan(d = data) {
 }
 
 function newPlan(name, days = []) {
-  return { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, days, volume: defaultVolume(), rirPlan: {} };
+  return {
+    id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, days, volume: defaultVolume(), rirPlan: {},
+    progression: { volume: true, load: true }, weekProgression: {},
+  };
 }
 
 function bindPlanAccessors(d) {
@@ -68,6 +71,9 @@ function upgradeData(d) {
     p.days.forEach(day => day.exercises.forEach(withDefaults));
     if (!p.volume) p.volume = defaultVolume();  // Sätze pro Muskelgruppe und Training
     if (!p.rirPlan) p.rirPlan = {};             // Muskelgruppe -> Tank-Ziel je Woche (normale Übungen)
+    // Progression: Grundeinstellung (ganzer Zyklus) und Abweichungen einzelner Wochen (Montag -> { volume, load })
+    if (!p.progression) p.progression = { volume: true, load: true };
+    if (!p.weekProgression) p.weekProgression = {};
   }
   if (!d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
   bindPlanAccessors(d);
@@ -308,10 +314,16 @@ function recalcSets(ei) {
     // Ausgangsgewicht: aus der Vergleichswoche, aber nie unter dem zuletzt gesteigerten Gewicht
     const start = s.baseWeight != null && w != null ? Math.max(s.baseWeight, w) : s.baseWeight;
     let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start);
-    if (!t.deload && !s.manualWeight) {
+    if (!t.deload && !t.hold && !s.manualWeight) {
       // Genug Wdh. über dem Ziel -> nächste Gewichtsstufe für die folgenden Sätze
       const up = stepUp(cap, w, tt, j - last, goalReps(tt, j));
       if (up && (p.weight == null || up.weight > p.weight)) p = up;
+    }
+    if (t.hold && !s.manualWeight) {
+      // Progression aus: nie über den Vorschlag (= Werte vom letzten Mal) hinaus, nur nach unten anpassen
+      const pl = en.planned[j] || {};
+      if (pl.weight != null && p.weight != null && p.weight > pl.weight) p = planSet(cap, w, tt, j - last, pl.weight);
+      if (pl.reps != null) p = { ...p, reps: Math.min(p.reps, pl.reps) };
     }
     if (t.deload) {
       // Deload: Wdh. nie über das Ziel erhöhen, nur senken, falls es schwerer als DELOAD_RIR war
@@ -384,6 +396,30 @@ function cycleInfo(date = new Date()) {
 }
 
 const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
+
+// Progression, getrennt schaltbar: volume = mehr Sätze von Woche zu Woche, load = Gewicht/Wdh. steigern.
+// Grundeinstellung des Plans (ganzer Zyklus) -> Abweichung einer Woche (Schlüssel: Montag) ->
+// Abweichung eines einzelnen Trainings (draft.progression).
+const PROG_KEYS = { volume: 'Volumen', load: 'Gewicht & Wdh.' };
+const planProgression = (p = activePlan()) => ({ volume: true, load: true, ...p.progression });
+const weekProgression = (monday, p = activePlan()) => ({ ...planProgression(p), ...(p.weekProgression || {})[monday] });
+
+// Satz-Woche: ohne Volumenprogression gelten die Sätze der Vorwoche – also die der letzten Woche
+// dieses Zyklus mit Volumenprogression (sonst Intro). volumeNow = Einstellung für das aktuelle Training.
+function volumeWeek(ci, volumeNow) {
+  if (volumeNow) return ci.week;
+  for (let w = ci.week - 1; w > 1; w--) if (weekProgression(addWeeks(ci.cycleStart, w - 1)).volume) return w;
+  return 1;
+}
+
+// Text für ausgeschaltete Progression, z. B. „ohne Volumenprogression“ (leer, wenn alles an)
+function progOffText(prog) {
+  const off = [!prog.volume && 'Volumen', !prog.load && 'Gewicht & Wdh.'].filter(Boolean);
+  return off.length === 2 ? 'ohne Progression' : off.length ? `ohne Progression bei ${off[0]}` : '';
+}
+
+const progChip = (key, on, attrs) =>
+  `<button class="vchip prog-chip ${on ? 'on' : 'off'}" data-key="${key}" ${attrs}>${on ? '✓' : '✕'} ${PROG_KEYS[key]}</button>`;
 
 // Ziel im Tank pro Trainingswoche (normale Übungen, als Durchschnitt über die Sätze).
 // [min, max] = Bereich; gerechnet wird mit der Mitte.
@@ -769,6 +805,17 @@ function lastCommentFor(name) {
   return null;
 }
 
+// Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
+function holdSets(name, v) {
+  for (const s of sessionsNewestFirst()) {
+    if (s.deload) continue;
+    const e = s.entries.find(en => nameKey(en.name) === nameKey(name));
+    const sets = e ? ofVariant(e.sets, v) : [];
+    if (sets.length) return sets;
+  }
+  return [];
+}
+
 // Neueste Sätze einer Variante (falls es keine Bezugswoche mit dieser Variante gibt)
 function lastVariantSets(name, v) {
   for (const s of sessionsNewestFirst()) {
@@ -790,7 +837,15 @@ function proposeSet(en, i, v) {
   const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v);
   const usePrev = prevV.length > 0;  // innerhalb des Zyklus immer: Satz 1 +1 Wdh., Rest bestätigen
   let p = null, rule = null;
-  if (usePrev && braked(en.prevWeek, v)) {
+  if (t.hold) {
+    // Gewichts-/Wdh.-Progression aus: Werte vom letzten Mal 1:1
+    const ref = holdSets(en.name, v);
+    if (ref.length) {
+      const src = refAt(ref, k);
+      p = { weight: src.weight, reps: src.reps };
+      rule = 'hold';
+    }
+  } else if (usePrev && braked(en.prevWeek, v)) {
     const src = refAt(prevV, k);
     p = { weight: src.weight, reps: src.reps };
     rule = 'brake';
@@ -967,13 +1022,97 @@ function stagnationText(h) {
     'Volumen anpassen (Sätze pro Muskelgruppe ±1) oder Intensität ändern (anderer Wdh.-Bereich, Ausführung „mit Pause“ oder „langsam“).';
 }
 
-/* ---------- Aufwärmen bei Grundübungen ---------- */
+/* ---------- Aufwärmen ---------- */
 
 const BAR_KG = 20;
 const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+const WARM_PCT = 0.5;   // normale Übungen: 1 Aufwärmsatz mit ca. 50 % des ersten Arbeitssatzes …
+const WARM_REPS = 10;   // … und so vielen Wdh.
 
-// Grundübungen mit Langhantel (nicht z. B. Dips)
-const hasWarmup = en => kindOf({ name: en.name }) === 'compound' && !/dips/.test(norm(en.name)) && !!en.sets.length;
+// 'barbell' = Grundübung mit Langhantel (Stange + Steigerung, Scheiben-Anzeige), 'normal' = 1 Satz mit 50 %,
+// null = kein Aufwärmen (Assistenzübungen, Dips)
+function warmupKind(en) {
+  const k = kindOf(planExercise(en.name) || { name: en.name });
+  if (k === 'compound') return /dips/.test(norm(en.name)) ? null : 'barbell';
+  return k === 'normal' ? 'normal' : null;
+}
+
+const firstWorkWeight = en => parseNum(en.sets[0] && en.sets[0].weight);
+
+function warmWeight(en, pct, work) {
+  const step = (en.target && en.target.step) || stepFor(planExercise(en.name) || { name: en.name, step: null });
+  const w = Math.max(step, roundTo(pct * work, step));
+  return warmupKind(en) === 'barbell' ? Math.max(BAR_KG, w) : w;
+}
+
+// Selbst angepasstes Aufwärmen vom letzten Mal (Anteil vom ersten Arbeitssatz + Wdh.), sonst null
+function lastWarmup(name) {
+  const k = nameKey(name);
+  for (const s of sessionsNewestFirst()) {
+    const e = s.entries.find(en => nameKey(en.name) === k);
+    if (!e || !e.warmupCustom) continue;
+    const work = e.sets[0] && e.sets[0].weight;
+    if (!work) continue;
+    return e.warmup.filter(w => w.weight != null).map(w => ({ pct: w.weight / work, reps: w.reps }));
+  }
+  return null;
+}
+
+// Vorschlag: wie zuletzt selbst angepasst, sonst Langhantel-Steigerung bzw. 1 Satz mit 50 %;
+// Übungen ohne Aufwärmen (z. B. Assistenzübungen) nur, wenn man es dort selbst hinzugefügt hatte
+function defaultWarmup(en) {
+  const work = firstWorkWeight(en);
+  if (!work) return [];
+  const kind = warmupKind(en);
+  const list = lastWarmup(en.name)
+    || (kind === 'barbell' ? warmupSets(work).map(w => ({ pct: w / work, reps: warmupReps(w, work) }))
+      : kind === 'normal' ? [{ pct: WARM_PCT, reps: WARM_REPS }]
+      : []);
+  return list.map(w => ({ pct: w.pct, weight: fmtNum(warmWeight(en, w.pct, work)), reps: w.reps == null ? '' : String(w.reps) }));
+}
+
+// Aufwärmen an den ersten Arbeitssatz anpassen: unverändert -> neuer Vorschlag,
+// sonst folgen nur die Sätze, deren Gewicht nicht selbst eingetragen wurde
+function syncWarmup(en) {
+  if (!en.warmup || !en.warmupEdited) { en.warmup = defaultWarmup(en); return; }
+  const work = firstWorkWeight(en);
+  if (work) en.warmup.forEach(w => { if (!w.manual) w.weight = fmtNum(warmWeight(en, w.pct, work)); });
+}
+
+// Aufwärm-Kasten einer Übung; ohne Aufwärmsatz nur ein kleiner Knopf zum Hinzufügen
+function warmupBlock(en, ei) {
+  if (!en.warmup.length) {
+    return `<div class="warm-add" data-warm="${ei}">
+      <button class="vchip" data-action="wu-add" data-ei="${ei}">+ Aufwärmsatz</button></div>`;
+  }
+  const kind = warmupKind(en);
+  const work = firstWorkWeight(en);
+  let h = `<div class="warmup" data-warm="${ei}"><div class="warm-title">🔥 Aufwärmen</div>
+    <div class="setgrid warmgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">` +
+    (kind === 'barbell' ? 'pro Seite' : '') + '</span>' + en.warmup.map((w, wi) => `<span class="setno">A${wi + 1}</span>
+      <input type="text" inputmode="decimal" autocomplete="off" placeholder="kg"
+        data-field="wu-weight" data-ei="${ei}" data-wi="${wi}" value="${esc(w.weight)}">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="Wdh."
+        data-field="wu-reps" data-ei="${ei}" data-wi="${wi}" value="${esc(w.reps)}">
+      <span class="plates" data-plates="${ei}-${wi}">${kind === 'barbell' && parseNum(w.weight) ? platesPerSide(parseNum(w.weight)) : ''}</span>`).join('') +
+    `</div>
+    <div class="row warm-btns">
+      <button class="vchip" data-action="wu-del" data-ei="${ei}">− Aufwärmsatz</button>
+      <button class="vchip" data-action="wu-add" data-ei="${ei}">+ Aufwärmsatz</button>
+    </div>`;
+  if (kind === 'barbell' && work) {
+    h += `<div class="warm-row work"><b>Arbeitssatz ${fmtNum(work)} kg</b><span>${platesPerSide(work)}</span></div>
+      <small>Rechts: Scheiben pro Seite (Stange ${BAR_KG} kg)</small>`;
+  } else {
+    h += `<small>Zählt nicht als Arbeitssatz. Änderungen merkt sich die App fürs nächste Mal.</small>`;
+  }
+  return h + '</div>';
+}
+
+// Gespeicherte Form: nur Zahlen, ohne leere Zeilen
+const warmupForSession = en => en.warmup
+  .map(w => ({ weight: parseNum(w.weight), reps: parseNum(w.reps) }))
+  .filter(w => w.weight != null || w.reps != null);
 
 // Stange, dann +20 kg, bis der Abstand zum Arbeitssatz unter 20 kg liegt, dann noch einmal +10 kg
 function warmupSets(work) {
@@ -1003,14 +1142,6 @@ function platesPerSide(total) {
   return out.map(fmtNum).join(' + ') + (rest > 0 ? ` (+ ${fmtNum(rest)})` : '');
 }
 
-function warmupHtml(work) {
-  const sets = warmupSets(work);
-  if (!sets.length) return '';
-  return `<div class="warm-title">🔥 Aufwärmen</div>` +
-    sets.map(w => `<div class="warm-row"><b>${fmtNum(w)} kg × ${warmupReps(w, work)}</b><span>${platesPerSide(w)}</span></div>`).join('') +
-    `<div class="warm-row work"><b>Arbeitssatz ${fmtNum(work)} kg</b><span>${platesPerSide(work)}</span></div>
-    <small>Rechts: Scheiben pro Seite (Stange ${BAR_KG} kg)</small>`;
-}
 
 /* ---------- Bildschirme ---------- */
 
@@ -1075,8 +1206,11 @@ function cycleCard(ci) {
     : ci.intro
       ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh. Deload ab ${fmtDate(ci.deloadStart)}.`
       : `Werte derselben Woche im letzten Zyklus, je +1 Wdh. Deload-Woche ab ${fmtDate(ci.deloadStart)}.`;
+  const wp = weekProgression(mondayISO(new Date()));
+  const off = ci.deload || ci.future ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
     <h2>${head}</h2>${cyclePills(ci, 'week-open')}<p class="sub">${sub}</p>
+    ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     <p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>
   </div>`;
 }
@@ -1140,6 +1274,7 @@ function renderTraining() {
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
     <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
+  h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
   if (draft.reorder) {
@@ -1177,7 +1312,8 @@ function renderTraining() {
     }
     const stall = stalls.find(s => s.key === nameKey(en.name));
     if (stall) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
-    if (hasWarmup(en)) h += `<div class="warmup" data-warm="${ei}">${warmupHtml(parseNum(en.sets[0].weight))}</div>`;
+    if (!en.warmupEdited) syncWarmup(en);  // Vorschlag passend zum aktuellen ersten Arbeitssatz
+    h += warmupBlock(en, ei);
     const lastComment = lastCommentFor(en.name);
     if (lastComment) {
       h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
@@ -1238,6 +1374,20 @@ function renderTraining() {
     <div class="spacer"></div>
     <button class="btn danger" data-action="tr-cancel">Training verwerfen</button>`;
   return h;
+}
+
+// Progression nur für dieses Training ein-/ausschalten (nicht im Deload; Volumen erst ab Woche 2)
+function progressionCard() {
+  if (draft.deload || !draft.progression) return '';
+  const p = draft.progression;
+  const keys = draft.week > 1 ? ['volume', 'load'] : ['load'];
+  const notes = [];
+  if (draft.week > 1 && !p.volume) notes.push('Sätze wie in der Vorwoche.');
+  if (!p.load) notes.push('Gewicht und Wdh. wie beim letzten Mal – keine Steigerung, „Max. bei 10 Wdh.“ bleibt.');
+  return `<div class="card prog-card"><div class="prog-row"><b>Progression heute</b>
+      <div class="variants">${keys.map(k => progChip(k, p[k], 'data-action="prog-today"')).join('')}</div></div>
+      ${notes.length ? `<p class="hint">${notes.join(' ')}</p>` : ''}
+    </div>`;
 }
 
 function renderReplace(en, ei) {
@@ -1324,10 +1474,36 @@ function renderPlan() {
       <p class="lbl chips-title">Aktuelle Woche</p>
       ${cyclePills(cycleInfo(), 'cycle-jump')}
       <p class="hint">Antippen, um diese Woche anders einzuordnen – z. B. nach Krankheit oder längerer Pause direkt in die Deload-Woche oder zurück in die Intro-Woche. Der Zyklus verschiebt sich entsprechend.</p>
+      ${progressionTable()}
       ${rirTable(c.buildWeeks)}
     </div>
     ${volumeEditor()}`;
   return h;
+}
+
+// Progression: Grundeinstellung des Plans und Abweichungen für die Wochen des aktuellen Zyklus
+function progressionTable() {
+  const ci = cycleInfo();
+  const def = planProgression();
+  const own = activePlan().weekProgression;
+  let h = `<p class="lbl chips-title">Progression</p>
+    <div class="prog-def"><span>Grundeinstellung<br><small class="hint">ganzer Zyklus</small></span>
+      <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, def[k], 'data-action="prog-plan"')).join('')}</div></div>
+    <table class="rir prog-table"><tr><th>Woche</th><th>Volumen</th><th>Gewicht & Wdh.</th></tr>`;
+  for (let w = 1; w <= ci.buildWeeks; w++) {
+    const monday = addWeeks(ci.cycleStart, w - 1);
+    const p = weekProgression(monday);
+    const cell = k => {
+      if (k === 'volume' && w === 1) return '<td class="hint">–</td>';  // Intro: Start-Sätze, keine Steigerung
+      const differs = own[monday] && own[monday][k] !== undefined;
+      return `<td><button class="prog-cell ${p[k] ? 'on' : 'off'} ${differs ? 'own' : ''}" data-action="prog-week"
+        data-key="${k}" data-monday="${monday}" aria-label="${PROG_KEYS[k]} ${w === 1 ? 'Intro' : 'Woche ' + w}">${p[k] ? '✓' : '✕'}</button></td>`;
+    };
+    h += `<tr class="${!ci.deload && !ci.future && ci.week === w ? 'cur' : ''}"><td>${w === 1 ? 'Intro' : 'W' + w}
+      <small class="hint">${fmtDate(monday + 'T12:00:00').replace(/^\w+\., /, '')}</small></td>${cell('volume')}${cell('load')}</tr>`;
+  }
+  return h + `</table>
+    <p class="hint">Volumen = mehr Sätze von Woche zu Woche (aus: Sätze wie in der Vorwoche). Gewicht & Wdh. = Steigerung von Training zu Training (aus: Werte vom letzten Mal halten). Einzelne Wochen antippen, um nur dort abzuweichen (umrandet). Für ein einzelnes Training lässt es sich direkt im Training umschalten.</p>`;
 }
 
 // Grenzen für die Plus/Minus-Felder einer Übung
@@ -1612,7 +1788,7 @@ function saveSessionEdit() {
 // Nach dem Bearbeiten: Ergebnis (Gewicht fürs nächste Mal) neu berechnen; ist es das neueste Training
 // dieser Übung, auch „Max. bei 10 Wdh.“ im Plan
 function recalcResults(s) {
-  if (s.deload) return;
+  if (s.deload || (s.progression && !s.progression.load)) return;
   const list = sessionsNewestFirst();
   const idx = list.indexOf(s);
   const has = (x, k) => x.entries.find(e => nameKey(e.name) === k);
@@ -1638,7 +1814,8 @@ function renderSession({ id, fresh, edit, week }) {
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
-  let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}` +
+  const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
+  let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
     (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p>' +
     `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button><ul class="list">`;
   for (const e of s.entries) {
@@ -1647,7 +1824,9 @@ function renderSession({ id, fresh, edit, week }) {
       : '';
     const instead = e.replacedFrom ? ` <small>statt ${esc(e.replacedFrom)}</small>` : '';
     const comment = e.comment ? `<div class="comment-text">💬 ${esc(e.comment)}</div>` : '';
-    h += `<li><div class="date">${esc(e.name)}${instead}</div>
+    const warm = e.warmup && e.warmup.length
+      ? `<div class="warm-line">🔥 Aufwärmen: ${e.warmup.map(fmtSet).join(' · ')}</div>` : '';
+    h += `<li><div class="date">${esc(e.name)}${instead}</div>${warm}
       <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
@@ -1737,29 +1916,41 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     week: ci.week,
     readiness,
     penalty: ci.deload ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
+    // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
+    progression: ci.deload ? { volume: true, load: true } : weekProgression(mondayISO(new Date())),
     entries: [],
   };
-  // Sätze aus dem Wochenvolumen der Muskelgruppen (nur bei Tag-Typ)
-  const auto = autoSetsForDay(day, ci.week, ci.deload);
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
-  draft.entries = exercises.map(ex => {
-    const en = { name: ex.name.trim() };
-    // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
-    const week = ci.deload ? ci.buildWeeks : ci.week;
-    const rir = rirFor(kindOf(ex), week, ci.buildWeeks, groupOf(ex));
-    const rirText = rirLabel(kindOf(ex), week, ci.buildWeeks, groupOf(ex));
-    // Sätze: automatisch aus dem Muskelgruppen-Volumen, sonst laut Wochenplan der Übung
-    // (Deload: Sätze der letzten Woche, werden dort halbiert)
-    const fixedSets = auto.has(ex.id);
-    const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, week, ci.buildWeeks);
-    setupEntry(en, { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) },
-      () => ex.variant);
-    return en;
-  });
+  draft.entries = draftEntries(day);
   saveDraft();
   go('training');
   const dur = lastDuration(day.id);
   if (dur) toast(`⏱ Letztes Mal hat „${day.name}“ ${fmtDur(dur)} gedauert`);
+}
+
+// Übungen des Trainings laut Plan, Zykluswoche und Progression (draft.progression)
+function draftEntries(day) {
+  const bw = data.cycle.buildWeeks;
+  const prog = draft.progression;
+  // Sätze aus dem Wochenvolumen der Muskelgruppen (nur bei Tag-Typ); ohne Volumenprogression wie in der Vorwoche
+  const setsWeek = draft.deload ? draft.week
+    : volumeWeek({ week: draft.week, cycleStart: draft.cycleStart }, prog.volume);
+  const auto = autoSetsForDay(day, setsWeek, draft.deload);
+  return day.exercises.filter(e => e.name.trim()).map(ex => {
+    const en = { name: ex.name.trim() };
+    // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
+    const week = draft.deload ? bw : draft.week;
+    const rir = rirFor(kindOf(ex), week, bw, groupOf(ex));
+    const rirText = rirLabel(kindOf(ex), week, bw, groupOf(ex));
+    // Sätze: automatisch aus dem Muskelgruppen-Volumen, sonst laut Wochenplan der Übung
+    // (Deload: Sätze der letzten Woche, werden dort halbiert)
+    const fixedSets = auto.has(ex.id);
+    const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw);
+    const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) };
+    if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
+    setupEntry(en, target, () => ex.variant);
+    return en;
+  });
 }
 
 // Ziel und vorgeschlagene Sätze einer Übung je nach Zykluswoche festlegen:
@@ -1769,8 +1960,9 @@ function setupEntry(en, target, variantFor = () => '') {
   en.plan = target;
   if (draft.deload) target = deloadTarget(target);
   else if (draft.intro) target = { ...target, intro: true };
-  const cmp = draft.deload ? null : comparisonEntry(en.name, draft.dayId, draft);
-  const prev = draft.deload || draft.intro ? null : previousWeekEntry(en.name, draft.dayId, draft);
+  // ohne Gewichtsprogression (hold) keine Bezugswochen – es gelten die Werte vom letzten Mal
+  const cmp = draft.deload || target.hold ? null : comparisonEntry(en.name, draft.dayId, draft);
+  const prev = draft.deload || draft.intro || target.hold ? null : previousWeekEntry(en.name, draft.dayId, draft);
   // Satzzahl laut Wochenplan der Übung (Deload: halbiert)
   const n = target.sets;
   en.target = { ...target, sets: n };
@@ -1782,6 +1974,8 @@ function setupEntry(en, target, variantFor = () => '') {
   en.planned = [];  // ursprünglicher Vorschlag, damit die Bremse nächste Woche vergleichen kann
   for (let i = 0; i < n; i++) applyProposal(en, i, variantFor(i) || '');
   en.note = null;
+  en.warmup = null;  // Aufwärmen wird beim Anzeigen passend zum ersten Arbeitssatz vorgeschlagen
+  en.warmupEdited = false;
 }
 
 // Vorgeschlagene Sätze für den Trainingsstart
@@ -1861,6 +2055,9 @@ function saveTraining() {
       target: en.target,
       planned: en.planned,
       ...((en.comment || '').trim() ? { comment: en.comment.trim() } : {}),
+      // Aufwärmen (zählt nicht als Arbeitssatz); selbst angepasst = Vorschlag fürs nächste Mal
+      ...(en.warmup && (en.warmup.length || en.warmupEdited) ? { warmup: warmupForSession(en) } : {}),
+      ...(en.warmupEdited ? { warmupCustom: true } : {}),
       // Nur Sätze, die man angefasst hat – unveränderte Vorschläge zählen nicht als erledigt
       sets: en.sets
         .filter(s => s.touched)
@@ -1877,8 +2074,10 @@ function saveTraining() {
     return;
   }
 
-  // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren (nicht in der Deload-Woche)
-  for (const en of draft.deload ? [] : entries) {
+  // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren
+  // (nicht in der Deload-Woche und nicht ohne Gewichts-/Wdh.-Progression)
+  const prog = draft.progression || { volume: true, load: true };
+  for (const en of draft.deload || !prog.load ? [] : entries) {
     const result = entryResult(en, lastEntry(en.name));
     if (!result) continue;
     en.result = result;
@@ -1887,6 +2086,7 @@ function saveTraining() {
 
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
   if (draft.deload) session.deload = true;
+  else if (!prog.volume || !prog.load) session.progression = { volume: prog.volume, load: prog.load };
   if (draft.penalty) session.readiness = draft.readiness;
   if (draft.cycleStart) Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
   // Trainingsdauer in Minuten (über 10 Stunden = vermutlich vergessen zu speichern -> nicht werten)
@@ -2339,6 +2539,56 @@ const actions = {
     saveData(); toast('Training gelöscht');
     if (current.params.week) go('week', { start: current.params.week }); else go('history');
   },
+  // Progression nur für dieses Training umschalten -> Vorschläge neu berechnen
+  'prog-today': el => {
+    const day = findDay(draft.dayId);
+    if (!day) { alert('Der Trainingstag steht nicht mehr im Plan.'); return; }
+    const changed = draft.entries.some(en => en.added || en.replacedFrom || en.sets.some(s => s.touched));
+    if (changed && !confirm('Die Vorschläge werden neu berechnet. Schon eingetragene Werte, ersetzte und hinzugefügte Übungen gehen dabei verloren. Fortfahren?')) return;
+    const key = el.dataset.key;
+    draft.progression = { ...draft.progression, [key]: !draft.progression[key] };
+    const comments = new Map(draft.entries.map(en => [nameKey(en.name), en.comment]));
+    draft.entries = draftEntries(day);
+    draft.entries.forEach(en => { if (comments.get(nameKey(en.name))) en.comment = comments.get(nameKey(en.name)); });
+    saveDraft(); render();
+    toast(`${PROG_KEYS[key]}: Progression heute ${draft.progression[key] ? 'an' : 'aus'}`);
+  },
+  // Progression im Plan: Grundeinstellung (ganzer Zyklus) bzw. eine einzelne Woche (data-monday)
+  'prog-plan': el => {
+    const p = activePlan(), key = el.dataset.key;
+    p.progression = { ...planProgression(p), [key]: !planProgression(p)[key] };
+    // Wochen, die jetzt der Grundeinstellung entsprechen, sind keine Abweichung mehr
+    for (const [monday, own] of Object.entries(p.weekProgression)) {
+      if (own[key] === p.progression[key]) delete own[key];
+      if (!Object.keys(own).length) delete p.weekProgression[monday];
+    }
+    saveData(); render();
+  },
+  'prog-week': el => {
+    const p = activePlan(), key = el.dataset.key, monday = el.dataset.monday;
+    const value = !weekProgression(monday)[key];
+    const own = { ...(p.weekProgression[monday] || {}) };
+    if (value === planProgression(p)[key]) delete own[key]; else own[key] = value;  // wie Grundeinstellung -> keine Abweichung
+    if (Object.keys(own).length) p.weekProgression[monday] = own; else delete p.weekProgression[monday];
+    saveData(); render();
+  },
+  // Aufwärmsatz hinzufügen: etwas schwerer als der letzte (+20 % vom Arbeitssatz, höchstens 90 %), weniger Wdh.
+  'wu-add': el => {
+    const en = draft.entries[el.dataset.ei];
+    const last = en.warmup[en.warmup.length - 1];
+    const pct = last ? Math.min(0.9, last.pct + 0.2) : WARM_PCT;
+    const reps = last ? Math.max(3, (parseNum(last.reps) || WARM_REPS) - 3) : WARM_REPS;
+    const work = firstWorkWeight(en);
+    en.warmup.push({ pct, weight: work ? fmtNum(warmWeight(en, pct, work)) : '', reps: String(reps) });
+    en.warmupEdited = true;
+    saveDraft(); render();
+  },
+  'wu-del': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.warmup.pop();
+    en.warmupEdited = true;
+    saveDraft(); render();
+  },
   // Wochenansicht: Woche w des aktuellen Zyklus öffnen bzw. eine Woche vor/zurück blättern
   'week-open': el => go('week', { start: addWeeks(cycleInfo().cycleStart, Number(el.dataset.w) - 1) }),
   'week-shift': el => go('week', { start: addWeeks(current.params.start, Number(el.dataset.dir)) }),
@@ -2437,8 +2687,9 @@ const fields = {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.weight = el.value;
     // Aufwärmen richtet sich nach dem ersten Arbeitssatz
+    const en = draft.entries[el.dataset.ei];
     const warm = +el.dataset.si === 0 && $view.querySelector(`[data-warm="${el.dataset.ei}"]`);
-    if (warm) warm.innerHTML = warmupHtml(parseNum(el.value));
+    if (warm) { syncWarmup(en); warm.outerHTML = warmupBlock(en, +el.dataset.ei); }
     s.manualWeight = true;  // selbst gewähltes Gewicht -> nur noch Wdh. anpassen
     s.touched = true;
     recalcSets(+el.dataset.ei);
@@ -2450,6 +2701,23 @@ const fields = {
     s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
     s.touched = true;
     recalcSets(+el.dataset.ei);
+    saveDraft();
+  },
+  // Aufwärmsätze: selbst geändert -> folgt nicht mehr automatisch dem Arbeitssatz, wird gemerkt
+  'wu-weight': el => {
+    const en = draft.entries[el.dataset.ei];
+    const w = en.warmup[el.dataset.wi];
+    w.weight = el.value;
+    w.manual = true;
+    en.warmupEdited = true;
+    const plates = $view.querySelector(`[data-plates="${el.dataset.ei}-${el.dataset.wi}"]`);
+    if (plates && warmupKind(en) === 'barbell') plates.textContent = parseNum(el.value) ? platesPerSide(parseNum(el.value)) : '';
+    saveDraft();
+  },
+  'wu-reps': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.warmup[el.dataset.wi].reps = el.value;
+    en.warmupEdited = true;
     saveDraft();
   },
   'tr-comment': el => {
