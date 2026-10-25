@@ -40,7 +40,7 @@ function activePlan(d = data) {
 function newPlan(name, days = []) {
   return {
     id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, days, volume: defaultVolume(), rirPlan: {},
-    progression: { volume: true, load: true }, weekProgression: {},
+    progression: { volume: true, load: true }, weekProgression: {}, perWeek: 1,
   };
 }
 
@@ -74,6 +74,7 @@ function upgradeData(d) {
     // Progression: Grundeinstellung (ganzer Zyklus) und Abweichungen einzelner Wochen (Montag -> { volume, load })
     if (!p.progression) p.progression = { volume: true, load: true };
     if (!p.weekProgression) p.weekProgression = {};
+    if (![1, 2].includes(p.perWeek)) p.perWeek = 1;  // wie oft jeder Trainingstag pro Woche absolviert wird
   }
   if (!d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
   bindPlanAccessors(d);
@@ -211,23 +212,23 @@ function adjustAfterSet(weight, reps, rir, t) {
   return { diff, weight: w };
 }
 
-// Nach dem Training: Gewicht fürs nächste Mal, gemessen am ersten Satz
-function progression(first, t, prev) {
+// Nach dem Training: Gewicht fürs nächste Mal, gemessen am ersten Satz.
+// Knapp verfehlt (weniger als MISS_REPS Wdh.) -> halten, deutlich verfehlt -> reduzieren.
+function progression(first, t) {
   const rir = first.rir != null ? first.rir : t.rir;
   const { diff, weight } = adjustAfterSet(first.weight, first.reps, rir, t);
-  const prevMissed = prev && prev.result && prev.result.diff < 0 && !prev.result.deload;
   let next, deload = false;
   if (diff >= 1) next = Math.max(weight, first.weight + t.step);     // klar übertroffen
   else if (diff >= 0) next = first.weight + t.step;                  // genau erreicht
-  else if (prevMissed) { next = roundTo(first.weight * 0.95, t.step, Math.floor); deload = true; }
-  else next = first.weight;                                          // verfehlt: halten
+  else if (diff <= -MISS_REPS) { next = Math.min(weight, first.weight - t.step); deload = true; }  // deutlich verfehlt
+  else next = first.weight;                                          // knapp verfehlt: halten
   return { diff, next: round2(next), deload };
 }
 
 function resultText(r) {
   if (r.diff >= 1) return 'Ziel übertroffen → steigern';
   if (r.diff >= 0) return 'Ziel erreicht → kleiner Schritt hoch';
-  if (r.deload) return 'Zweimal verfehlt → Gewicht reduziert';
+  if (r.deload) return 'Ziel deutlich verfehlt → Gewicht reduziert';
   return 'Ziel verfehlt → Gewicht halten';
 }
 
@@ -243,19 +244,28 @@ function capacityAt(cap, weight, newWeight) {
 
 const isDone = s => parseNum(s.reps) != null && parseNum(s.rir) != null;
 
-// Weniger Wdh. als das wird nie vorgeschlagen – stattdessen geht das Gewicht runter
+// Weniger Wdh. als das wird bei Übungen mit Gewicht nie vorgeschlagen
 const MIN_REPS = 5;
 
 // Vorschlag für einen Satz, k Sätze nach einem Satz mit cap Wdh. bis zum Versagen bei Gewicht w.
-// Ohne festes Gewicht wird in Steigerungsschritten reduziert, bis mindestens MIN_REPS Wdh. passen.
 // startWeight: Ausgangsgewicht des Satzes (z. B. aus der Vergleichswoche), sonst das Gewicht von w.
-function planSet(cap, w, t, k, fixedWeight, startWeight) {
+// keepWeight: Gewicht bleibt (Ziel nur knapp verfehlt) – fehlt dann höchstens 1 Wdh. zu MIN_REPS, wird mit
+// etwas weniger Tank gerechnet. Sonst wird in Steigerungsschritten reduziert, bis mindestens MIN_REPS Wdh. passen.
+function planSet(cap, w, t, k, fixedWeight, startWeight, keepWeight = false) {
   const repsAt = wt => Math.floor(capacityAt(cap, w, wt) - t.rir - FATIGUE * k + 1e-9);
-  if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(1, repsAt(fixedWeight)) };
+  if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(MIN_REPS, repsAt(fixedWeight)) };
   if (w == null) return { weight: null, reps: Math.max(1, repsAt(null)) };  // ohne Gewicht
   let wt = startWeight != null ? startWeight : w;
-  while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
-  return { weight: wt, reps: Math.max(1, repsAt(wt)) };
+  if (!keepWeight || repsAt(wt) < MIN_REPS - 1) while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
+  return { weight: wt, reps: Math.max(MIN_REPS, repsAt(wt)) };
+}
+
+// Nie weniger als MIN_REPS Wdh.: sonst das Gewicht so weit senken, dass MIN_REPS mit derselben Anstrengung passen
+function atLeastMinReps(p, t) {
+  if (p.weight == null || p.reps == null || p.reps >= MIN_REPS) return p;
+  const step = t.step || 2.5;
+  const w = roundTo(p.weight * repFactor(MIN_REPS + t.rir) / repFactor(p.reps + t.rir), step, Math.floor);
+  return { weight: Math.max(step, w), reps: MIN_REPS };
 }
 
 // Satzziel laut Plan: Satz 1 = Ziel-Wdh., danach je Satz FATIGUE weniger (mind. MIN_REPS)
@@ -300,7 +310,7 @@ function recalcSets(ei) {
   if (avgEl) avgEl.innerHTML = avgTankText(en);
   updateNextHints(ei);
   const tt = { step: 2.5, ...t };
-  let first = null, firstLast = -1, firstCap = null;
+  let first = null, firstLast = -1, firstCap = null, firstReduced = false;
   for (let j = 0; j < en.sets.length; j++) {
     const s = en.sets[j];
     if (!s.auto || isDone(s)) continue;  // Wdh. selbst geändert oder schon erledigt -> nicht anfassen
@@ -312,16 +322,32 @@ function recalcSets(ei) {
     const done = en.sets[last];
     const cap = parseNum(done.reps) + parseNum(done.rir);
     const w = parseNum(done.weight);
-    // Ausgangsgewicht: aus der Vergleichswoche, aber nie unter dem zuletzt gesteigerten Gewicht
-    const start = s.baseWeight != null && w != null ? Math.max(s.baseWeight, w) : s.baseWeight;
-    let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start);
-    if (!t.deload && !t.hold && !s.manualWeight) {
+    // Ausgangsgewicht: laut Vorschlag – wurde im letzten Satz über den Vorschlag hinaus gesteigert, nie darunter
+    const pl = en.planned[last];
+    const raised = w != null && pl && pl.weight != null && w > pl.weight;
+    const start = raised && s.baseWeight != null ? Math.max(s.baseWeight, w) : s.baseWeight;
+    // Abstand des letzten erledigten Satzes zu seinem Vorschlag: erst ab MISS_REPS darunter geht das Gewicht runter
+    const d = setDeficit({ weight: w, reps: parseNum(done.reps), rir: parseNum(done.rir) }, en.planned[last], t.rir);
+    const missedBig = d != null && d <= -MISS_REPS;
+    let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start, !missedBig && !t.deload);
+    // ohne Gewichtsprogression bzw. im 2. Training der Woche nie über den Vorschlag hinaus
+    const capToPlan = t.hold || !!en.weekFirst;
+    if (!t.deload && !capToPlan && !s.manualWeight) {
       // Genug Wdh. über dem Ziel -> nächste Gewichtsstufe für die folgenden Sätze
       const up = stepUp(cap, w, tt, j - last, goalReps(tt, j));
       if (up && (p.weight == null || up.weight > p.weight)) p = up;
     }
-    if (t.hold && !s.manualWeight) {
-      // Progression aus: nie über den Vorschlag (= Werte vom letzten Mal) hinaus, nur nach unten anpassen
+    // Letzter erledigter Satz deutlich verfehlt -> Gewicht runter, damit die geplanten Wdh. wieder klappen
+    let reduced = false;
+    if (!t.deload && !s.manualWeight && w != null) {
+      const goal = en.planned[j] && en.planned[j].reps;
+      if (missedBig && goal != null) {
+        p = weightForGoal(cap, w, tt, j - last, goal);
+        reduced = true;
+      }
+    }
+    if (capToPlan && !s.manualWeight) {
+      // nie über den Vorschlag hinaus, nur nach unten anpassen
       const pl = en.planned[j] || {};
       if (pl.weight != null && p.weight != null && p.weight > pl.weight) p = planSet(cap, w, tt, j - last, pl.weight);
       if (pl.reps != null) p = { ...p, reps: Math.min(p.reps, pl.reps) };
@@ -334,7 +360,7 @@ function recalcSets(ei) {
         reps: Math.min(p.reps, t.reps),
       };
     }
-    if (!first) { first = p; firstLast = last; firstCap = cap; }
+    if (!first) { first = p; firstLast = last; firstCap = cap; firstReduced = reduced; }
     const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
     if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
     if (String(p.reps) !== s.reps) { s.reps = String(p.reps); setInput('tr-reps', ei, j, s.reps); }
@@ -343,7 +369,9 @@ function recalcSets(ei) {
   const last = firstLast, cap = firstCap;
   en.note = `Satz ${last + 1}: ${cap} Wdh. bis zum Versagen → nächster Satz: ` +
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
-    `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`;
+    (firstReduced
+      ? `(Ziel um mind. ${MISS_REPS} Wdh. verfehlt → weniger Gewicht statt weniger Wdh.)`
+      : `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`);
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
@@ -600,7 +628,8 @@ function weeklyVolume(g) {
     const d = autoSetsForDay(day, 0, true);
     ids.forEach(id => { deload += d.get(id) || 0; });
   }
-  return [...weeks, deload];
+  const n = activePlan().perWeek || 1;  // jeder Tag n-mal pro Woche
+  return [...weeks, deload].map(x => x * n);
 }
 
 // Plan: Sätze pro Muskelgruppe und Training einstellen, darunter die Summe pro Woche
@@ -719,45 +748,98 @@ function sessionCycle(s) {
   return { cycleStart: c.cycleStart, week: c.week };
 }
 
-// Neuestes passendes Training einer Übung in einer bestimmten Zykluswoche (bevorzugt derselbe Trainingstag)
-function findWeekEntry(name, dayId, match) {
+const sameCycleWeek = (a, b) => a.cycleStart === b.cycleStart && a.week === b.week;
+
+// Der wievielte Durchgang seines Trainingstags in dieser Zykluswoche war ein Training (1, 2, …)?
+// (Wird ein Tag zweimal pro Woche trainiert, hat jeder Durchgang seine eigene Steigerung.)
+function sessionOccurrence(s) {
+  const c = sessionCycle(s);
+  return 1 + data.sessions.filter(x => x !== s && x.dayId === s.dayId && x.date < s.date
+    && sameCycleWeek(sessionCycle(x), c)).length;
+}
+
+// Passendes Training einer Übung in einer bestimmten Zykluswoche: bevorzugt neuester Zyklus, derselbe
+// Trainingstag, derselbe Durchgang (occ) in der Woche, sonst das neueste
+function findWeekEntry(name, dayId, match, occ = 1) {
   const k = nameKey(name);
+  const occOf = new Map();
+  const sameOcc = s => {
+    if (s.dayId !== dayId) return false;
+    if (!occOf.has(s)) occOf.set(s, sessionOccurrence(s));
+    return occOf.get(s) === occ;
+  };
   const cands = data.sessions
     .filter(s => !s.deload)
     .map(s => ({ s, c: sessionCycle(s) }))
     .filter(x => match(x.c))
     .sort((a, b) => b.c.cycleStart.localeCompare(a.c.cycleStart)
       || (b.s.dayId === dayId) - (a.s.dayId === dayId)
+      || sameOcc(b.s) - sameOcc(a.s)
       || b.s.date.localeCompare(a.s.date));
   for (const { s, c } of cands) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, week: c.week, sets: e.sets, planned: e.planned, target: e.target };
+    if (e) return { date: s.date, week: c.week, occ: s.dayId === dayId ? sessionOccurrence(s) : null,
+      sets: e.sets, planned: e.planned, target: e.target };
   }
   return null;
 }
 
-// Vergleichswoche: dieselbe Woche im vorherigen Zyklus
+// Vergleichswoche: dieselbe Woche (und derselbe Durchgang) im vorherigen Zyklus
 const comparisonEntry = (name, dayId, ci) =>
-  findWeekEntry(name, dayId, c => c.week === ci.week && c.cycleStart < ci.cycleStart);
+  findWeekEntry(name, dayId, c => c.week === ci.week && c.cycleStart < ci.cycleStart, ci.occurrence || 1);
 
-// Vorwoche im selben Zyklus
+// Vorwoche (derselbe Durchgang) im selben Zyklus
 const previousWeekEntry = (name, dayId, ci) => ci.week < 2 ? null
-  : findWeekEntry(name, dayId, c => c.cycleStart === ci.cycleStart && c.week === ci.week - 1);
+  : findWeekEntry(name, dayId, c => c.cycleStart === ci.cycleStart && c.week === ci.week - 1, ci.occurrence || 1);
 
-// Bremse: Satz 1 lag (Wdh. + Tank) mindestens BRAKE_REPS unter dem damaligen Vorschlag
-const BRAKE_REPS = 2;
-// v = Ausführungsvariante; es zählen nur Sätze derselben Variante
-function braked(prev, v) {
-  const s = ofVariant(prev.sets, v)[0];
+// 2. Durchgang eines Tages in der Woche: Plan des 1. Trainings dieser Woche als Obergrenze (keine Steigerung
+// dagegen). Es zählt, was dort geplant war – nicht, was geschafft wurde (ältere Trainings ohne Plan: geschafft).
+function weekFirstEntry(name, dayId, ci) {
+  const k = nameKey(name);
+  const first = data.sessions
+    .filter(s => s.dayId === dayId && !s.deload && sameCycleWeek(sessionCycle(s), ci))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .find(s => s.entries.some(e => nameKey(e.name) === k));
+  if (!first) return null;
+  const e = first.entries.find(en => nameKey(en.name) === k);
+  const planned = (e.planned || []).filter(p => p && (p.weight != null || p.reps != null));
+  return { date: first.date, sets: planned.length ? planned : e.sets };
+}
+
+// Durchgang des nächsten Trainings eines Tages in der laufenden Zykluswoche
+function nextOccurrence(dayId, ci) {
+  return 1 + data.sessions.filter(s => s.dayId === dayId && sameCycleWeek(sessionCycle(s), ci)).length;
+}
+
+// Ziel deutlich verfehlt: ein Satz lag (Wdh. + Tank) mindestens MISS_REPS unter seinem Vorschlag
+// -> das Gewicht geht runter (statt die Wdh. immer weiter zu senken)
+const MISS_REPS = 2;
+
+// Abstand eines erledigten Satzes zu seinem Vorschlag in Wdh. (negativ = verfehlt), null ohne Maßstab.
+// Wurde mit anderem Gewicht trainiert als vorgeschlagen, wird die Leistung aufs vorgeschlagene Gewicht umgerechnet.
+function setDeficit(done, planned, tRir) {
+  if (!done || done.reps == null || !planned || planned.reps == null) return null;
+  let cap = done.reps + (done.rir != null ? done.rir : tRir);
+  if (planned.weight != null && done.weight != null) cap = capacityAt(cap, done.weight, planned.weight);
+  return cap - (planned.reps + tRir);
+}
+
+// Hat Satz k (der Variante v) im Bezugstraining prev das Ziel deutlich verfehlt?
+function missed(prev, v, k) {
   const t = prev.target || {};
-  const p = ofVariant(prev.planned, v)[0];
+  const p = ofVariant(prev.planned, v)[k];
   if (!p && v) return false;  // ohne gespeicherten Vorschlag gibt es für Varianten keinen Maßstab
-  const planReps = p && p.reps != null ? p.reps : t.reps;
-  if (!s || s.reps == null || planReps == null) return false;
-  const tRir = t.rir != null ? t.rir : 2;
-  let cap = s.reps + (s.rir != null ? s.rir : tRir);
-  if (p && p.weight != null && s.weight != null) cap = capacityAt(cap, s.weight, p.weight);
-  return cap - (planReps + tRir) <= -BRAKE_REPS;
+  const d = setDeficit(ofVariant(prev.sets, v)[k], p || (k === 0 ? { reps: t.reps } : null), t.rir != null ? t.rir : 2);
+  return d != null && d <= -MISS_REPS;
+}
+
+// Gewicht, mit dem nach einer Leistung (cap Wdh. bis zum Versagen bei Gewicht w) wieder goal Wdh. mit Ziel-Tank
+// (nach k Sätzen Ermüdung) klappen – in Steigerungsschritten nach unten, nie schwerer als w
+function weightForGoal(cap, w, t, k, goal) {
+  const repsAt = x => Math.floor(capacityAt(cap, w, x) - t.rir - FATIGUE * k + 1e-9);
+  let wt = w;
+  while (repsAt(wt) < goal && wt - t.step > 0) wt = round2(wt - t.step);
+  return { weight: wt, reps: Math.max(MIN_REPS, Math.min(goal, repsAt(wt))) };
 }
 
 // Ist Vorschlag a leichter als b? Zuerst nach Gewicht, bei gleichem Gewicht nach Wdh.
@@ -783,10 +865,14 @@ function refAt(list, k) {
 }
 
 // Vorschlag aus einem Bezugssatz: gleiches Gewicht, Wdh. +1 (plusOne) bzw. bestätigen –
-// reicht die damalige Leistung schon für die nächste Gewichtsstufe, steigt stattdessen das Gewicht
-function fromRef(src, target, plusOne, i) {
+// reicht die damalige Leistung schon für die nächste Gewichtsstufe, steigt stattdessen das Gewicht.
+// Die Wdh. werden vorher auf das damalige Tank-Ziel (srcRir) umgerechnet: mehr Wdh. mit weniger Tank sind keine
+// Mehrleistung (11 Wdh. mit 2 statt 3 im Tank zählen wie 10), mehr Wdh. mit vollem Tank schon.
+function fromRef(src, target, plusOne, i, srcRir) {
   let weight = src.weight;
-  let reps = src.reps != null ? src.reps + (plusOne ? 1 : 0) : goalReps(target, i);
+  const base = src.reps != null && src.rir != null && srcRir != null
+    ? Math.floor(src.reps + src.rir - srcRir + 1e-9) : src.reps;
+  let reps = base != null ? base + (plusOne ? 1 : 0) : goalReps(target, i);
   if (src.reps != null && src.weight != null) {
     const cap = src.reps + (src.rir != null ? src.rir : target.rir);
     const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
@@ -807,8 +893,7 @@ function lastCommentFor(name) {
 }
 
 // Vorschau unter jedem erledigten Satz: was nächste Woche am gleichen Trainingstag für diesen Satz
-// vorgeschlagen wird – mit denselben Regeln wie proposeSet (Satz 1 +1 Wdh., Rest bestätigen, ggf. nächste
-// Gewichtsstufe; der niedrigere Wert aus Vorwoche und Vergleichswoche; Bremse). Liefert HTML je Satz.
+// vorgeschlagen wird – mit denselben Regeln wie proposeSet (refProposal). Liefert HTML je Satz.
 function nextPreview(en) {
   const out = en.sets.map(() => '');
   if (!en.target || !en.plan || draft.deload || draft.week == null) return out;
@@ -825,8 +910,11 @@ function nextPreview(en) {
   const t = { ...en.plan, rir: rirFor(kindOf(ex), nw, bw, groupOf(ex)) };
   delete t.hold; delete t.intro;
   const hold = !weekProgression(nextMonday).load;
-  const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart });
+  // derselbe Durchgang nächste Woche (beim 2. Training kann dort noch das 1. Training der Woche begrenzen)
+  const occ = draft.occurrence || 1;
+  const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart, occurrence: occ });
   const fmt = p => (p.weight != null ? `${fmtNum(p.weight)} kg × ` : '') + `${p.reps} Wdh.`;
+  const when = occ > 1 ? `Nächste Woche, ${occ}. Training` : 'Nächste Woche';
 
   return en.sets.map((s, i) => {
     if (!done[i]) return '';
@@ -840,18 +928,15 @@ function nextPreview(en) {
     if (hold) {
       p = { weight: src.weight, reps: src.reps };
       why = 'Progression aus';
-    } else if (braked({ sets: doneSets, planned: en.planned, target: en.target }, v)) {
-      p = { weight: src.weight, reps: src.reps };
-      why = 'gebremst';
     } else {
-      const b = fromRef(src, t, k === 0, iNext);
-      const cmpV = ofVariant(cmp && cmp.sets, v);
-      const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, iNext) : null;
-      p = a && lighterSet(a, b) ? a : b;
-      if (a && p === a) why = 'Vergleich letzter Zyklus';
+      const r = refProposal(t, { sets: doneSets, planned: en.planned, target: en.target }, cmp, iNext, k, v);
+      p = r.p;
+      why = r.rule === 'brake' ? 'Ziel verfehlt → leichter' : r.fromCmp ? 'Vergleich letzter Zyklus' : '';
     }
-    const up = p.weight != null && src.weight != null && p.weight > src.weight;
-    return `<span>→ Nächste Woche: <b>${fmt(p)}</b>${up ? ' ↑' : ''}${why ? ` <small>(${why})</small>` : ''}</span>`;
+    p = atLeastMinReps(p, t);
+    const dir = p.weight == null || src.weight == null || p.weight === src.weight ? ''
+      : p.weight > src.weight ? ' ↑' : ' ↓';
+    return `<span>→ ${when}: <b>${fmt(p)}</b>${dir}${why ? ` <small>(${why})</small>` : ''}</span>`;
   });
 }
 
@@ -884,16 +969,34 @@ function lastVariantSets(name, v) {
   return [];
 }
 
-// Vorschlag für Satz i mit Variante v.
-// Normal: Vergleichswoche (+1 je Satz) und Vorwoche (Satz 1 +1, Rest bestätigen) – der niedrigere;
-// Bremse -> Vorwoche 1:1. Ohne Bezug: Vorschlag aus Plan/Progression (en.base).
+// Vorschlag aus Vorwoche (prev = { sets, planned, target }) und Vergleichswoche (cmp) für Satz i,
+// den k-ten Satz der Variante v; t = Ziel der neuen Woche. p = null, wenn es keinen Bezug gibt.
+// Vorwoche: Satz 1 +1 Wdh., Rest bestätigen (reicht die Leistung, nächste Gewichtsstufe); Vergleichswoche: +1 je Satz;
+// gibt es beide, gilt der niedrigere. Satz in der Vorwoche deutlich verfehlt -> Gewicht runter, Wdh. wie damals geplant.
+function refProposal(t, prev, cmp, i, k, v) {
+  const cmpV = ofVariant(cmp && cmp.sets, v);
+  const prevV = ofVariant(prev && prev.sets, v);
+  if (k < prevV.length && missed(prev, v, k)) {
+    const src = prevV[k];
+    const pl = ofVariant(prev.planned, v)[k];
+    const goal = pl && pl.reps != null ? pl.reps : src.reps;
+    if (src.weight == null) return { p: { weight: null, reps: src.reps }, rule: 'brake' };
+    const cap = src.reps + (src.rir != null ? src.rir : t.rir);
+    return { p: weightForGoal(cap, src.weight, { step: 2.5, ...t }, 0, goal), rule: 'brake' };
+  }
+  const rirOf = e => e && e.target && e.target.rir != null ? e.target.rir : null;  // damaliges Tank-Ziel
+  const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, i, rirOf(cmp)) : null;
+  const b = prevV.length ? fromRef(refAt(prevV, k), t, k === 0, i, rirOf(prev)) : null;
+  if (a && b) return { p: lighterSet(b, a) ? b : a, rule: 'lower', fromCmp: lighterSet(a, b) };
+  return { p: a || b, rule: null };
+}
+
+// Vorschlag für Satz i mit Variante v: Werte vom letzten Mal (Progression aus) bzw. refProposal.
+// Ohne Bezug: Vorschlag aus Plan/Progression (en.base).
 // Varianten nutzen zusätzlich die Vorwoche und notfalls ihr letztes Training als Bezug.
 function proposeSet(en, i, v) {
   const t = en.target;
   const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
-  const cmpV = ofVariant(en.compare && en.compare.sets, v);
-  const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v);
-  const usePrev = prevV.length > 0;  // innerhalb des Zyklus immer: Satz 1 +1 Wdh., Rest bestätigen
   let p = null, rule = null;
   if (t.hold) {
     // Gewichts-/Wdh.-Progression aus: Werte vom letzten Mal 1:1
@@ -903,24 +1006,25 @@ function proposeSet(en, i, v) {
       p = { weight: src.weight, reps: src.reps };
       rule = 'hold';
     }
-  } else if (usePrev && braked(en.prevWeek, v)) {
-    const src = refAt(prevV, k);
-    p = { weight: src.weight, reps: src.reps };
-    rule = 'brake';
   } else {
-    const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, i) : null;
-    const b = usePrev ? fromRef(refAt(prevV, k), t, k === 0, i) : null;
-    if (a && b) { p = lighterSet(b, a) ? b : a; rule = 'lower'; }
-    else p = a || b;
+    ({ p, rule } = refProposal(t, en.prevWeek, en.compare, i, k, v));
     if (!p && v) {
       const lastV = lastVariantSets(en.name, v);
       if (lastV.length) p = fromRef(refAt(lastV, k), t, k === 0, i);
     }
   }
+  const firstV = ofVariant(en.weekFirst && en.weekFirst.sets, v);
+  if (firstV.length && !t.hold) {
+    // 2. Training der Woche: höchstens der Plan des 1. Trainings dieser Woche (keine Steigerung dagegen)
+    const f = refAt(firstV, k);
+    const cap = { weight: f.weight, reps: f.reps };
+    if (cap.reps != null && (!p || lighterSet(cap, p))) { p = cap; rule = 'week'; }
+  }
   if (!p) {
     const b = en.base[Math.min(i, en.base.length - 1)];
     p = { weight: parseNum(b.weight), reps: parseNum(b.reps) };
   }
+  p = atLeastMinReps(p, t);
   return {
     set: {
       weight: p.weight != null ? fmtNum(p.weight) : '',
@@ -1385,13 +1489,20 @@ function renderTraining() {
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
     }
+    if (en.weekFirst) {
+      h += `<p class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):<br>
+        ${en.weekFirst.sets.map(fmtSet).join(' · ')}<br><b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></p>`;
+    }
     if (en.compare) {
       const rule = en.rule === 'brake'
-        ? `Bremse: Die Vorwoche lief deutlich schwerer als geplant → Werte der Vorwoche 1:1`
+        ? `Vorwoche deutlich verfehlt (mind. ${MISS_REPS} Wdh. unter Plan) → weniger Gewicht, Wdh. wie geplant`
         : en.rule === 'lower'
           ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden – Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
-          : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
-      h += `<p class="compare">Letzter Zyklus, ${weekLabel(en.compare.week)} (${fmtDate(en.compare.date)}):<br>
+          : en.rule === 'week'
+            ? 'Heute: begrenzt durch das 1. Training dieser Woche'
+            : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
+      const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
+      h += `<p class="compare">Letzter Zyklus, ${weekLabel(en.compare.week)}${occ} (${fmtDate(en.compare.date)}):<br>
         ${en.compare.sets.map(fmtSet).join(' · ')}` +
         (en.prevWeek ? `<br>Vorwoche, ${weekLabel(en.prevWeek.week)} (${fmtDate(en.prevWeek.date)}):<br>
         ${en.prevWeek.sets.map(fmtSet).join(' · ')}` : '') +
@@ -1517,7 +1628,15 @@ function renderPlan() {
     h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
       <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}</span></button>`;
   });
+  const perWeek = active.perWeek || 1;
   h += `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
+    <div class="card per-week">
+      <div class="row" style="margin-top:0"><span>Jeder Trainingstag pro Woche<br>
+        <small class="hint">${data.days.length * perWeek} Trainings pro Woche</small></span>
+        <div class="stepper">${[1, 2].map(n => `<button class="toggle ${perWeek === n ? 'on' : ''}" data-action="plan-perweek" data-n="${n}">${n}×</button>`).join('')}</div>
+      </div>
+      ${perWeek > 1 ? '<p class="hint">Das 2. Training eines Tages in der Woche richtet sich nach dem 2. Training derselben Woche im letzten Zyklus und liegt nie über dem Plan des 1. Trainings dieser Woche.</p>' : ''}
+    </div>
     <h2>Periodisierung</h2>
     <div class="card">
       <div class="row" style="margin-top:0">
@@ -1771,8 +1890,12 @@ function renderWeek({ start }) {
     h += `<p class="hint">${start > thisWeek ? 'Diese Woche liegt noch vor dir.' : 'In dieser Woche wurde nicht trainiert.'}</p>`;
   }
   if (start === thisWeek && data.days.length) {
-    const open = data.days.filter(d => !sessions.some(s => s.dayId === d.id));
-    h += `<p class="hint">${open.length ? `Noch offen diese Woche: ${open.map(d => esc(d.name)).join(', ')}` : 'Alle Trainingstage dieser Woche erledigt 💪'}</p>`;
+    const per = activePlan().perWeek || 1;
+    const open = data.days
+      .map(d => ({ d, left: per - sessions.filter(s => s.dayId === d.id).length }))
+      .filter(x => x.left > 0);
+    h += `<p class="hint">${open.length ? `Noch offen diese Woche: ${open.map(x => esc(x.d.name) + (per > 1 ? ` (${x.left}×)` : '')).join(', ')}`
+      : 'Alle Trainings dieser Woche erledigt 💪'}</p>`;
   }
   if (sessions.length) h += '<p class="hint">Training antippen, um es anzusehen oder nachträglich zu ändern.</p>';
   return h;
@@ -1854,8 +1977,7 @@ function recalcResults(s) {
   const has = (x, k) => x.entries.find(e => nameKey(e.name) === k);
   for (const en of s.entries) {
     const k = nameKey(en.name);
-    const prevSession = list.slice(idx + 1).find(x => has(x, k));
-    const result = entryResult(en, prevSession ? has(prevSession, k) : null);
+    const result = entryResult(en);
     if (!result) { delete en.result; continue; }
     en.result = result;
     if (!list.slice(0, idx).some(x => has(x, k))) setPlanMax10(en.name, result.max10);
@@ -1978,6 +2100,7 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     penalty: ci.deload ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
     // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
     progression: ci.deload ? { volume: true, load: true } : weekProgression(mondayISO(new Date())),
+    occurrence: nextOccurrence(day.id, ci),  // 2 = dieser Tag wurde diese Woche schon einmal trainiert
     entries: [],
   };
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
@@ -2028,6 +2151,8 @@ function setupEntry(en, target, variantFor = () => '') {
   en.target = { ...target, sets: n };
   en.compare = cmp;
   en.prevWeek = prev;
+  // 2. Training dieses Tages in der Woche: nie mehr als im 1. Training dieser Woche geschafft
+  en.weekFirst = draft.occurrence > 1 && !draft.deload ? weekFirstEntry(en.name, draft.dayId, draft) : null;
   en.rule = null;
   en.base = buildSets(en.name, en.target);  // Vorschlag ohne Bezugswoche
   en.sets = [];
@@ -2092,11 +2217,11 @@ function replaceExercise(en, name, max10) {
 
 // Ergebnis einer Übung fürs nächste Mal, gemessen am ersten normalen Satz (null, wenn Werte fehlen).
 // max10 steht auch im Ergebnis – für Ersatzübungen, die nicht im Plan stehen.
-function entryResult(en, prev) {
+function entryResult(en) {
   const first = en.sets.find(s => !s.variant);
   if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) return null;
   const t = { step: 2.5, ...en.target };
-  const result = progression(first, t, prev);
+  const result = progression(first, t);
   result.max10 = Math.round(result.next / repFactor(t.reps + t.rir) * 10) / 10;
   return result;
 }
@@ -2138,7 +2263,7 @@ function saveTraining() {
   // (nicht in der Deload-Woche und nicht ohne Gewichts-/Wdh.-Progression)
   const prog = draft.progression || { volume: true, load: true };
   for (const en of draft.deload || !prog.load ? [] : entries) {
-    const result = entryResult(en, lastEntry(en.name));
+    const result = entryResult(en);
     if (!result) continue;
     en.result = result;
     setPlanMax10(en.name, result.max10);
@@ -2612,6 +2737,17 @@ const actions = {
     draft.entries.forEach(en => { if (comments.get(nameKey(en.name))) en.comment = comments.get(nameKey(en.name)); });
     saveDraft(); render();
     toast(`${PROG_KEYS[key]}: Progression heute ${draft.progression[key] ? 'an' : 'aus'}`);
+  },
+  // Wie oft jeder Trainingstag pro Woche absolviert wird – Sätze pro Training auf Wunsch so anpassen,
+  // dass die Wochensumme gleich bleibt
+  'plan-perweek': el => {
+    const p = activePlan(), n = Number(el.dataset.n), old = p.perWeek || 1;
+    if (n === old) return;
+    if (confirm(`Sätze pro Training anpassen, damit die Sätze pro Woche gleich bleiben?\n\n(${n > old ? 'ungefähr halbiert' : 'verdoppelt'}; „Abbrechen“ lässt die Sätze pro Training, wie sie sind)`)) {
+      for (const g of Object.keys(p.volume)) p.volume[g] = p.volume[g].map(v => Math.max(1, Math.round(v * old / n)));
+    }
+    p.perWeek = n;
+    saveData(); render();
   },
   // Progression im Plan: Grundeinstellung (ganzer Zyklus) bzw. eine einzelne Woche (data-monday)
   'prog-plan': el => {

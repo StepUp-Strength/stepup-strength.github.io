@@ -82,7 +82,8 @@ const existingFor = g => byKind(uniqueNames(data.days.flatMap(d => d.exercises)
 
 // Muskelgruppen, die an mindestens einem Tag trainiert werden (in fester Reihenfolge)
 const wizGroups = () => PLAN_GROUPS.filter(g => wiz.days.some(d => d.groups.includes(g)));
-const daysWith = g => wiz.days.filter(d => d.groups.includes(g)).length;
+// Trainings pro Woche mit dieser Muskelgruppe (jeder Tag wird wiz.perWeek-mal pro Woche absolviert)
+const daysWith = g => wiz.days.filter(d => d.groups.includes(g)).length * wiz.perWeek;
 
 // Schwerpunkt: +2 Sätze/Woche bei Priorität, −2 bei „low“
 const focusAdj = g => wiz.prio.includes(g) ? FOCUS_SETS : wiz.low.includes(g) ? -FOCUS_SETS : 0;
@@ -159,6 +160,7 @@ function wizStart() {
     startWeek: mondayISO(new Date()),  // Montag der ersten Trainingswoche des neuen Plans
     entry: 1,                          // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
+    perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -366,6 +368,9 @@ function renderWizDays() {
       <div class="row" style="margin-top:0"><span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
         <div class="stepper">${[4, 5].map(n =>
           `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
+      <div class="row"><span>Jeder Trainingstag pro Woche<br><small class="hint">${wiz.days.length * wiz.perWeek} Trainings pro Woche</small></span>
+        <div class="stepper">${[1, 2].map(n =>
+          `<button class="toggle ${wiz.perWeek === n ? 'on' : ''}" data-action="wiz-perweek" data-n="${n}">${n}×</button>`).join('')}</div></div>
       ${startWeekRow()}
       <p class="lbl chips-title">Progression (Grundeinstellung)</p>
       <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>
@@ -547,6 +552,7 @@ Object.assign(actions, {
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
+  'wiz-perweek': el => { wiz.perWeek = Number(el.dataset.n); render(); },
   'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
   'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
@@ -653,6 +659,7 @@ Object.assign(actions, {
     plan.volume = wiz.volume;
     plan.rirPlan = wiz.rir;
     plan.progression = { ...wiz.progression };
+    plan.perWeek = wiz.perWeek;
     data.plans.push(plan);
     data.activePlanId = plan.id;
     data.cycle.buildWeeks = wiz.weeks;
