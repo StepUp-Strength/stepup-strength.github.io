@@ -604,6 +604,15 @@ table.vol tr.all-row td { padding-bottom: 10px; border-bottom: 2px solid var(--a
   text-align: center;
 }
 .setno small { display: block; font-size: 10px; font-weight: 700; }
+span.setno { display: flex; flex-direction: column; justify-content: center; }
+.edit-comment { margin: 12px 0 0 !important; }
+
+/* ---------- Wochenansicht ---------- */
+.week-head { display: flex; align-items: center; gap: 10px; padding: 12px; }
+.week-head > div { flex: 1; min-width: 0; text-align: center; }
+.week-head b { display: block; font-size: 19px; }
+.week-head small { display: block; margin-top: 2px; font-size: 15px; color: var(--muted); }
+.week-head .icon-btn { flex: none; border-radius: 999px; }
 .setno.has-v { background: var(--warn); color: #1a1200; }
 
 /* ---------- Ausführungsvarianten / Chips ---------- */
@@ -768,6 +777,8 @@ table.vol tr.all-row td { padding-bottom: 10px; border-bottom: 2px solid var(--a
   text-align: center;
 }
 .pill.dl, .pill.intro { flex: 2; }
+button.pill { min-height: 46px; padding: 0; border: 0; font-family: inherit; letter-spacing: inherit; }
+button.pill:active { transform: scale(.95); }
 .compare {
   margin: 0 0 12px;
   padding: 12px 14px;
@@ -817,6 +828,8 @@ table.vol tr.all-row td { padding-bottom: 10px; border-bottom: 2px solid var(--a
 .cycle .pill.past { background: rgba(255, 255, 255, .32); color: #fff; }
 .cycle .pill.now { background: #fff; color: var(--accent); }
 .cycle .sub { position: relative; margin: 0; font-size: 16px; line-height: 1.45; color: rgba(255, 255, 255, .88); }
+.cycle .tap-hint { position: relative; margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: rgba(255, 255, 255, .7); }
+.cycle button.pill { min-height: 40px; }
 .card.cycle.is-deload { background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%); box-shadow: 0 8px 22px -8px rgba(249, 115, 22, .7); }
 .cycle .pill.dl.now { background: #fff; color: #c2410c; }
 

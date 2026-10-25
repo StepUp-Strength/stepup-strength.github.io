@@ -156,7 +156,8 @@ function wizStart() {
     split: null,   // gewählte Vorlage
     days: [],
     newDay: { name: '', intensity: 'heavy', groups: [] },
-    startWeek: mondayISO(new Date()),  // Montag der Intro-Woche des neuen Plans
+    startWeek: mondayISO(new Date()),  // Montag der ersten Trainingswoche des neuen Plans
+    entry: 1,                          // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -306,18 +307,33 @@ function dayCard(d, di, removable) {
   </div>`;
 }
 
-// Startwoche: diese oder nächste Woche oder ein beliebiges Datum (zählt ab dessen Montag)
+// Einstiegswoche als Zahl: 1 = Intro … wiz.weeks, Deload = wiz.weeks + 1
+const wizEntry = () => wiz.entry === 'deload' ? wiz.weeks + 1 : Math.min(wiz.entry, wiz.weeks);
+
+// Einstieg (mit welcher Zykluswoche) und Startwoche (diese, nächste oder beliebige Woche, zählt ab deren Montag)
 function startWeekRow() {
   const thisWeek = mondayISO(new Date());
   const nextWeek = addWeeks(thisWeek, 1);
-  return `<p class="lbl chips-title">Start (Intro-Woche)</p>
+  const entry = wizEntry();
+  const date = iso => fmtDate(iso + 'T12:00:00');
+  const after = entry > wiz.weeks
+    ? `danach beginnt am ${date(addWeeks(wiz.startWeek, 1))} der neue Zyklus mit der Intro-Woche`
+    : `Deload ab ${date(addWeeks(wiz.startWeek, wiz.weeks + 1 - entry))}`;
+  return `<p class="lbl chips-title">Einstieg mit</p>
+    <div class="pills">${Array.from({ length: wiz.weeks + 1 }, (_, i) => i + 1).map(w => {
+      const deload = w > wiz.weeks;
+      return `<button class="pill ${deload ? 'dl' : w === 1 ? 'intro' : ''} ${w === entry ? 'now' : ''}"
+        data-action="wiz-entry" data-w="${deload ? 'deload' : w}">${deload ? 'Deload' : w === 1 ? 'Intro' : w}</button>`;
+    }).join('')}</div>
+    <p class="hint">Normal ist die Intro-Woche. Nach Krankheit oder längerer Pause z. B. mit der Deload-Woche einsteigen.</p>
+    <p class="lbl chips-title">Ab wann</p>
     <div class="variants">
       <button class="vchip ${wiz.startWeek === thisWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${thisWeek}">Diese Woche</button>
       <button class="vchip ${wiz.startWeek === nextWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${nextWeek}">Nächste Woche</button>
     </div>
     <label class="row"><span>oder Woche wählen</span>
       <input class="inp date" type="date" data-field="wiz-start-date" value="${wiz.startWeek}"></label>
-    <p class="hint">Intro-Woche ab <b>${fmtDate(wiz.startWeek + 'T12:00:00')}</b>, Deload ab ${fmtDate(addWeeks(wiz.startWeek, wiz.weeks) + 'T12:00:00')}.</p>`;
+    <p class="hint">${cycleWeekLabel(entry, wiz.weeks)} ab <b>${date(wiz.startWeek)}</b>, ${after}.</p>`;
 }
 
 function renderWizDays() {
@@ -527,6 +543,7 @@ Object.assign(actions, {
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
+  'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
   'wiz-cat': el => {
     wiz.cat = el.dataset.cat || null;
@@ -633,7 +650,10 @@ Object.assign(actions, {
     data.plans.push(plan);
     data.activePlanId = plan.id;
     data.cycle.buildWeeks = wiz.weeks;
-    data.cycle.start = wiz.startWeek;  // der neue Plan beginnt mit seiner Intro-Woche
+    // Einstieg mitten im Zyklus: Intro-Montag entsprechend früher, erster Trainingsmontag in begin
+    const entry = wizEntry();
+    data.cycle.start = addWeeks(wiz.startWeek, -(entry - 1));
+    if (entry > 1) data.cycle.begin = wiz.startWeek; else delete data.cycle.begin;
     saveData();
     wiz = null;
     toast(`„${plan.name}“ erstellt und aktiv ✔`);

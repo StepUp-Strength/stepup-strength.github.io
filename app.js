@@ -355,12 +355,17 @@ const addWeeks = (iso, n) => {
 };
 
 // Wo im Zyklus liegt das Datum? Woche 1..buildWeeks = Aufbau, buildWeeks + 1 = Deload
+// c.begin (optional): erster Trainingsmontag, wenn mitten im Zyklus eingestiegen wird (z. B. mit Woche 3
+// oder dem Deload nach einer Pause) – c.start liegt dann entsprechend viele Wochen davor.
+// Vor c.begin gilt der Plan als noch nicht gestartet (future) und zeigt die Einstiegswoche.
 function cycleInfo(date = new Date()) {
   const c = data.cycle;
-  const weeks = Math.round((new Date(mondayISO(date) + 'T12:00:00') - new Date(c.start + 'T12:00:00')) / WEEK_MS);
+  const begin = c.begin && c.begin > c.start ? c.begin : c.start;
+  const weeksBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / WEEK_MS);
+  const monday = mondayISO(date);
   const len = c.buildWeeks + 1;
-  const future = weeks < 0;
-  const n = Math.max(0, weeks);
+  const future = monday < begin;
+  const n = weeksBetween(c.start, future ? begin : monday);
   const cycle = Math.floor(n / len) + 1;
   const pos = n % len;
   const cycleStart = addWeeks(c.start, (cycle - 1) * len);
@@ -371,6 +376,7 @@ function cycleInfo(date = new Date()) {
     deload: !future && pos === c.buildWeeks,
     intro: !future && pos === 0,
     future,
+    begin,
     cycleStart,
     deloadStart: addWeeks(cycleStart, c.buildWeeks),
     nextStart: addWeeks(cycleStart, len),
@@ -841,6 +847,8 @@ function applyProposal(en, i, v) {
 }
 
 const weekLabel = w => w === 1 ? 'Intro-Woche' : `Woche ${w}`;
+// wie weekLabel, aber die Woche nach den Trainingswochen heißt Deload-Woche
+const cycleWeekLabel = (w, bw = data.cycle.buildWeeks) => w > bw ? 'Deload-Woche' : weekLabel(w);
 
 /* ---------- Trainingsdauer ---------- */
 
@@ -1013,7 +1021,11 @@ const views = {
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
   exercise: { title: p => p.name,     tab: 'history', back: 'history', render: renderExercise },
-  session:  { title: 'Training',      tab: 'history', back: 'history', render: renderSession },
+  week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
+  // aus der Wochenansicht geöffnet: params.week = Montag dieser Woche
+  session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
+    back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { start: p.week }] : ['history', {}],
+    render: renderSession },
   check:    { title: 'Vor dem Training', tab: 'start', back: 'start', render: renderCheck },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
 };
@@ -1028,27 +1040,33 @@ function render() {
   const v = views[current.view];
   $title.textContent = typeof v.title === 'function' ? v.title(current.params) : v.title;
   $back.hidden = !v.back;
+  const tab = typeof v.tab === 'function' ? v.tab(current.params) : v.tab;
   document.querySelectorAll('#tabs button').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === v.tab);
+    b.classList.toggle('active', b.dataset.tab === tab);
   });
   $view.innerHTML = v.render(current.params);
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
 }
 
-function cyclePills(ci) {
+// action = Wochen antippbar: 'week-open' (Trainings der Woche ansehen) oder
+// 'cycle-jump' (Plan-Reiter: diese Woche als die gewählte Zykluswoche zählen)
+function cyclePills(ci, action = null) {
   let h = '<div class="pills">';
   for (let i = 1; i <= ci.buildWeeks + 1; i++) {
     const deload = i === ci.buildWeeks + 1;
     const state = i === ci.week ? 'now' : i < ci.week ? 'past' : '';
     const cls = deload ? 'dl' : i === 1 ? 'intro' : '';
-    h += `<span class="pill ${cls} ${state}">${deload ? 'Deload' : i === 1 ? 'Intro' : i}</span>`;
+    const label = deload ? 'Deload' : i === 1 ? 'Intro' : i;
+    h += action
+      ? `<button class="pill ${cls} ${state}" data-action="${action}" data-w="${i}">${label}</button>`
+      : `<span class="pill ${cls} ${state}">${label}</span>`;
   }
   return h + '</div>';
 }
 
 function cycleCard(ci) {
   const head = ci.future
-    ? `Zyklus startet am ${fmtDate(ci.cycleStart)}`
+    ? `Start am ${fmtDate(ci.begin + 'T12:00:00')}${ci.week > 1 ? ` mit ${cycleWeekLabel(ci.week, ci.buildWeeks)}` : ''}`
     : ci.deload
       ? `Zyklus ${ci.cycle} · Deload-Woche`
       : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
@@ -1058,7 +1076,8 @@ function cycleCard(ci) {
       ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh. Deload ab ${fmtDate(ci.deloadStart)}.`
       : `Werte derselben Woche im letzten Zyklus, je +1 Wdh. Deload-Woche ab ${fmtDate(ci.deloadStart)}.`;
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
-    <h2>${head}</h2>${cyclePills(ci)}<p class="sub">${sub}</p>
+    <h2>${head}</h2>${cyclePills(ci, 'week-open')}<p class="sub">${sub}</p>
+    <p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>
   </div>`;
 }
 
@@ -1302,9 +1321,10 @@ function renderPlan() {
       <label class="row"><span>Zyklus-Start</span>
         <input class="inp date" type="date" data-field="cycle-start" value="${c.start}"></label>
       <p class="hint">Danach folgt automatisch 1 Deload-Woche: halbe Sätze der letzten Woche, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
-      ${cyclePills(cycleInfo())}
+      <p class="lbl chips-title">Aktuelle Woche</p>
+      ${cyclePills(cycleInfo(), 'cycle-jump')}
+      <p class="hint">Antippen, um diese Woche anders einzuordnen – z. B. nach Krankheit oder längerer Pause direkt in die Deload-Woche oder zurück in die Intro-Woche. Der Zyklus verschiebt sich entsprechend.</p>
       ${rirTable(c.buildWeeks)}
-      <div class="row"><button class="btn outline" data-action="cycle-restart">Neuen Zyklus ab dieser Woche</button></div>
     </div>
     ${volumeEditor()}`;
   return h;
@@ -1487,16 +1507,140 @@ function renderExercise({ name }) {
   return h + '</ul>';
 }
 
-function renderSession({ id, fresh }) {
+// Trainings einer Kalenderwoche (start = Montag), mit Blättern zur Vor-/Folgewoche
+function renderWeek({ start }) {
+  const ci = cycleInfo(new Date(start + 'T12:00:00'));
+  const sunday = new Date(start + 'T12:00:00');
+  sunday.setDate(sunday.getDate() + 6);
+  const label = ci.future ? 'Vor dem Start' : cycleWeekLabel(ci.week, ci.buildWeeks);
+  const sessions = data.sessions.filter(s => mondayISO(new Date(s.date)) === start)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const thisWeek = mondayISO(new Date());
+
+  let h = `<div class="card week-head">
+      <button class="icon-btn" data-action="week-shift" data-dir="-1" aria-label="Vorherige Woche">‹</button>
+      <div><b>${label}</b>${ci.future ? '' : `<small>Zyklus ${ci.cycle}</small>`}<small>${fmtDate(start + 'T12:00:00')} – ${fmtDate(sunday)}</small></div>
+      <button class="icon-btn" data-action="week-shift" data-dir="1" aria-label="Nächste Woche">›</button>
+    </div>`;
+  if (sessions.length) {
+    const tons = sessions.reduce((a, s) => a + sessionTonnage(s), 0);
+    h += `<div class="stats two"><div class="stat"><span>Trainings</span><b>${sessions.length}</b></div>
+      <div class="stat"><span>Bewegt</span><b>${fmtTons(tons)}</b></div></div>`;
+  }
+  for (const s of sessions) {
+    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}" data-week="${start}">
+      ${esc(s.dayName)}<small>${fmtDate(s.date)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}</small></button>`;
+  }
+  if (!sessions.length) {
+    h += `<p class="hint">${start > thisWeek ? 'Diese Woche liegt noch vor dir.' : 'In dieser Woche wurde nicht trainiert.'}</p>`;
+  }
+  if (start === thisWeek && data.days.length) {
+    const open = data.days.filter(d => !sessions.some(s => s.dayId === d.id));
+    h += `<p class="hint">${open.length ? `Noch offen diese Woche: ${open.map(d => esc(d.name)).join(', ')}` : 'Alle Trainingstage dieser Woche erledigt 💪'}</p>`;
+  }
+  if (sessions.length) h += '<p class="hint">Training antippen, um es anzusehen oder nachträglich zu ändern.</p>';
+  return h;
+}
+
+// Arbeitskopie beim Bearbeiten eines gespeicherten Trainings (Werte als Text wie in den Eingabefeldern)
+let sessionEdit = null;
+
+function startSessionEdit(s) {
+  const txt = n => n == null ? '' : fmtNum(n);
+  sessionEdit = {
+    id: s.id,
+    entries: s.entries.map(e => ({
+      comment: e.comment || '',
+      sets: e.sets.map(st => ({ weight: txt(st.weight), reps: txt(st.reps), rir: txt(st.rir), variant: st.variant })),
+    })),
+  };
+}
+
+function renderSessionEdit(s) {
+  let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}</p>`;
+  sessionEdit.entries.forEach((e, ei) => {
+    h += `<section class="card"><h2>${esc(s.entries[ei].name)}</h2>
+      <div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>`;
+    e.sets.forEach((st, si) => {
+      const v = variantOf(st);
+      h += `<span class="setno ${v ? 'has-v' : ''}">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</span>
+        <input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
+          data-field="se-set" data-prop="weight" data-ei="${ei}" data-si="${si}" value="${esc(st.weight)}">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
+          data-field="se-set" data-prop="reps" data-ei="${ei}" data-si="${si}" value="${esc(st.reps)}">
+        <input type="text" inputmode="decimal" autocomplete="off" placeholder="–" class="tank"
+          data-field="se-set" data-prop="rir" data-ei="${ei}" data-si="${si}" value="${esc(st.rir)}">`;
+    });
+    h += `</div>
+      <div class="row">
+        <button class="btn" data-action="se-del-set" data-ei="${ei}">− Satz</button>
+        <button class="btn" data-action="se-add-set" data-ei="${ei}">+ Satz</button>
+      </div>
+      <textarea class="inp comment edit-comment" rows="2" data-field="se-comment" data-ei="${ei}"
+        placeholder="Kommentar zur Übung …">${esc(e.comment)}</textarea>
+    </section>`;
+  });
+  return h + `<button class="btn primary" data-action="se-save">Änderungen speichern</button>
+    <button class="btn center" data-action="back">Abbrechen</button>
+    <p class="hint">Übungen ohne Sätze werden aus dem Training entfernt. Nach dem Speichern wird die Steigerung fürs nächste Mal neu berechnet.</p>`;
+}
+
+function saveSessionEdit() {
+  const s = data.sessions.find(x => x.id === sessionEdit.id);
+  const entries = [];
+  sessionEdit.entries.forEach((e, ei) => {
+    const sets = e.sets
+      .map(st => ({ weight: parseNum(st.weight), reps: parseNum(st.reps), rir: parseNum(st.rir),
+        ...(st.variant ? { variant: st.variant } : {}) }))
+      .filter(st => st.weight != null || st.reps != null);
+    if (!sets.length) return;
+    const en = { ...s.entries[ei], sets };
+    if (e.comment.trim()) en.comment = e.comment.trim(); else delete en.comment;
+    entries.push(en);
+  });
+  if (!entries.length) {
+    alert('Es muss mindestens ein Satz eingetragen sein. Um das ganze Training zu entfernen, „Dieses Training löschen“ verwenden.');
+    return false;
+  }
+  s.entries = entries;
+  recalcResults(s);
+  saveData();
+  sessionEdit = null;
+  return true;
+}
+
+// Nach dem Bearbeiten: Ergebnis (Gewicht fürs nächste Mal) neu berechnen; ist es das neueste Training
+// dieser Übung, auch „Max. bei 10 Wdh.“ im Plan
+function recalcResults(s) {
+  if (s.deload) return;
+  const list = sessionsNewestFirst();
+  const idx = list.indexOf(s);
+  const has = (x, k) => x.entries.find(e => nameKey(e.name) === k);
+  for (const en of s.entries) {
+    const k = nameKey(en.name);
+    const prevSession = list.slice(idx + 1).find(x => has(x, k));
+    const result = entryResult(en, prevSession ? has(prevSession, k) : null);
+    if (!result) { delete en.result; continue; }
+    en.result = result;
+    if (!list.slice(0, idx).some(x => has(x, k))) setPlanMax10(en.name, result.max10);
+  }
+}
+
+function renderSession({ id, fresh, edit, week }) {
   const s = data.sessions.find(x => x.id === id);
   if (!s) return '<p class="hint">Training nicht gefunden.</p>';
+  if (edit) {
+    if (!sessionEdit || sessionEdit.id !== id) startSessionEdit(s);
+    return renderSessionEdit(s);
+  }
   const won = fresh || [];
   const top = (won.length ? `<div class="card award-new">${won.map(a =>
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
   let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : ''}` +
-    (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p><ul class="list">';
+    (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p>' +
+    `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button><ul class="list">`;
   for (const e of s.entries) {
     const res = e.result
       ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
@@ -1692,6 +1836,23 @@ function replaceExercise(en, name, max10) {
     i => variants[Math.min(i, variants.length - 1)]);
 }
 
+// Ergebnis einer Übung fürs nächste Mal, gemessen am ersten normalen Satz (null, wenn Werte fehlen).
+// max10 steht auch im Ergebnis – für Ersatzübungen, die nicht im Plan stehen.
+function entryResult(en, prev) {
+  const first = en.sets.find(s => !s.variant);
+  if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) return null;
+  const t = { step: 2.5, ...en.target };
+  const result = progression(first, t, prev);
+  result.max10 = Math.round(result.next / repFactor(t.reps + t.rir) * 10) / 10;
+  return result;
+}
+
+const setPlanMax10 = (name, max10) => {
+  for (const day of data.days) {
+    for (const ex of day.exercises) if (nameKey(ex.name) === nameKey(name)) ex.max10 = max10;
+  }
+};
+
 function saveTraining() {
   const entries = draft.entries
     .map(en => ({
@@ -1718,15 +1879,10 @@ function saveTraining() {
 
   // Progression berechnen und „Max. bei 10 Wdh.“ im Plan aktualisieren (nicht in der Deload-Woche)
   for (const en of draft.deload ? [] : entries) {
-    const first = en.sets.find(s => !s.variant);  // Maßstab: erster normaler Satz
-    if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) continue;
-    const t = { step: 2.5, ...en.target };
-    en.result = progression(first, t, lastEntry(en.name));
-    const max10 = Math.round(en.result.next / repFactor(t.reps + t.rir) * 10) / 10;
-    en.result.max10 = max10;  // auch für Ersatzübungen, die nicht im Plan stehen
-    for (const day of data.days) {
-      for (const ex of day.exercises) if (nameKey(ex.name) === nameKey(en.name)) ex.max10 = max10;
-    }
+    const result = entryResult(en, lastEntry(en.name));
+    if (!result) continue;
+    en.result = result;
+    setPlanMax10(en.name, result.max10);
   }
 
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
@@ -1868,7 +2024,12 @@ function moveExercise(day, i, dir) {
 
 const actions = {
   tab: el => go(el.dataset.tab),
-  back: () => go(views[current.view].back),
+  // back: Name der Ansicht oder Funktion (params) => [Ansicht, params]
+  back: () => {
+    const b = views[current.view].back;
+    const [view, params] = typeof b === 'function' ? b(current.params) : [b, {}];
+    go(view, params);
+  },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
   'check-answer': el => {
@@ -2123,11 +2284,17 @@ const actions = {
     data.cycle.buildWeeks = Math.min(5, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
     saveData(); render();
   },
-  'cycle-restart': () => {
-    if (!confirm('Neuen Zyklus ab dieser Woche beginnen? Diese Woche wird dann Aufbauwoche 1.')) return;
-    data.cycle.start = mondayISO(new Date());
+  // diese Woche als gewählte Zykluswoche zählen (Intro … Deload), der Zyklus verschiebt sich
+  'cycle-jump': el => {
+    const w = Number(el.dataset.w);
+    const label = cycleWeekLabel(w);
+    const ci = cycleInfo();
+    if (!ci.future && ci.week === w) return;
+    if (!confirm(`Ab dieser Woche mit der ${label} weitermachen?\n\nDer Zyklus wird entsprechend verschoben.`)) return;
+    data.cycle.start = addWeeks(mondayISO(new Date()), -(w - 1));
+    delete data.cycle.begin;
     saveData(); render();
-    toast('Neuer Zyklus gestartet');
+    toast(`Diese Woche: ${label}`);
   },
   'plan-variant': el => {
     findDay(current.params.id).exercises[el.dataset.i].variant = el.dataset.v;
@@ -2165,11 +2332,37 @@ const actions = {
   },
 
   'open-exercise': el => go('exercise', { name: el.dataset.name }),
-  'open-session': el => go('session', { id: el.dataset.id }),
+  'open-session': el => go('session', { id: el.dataset.id, week: el.dataset.week }),
   'del-session': el => {
     if (!confirm('Dieses Training endgültig löschen?')) return;
     data.sessions = data.sessions.filter(s => s.id !== el.dataset.id);
-    saveData(); toast('Training gelöscht'); go('history');
+    saveData(); toast('Training gelöscht');
+    if (current.params.week) go('week', { start: current.params.week }); else go('history');
+  },
+  // Wochenansicht: Woche w des aktuellen Zyklus öffnen bzw. eine Woche vor/zurück blättern
+  'week-open': el => go('week', { start: addWeeks(cycleInfo().cycleStart, Number(el.dataset.w) - 1) }),
+  'week-shift': el => go('week', { start: addWeeks(current.params.start, Number(el.dataset.dir)) }),
+  // gespeichertes Training nachträglich bearbeiten
+  'se-edit': el => {
+    startSessionEdit(data.sessions.find(s => s.id === el.dataset.id));
+    go('session', { id: el.dataset.id, week: current.params.week, edit: true });
+  },
+  'se-add-set': el => {
+    const sets = sessionEdit.entries[el.dataset.ei].sets;
+    const last = sets[sets.length - 1];
+    sets.push(last ? { ...last } : { weight: '', reps: '', rir: '' });
+    render();
+  },
+  'se-del-set': el => {
+    const sets = sessionEdit.entries[el.dataset.ei].sets;
+    if (sets.length) sets.pop();
+    render();
+  },
+  'se-save': () => {
+    const { id, week } = current.params;
+    if (!saveSessionEdit()) return;
+    toast('Änderungen gespeichert ✔');
+    go('session', { id, week });
   },
 
   export: () => exportData(),
@@ -2181,6 +2374,7 @@ const actions = {
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     data.cycle.start = mondayISO(new Date());
+    delete data.cycle.begin;
     saveData();
     draft = null; saveDraft();
     toast('Trainings gelöscht – Plan ist noch da');
@@ -2200,6 +2394,8 @@ const actions = {
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)
 const fields = {
   'day-name': el => { findDay(current.params.id).name = el.value; saveData(); },
+  'se-set': el => { sessionEdit.entries[el.dataset.ei].sets[el.dataset.si][el.dataset.prop] = el.value; },
+  'se-comment': el => { sessionEdit.entries[el.dataset.ei].comment = el.value; },
   // Sätze pro Muskelgruppe ändern – nur die Wochensumme neu anzeigen, damit das Feld den Fokus behält
   vol: el => {
     const n = parseInt(el.value, 10);
@@ -2234,6 +2430,7 @@ const fields = {
   'cycle-start': el => {
     if (!el.value) return;
     data.cycle.start = mondayISO(el.value + 'T12:00:00');  // immer auf den Montag dieser Woche
+    delete data.cycle.begin;
     saveData(); render();
   },
   'tr-weight': el => {
