@@ -298,6 +298,7 @@ function recalcSets(ei) {
   if (!t) return;
   const avgEl = $view.querySelector(`[data-avg="${ei}"]`);
   if (avgEl) avgEl.innerHTML = avgTankText(en);
+  updateNextHints(ei);
   const tt = { step: 2.5, ...t };
   let first = null, firstLast = -1, firstCap = null;
   for (let j = 0; j < en.sets.length; j++) {
@@ -803,6 +804,63 @@ function lastCommentFor(name) {
     return e.commentHidden ? null : { text: e.comment, sessionId: s.id };
   }
   return null;
+}
+
+// Vorschau unter jedem erledigten Satz: was nächste Woche am gleichen Trainingstag für diesen Satz
+// vorgeschlagen wird – mit denselben Regeln wie proposeSet (Satz 1 +1 Wdh., Rest bestätigen, ggf. nächste
+// Gewichtsstufe; der niedrigere Wert aus Vorwoche und Vergleichswoche; Bremse). Liefert HTML je Satz.
+function nextPreview(en) {
+  const out = en.sets.map(() => '');
+  if (!en.target || !en.plan || draft.deload || draft.week == null) return out;
+  const done = en.sets.map(s => isDone(s));
+  if (!done.some(Boolean)) return out;
+  const bw = data.cycle.buildWeeks;
+  const nw = draft.week + 1;
+  if (nw > bw) return done.map(d => d ? '<span>→ Nächste Woche: Deload (leichter)</span>' : '');
+
+  const num = s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir), variant: variantOf(s) });
+  const doneSets = en.sets.filter(isDone).map(num);
+  const nextMonday = addWeeks(draft.cycleStart, draft.week);
+  const ex = planExercise(en.name) || { name: en.name };
+  const t = { ...en.plan, rir: rirFor(kindOf(ex), nw, bw, groupOf(ex)) };
+  delete t.hold; delete t.intro;
+  const hold = !weekProgression(nextMonday).load;
+  const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart });
+  const fmt = p => (p.weight != null ? `${fmtNum(p.weight)} kg × ` : '') + `${p.reps} Wdh.`;
+
+  return en.sets.map((s, i) => {
+    if (!done[i]) return '';
+    const v = variantOf(s);
+    const src = num(s);
+    // Gespeichert werden nur erledigte Sätze: Position unter ihnen (iNext) bzw. unter denen derselben
+    // Ausführung (k) – so zählt auch proposeSet nächste Woche
+    const k = en.sets.slice(0, i).filter(x => isDone(x) && variantOf(x) === v).length;
+    const iNext = en.sets.slice(0, i).filter(isDone).length;
+    let p, why = '';
+    if (hold) {
+      p = { weight: src.weight, reps: src.reps };
+      why = 'Progression aus';
+    } else if (braked({ sets: doneSets, planned: en.planned, target: en.target }, v)) {
+      p = { weight: src.weight, reps: src.reps };
+      why = 'gebremst';
+    } else {
+      const b = fromRef(src, t, k === 0, iNext);
+      const cmpV = ofVariant(cmp && cmp.sets, v);
+      const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, iNext) : null;
+      p = a && lighterSet(a, b) ? a : b;
+      if (a && p === a) why = 'Vergleich letzter Zyklus';
+    }
+    const up = p.weight != null && src.weight != null && p.weight > src.weight;
+    return `<span>→ Nächste Woche: <b>${fmt(p)}</b>${up ? ' ↑' : ''}${why ? ` <small>(${why})</small>` : ''}</span>`;
+  });
+}
+
+function updateNextHints(ei) {
+  const en = draft.entries[ei];
+  nextPreview(en).forEach((html, si) => {
+    const el = $view.querySelector(`[data-next="${ei}-${si}"]`);
+    if (el) el.innerHTML = html;
+  });
 }
 
 // Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
@@ -1350,6 +1408,7 @@ function renderTraining() {
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
     const tankHint = en.target ? targetRirText(en.target).replace('mind. ', '≥') : '–';
+    const next = nextPreview(en);
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
       h += `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
@@ -1359,7 +1418,8 @@ function renderTraining() {
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
         <input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
-          class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`;
+          class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">
+        <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>`;
     });
     h += `</div><p class="avg" data-avg="${ei}">${avgTankText(en)}</p>
       <div class="row">

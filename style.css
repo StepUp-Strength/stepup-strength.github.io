@@ -649,6 +649,11 @@ span.setno { display: flex; flex-direction: column; justify-content: center; }
 /* Tank eingetragen = Satz erledigt */
 .setgrid input.tank:not(:placeholder-shown) { border-style: solid; border-color: var(--success); background: var(--success-soft); }
 .setgrid input.flash { animation: flash 1.2s ease-out; }
+/* Vorschau fürs nächste Mal unter einem erledigten Satz */
+.next-hint { grid-column: 1 / -1; margin: -2px 0 4px 58px; font-size: 15px; line-height: 1.35; color: var(--success); }
+.next-hint:empty { display: none; }
+.next-hint b { font-weight: 750; }
+.next-hint small { color: var(--muted); font-size: 13px; }
 @keyframes flash { from { background: var(--warn); color: #1a1200; } }
 .adjust { margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; background: var(--fill); font-size: 16px; }
 .result { margin-top: 8px; font-size: 16px; color: var(--accent-text); }
