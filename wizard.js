@@ -29,6 +29,7 @@ const SPLITS = [
   { id: 'fbpp', tag: '2er-Split', label: 'Ganzkörper Push/Pull', days: [['Ganzkörper Push', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL]] },
   { id: 'ppl', tag: '3er-Split', label: 'Push/Pull/Beine', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
+  { id: 'ul2', tag: '2er-Split', label: 'Ober-/Unterkörper (2 Tage)', perWeek: 2, days: [['Oberkörper', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER]] },
   { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', days: [['Oberkörper schwer', 'heavy', G_UPPER], ['Unterkörper schwer', 'heavy', G_LOWER],
     ['Oberkörper leicht', 'light', G_UPPER], ['Unterkörper leicht', 'light', G_LOWER]] },
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
@@ -82,8 +83,11 @@ const existingFor = g => byKind(uniqueNames(data.days.flatMap(d => d.exercises)
 
 // Muskelgruppen, die an mindestens einem Tag trainiert werden (in fester Reihenfolge)
 const wizGroups = () => PLAN_GROUPS.filter(g => wiz.days.some(d => d.groups.includes(g)));
-// Trainings pro Woche mit dieser Muskelgruppe (jeder Tag wird wiz.perWeek-mal pro Woche absolviert)
-const daysWith = g => wiz.days.filter(d => d.groups.includes(g)).length * wiz.perWeek;
+// Teiler fürs Wochenvolumen: Trainingstage mit dieser Muskelgruppe × wiz.volDiv (= 2, wenn jeder Tag 2× pro Woche
+// läuft und die Sätze pro Training dafür halbiert werden sollen)
+const daysWith = g => wiz.days.filter(d => d.groups.includes(g)).length * wiz.volDiv;
+// tatsächliche Trainings pro Woche mit dieser Muskelgruppe
+const sessionsWith = g => wiz.days.filter(d => d.groups.includes(g)).length * wiz.perWeek;
 
 // Schwerpunkt: +2 Sätze/Woche bei Priorität, −2 bei „low“
 const focusAdj = g => wiz.prio.includes(g) ? FOCUS_SETS : wiz.low.includes(g) ? -FOCUS_SETS : 0;
@@ -161,6 +165,7 @@ function wizStart() {
     entry: 1,                          // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
+    volDiv: 1,                         // Wochensätze auf so viele Durchgänge je Tag verteilen (siehe daysWith)
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -291,7 +296,7 @@ const navRow = (back, next, nextLabel = 'Weiter') => `<div class="row">
 const weekHead = () => '<tr><th></th><th>Intro</th><th>W2</th><th>W3</th><th>W4</th></tr>';
 
 function wizWeekText(g) {
-  const n = daysWith(g);
+  const n = sessionsWith(g);
   const v = wiz.volume[g];
   return `pro Woche (${n} Training${n === 1 ? '' : 's'}): ${v.map(x => x * n).join(' · ')} · Deload ${Math.ceil(v[3] / 2) * n}`;
 }
@@ -361,7 +366,8 @@ function renderWizDays() {
     ${!custom && list.length > 1 ? `<p class="lbl chips-title">Vorlage wählen</p>` : ''}
     ${custom ? '' : list.map(s => `<button class="split-opt ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
       <b>${s.label}</b>
-      <small>${s.days.length} Tag${s.days.length > 1 ? 'e' : ''} pro Woche · ${[...new Set(s.days.map(d => d[0].replace(/ [AB]$/, '')))].join(' · ')}</small>
+      <small>${s.perWeek ? `${s.days.length} Tage, je ${s.perWeek}× pro Woche (${s.days.length * s.perWeek} Trainings)`
+        : `${s.days.length} Tag${s.days.length > 1 ? 'e' : ''} pro Woche`} · ${[...new Set(s.days.map(d => d[0].replace(/ [AB]$/, '')))].join(' · ')}</small>
     </button>`).join('')}
     ${wiz.split || custom ? `<label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
@@ -371,6 +377,10 @@ function renderWizDays() {
       <div class="row"><span>Jeder Trainingstag pro Woche<br><small class="hint">${wiz.days.length * wiz.perWeek} Trainings pro Woche</small></span>
         <div class="stepper">${[1, 2].map(n =>
           `<button class="toggle ${wiz.perWeek === n ? 'on' : ''}" data-action="wiz-perweek" data-n="${n}">${n}×</button>`).join('')}</div></div>
+      ${wiz.perWeek > 1 ? `<p class="hint">${wiz.volDiv > 1
+        ? 'Sätze pro Training werden halbiert – die Sätze pro Woche bleiben gleich.'
+        : 'Sätze pro Training bleiben – die Sätze pro Woche verdoppeln sich.'}${wiz.days.length >= 4
+        ? ` Diese Aufteilung hat ${wiz.days.length} verschiedene Tage – für 4 Trainings mit nur 2 verschiedenen Tagen passt „Ober-/Unterkörper (2 Tage)“.` : ''}</p>` : ''}
       ${startWeekRow()}
       <p class="lbl chips-title">Progression (Grundeinstellung)</p>
       <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>
@@ -545,6 +555,12 @@ function wizAddDay(t) {
   wiz.days.push({ name, intensity: t.intensity, groups: [...t.groups] });
 }
 
+// Vorlagen können vorgeben, wie oft jeder Tag pro Woche läuft (Sätze pro Training dann passend aufgeteilt)
+function applySplitPerWeek() {
+  const s = SPLITS.find(x => x.id === wiz.split);
+  wiz.perWeek = wiz.volDiv = (s && s.perWeek) || 1;
+}
+
 views.wizard = { title: 'Neuer Plan', tab: 'plan', back: 'plan', render: renderWizard };
 
 Object.assign(actions, {
@@ -552,7 +568,20 @@ Object.assign(actions, {
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
-  'wiz-perweek': el => { wiz.perWeek = Number(el.dataset.n); render(); },
+  // 1× / 2× pro Woche: fragen, ob die Sätze pro Training angepasst werden, damit die Sätze pro Woche gleich bleiben
+  'wiz-perweek': el => {
+    const n = Number(el.dataset.n);
+    if (n === wiz.perWeek) return;
+    const more = n > wiz.perWeek;
+    wiz.perWeek = n;
+    if (wiz.volDiv !== n && confirm(more
+      ? 'Jeder Trainingstag läuft jetzt 2× pro Woche.\n\nSätze pro Training halbieren, damit die Sätze pro Woche gleich bleiben?\n\n(„Abbrechen“: Sätze pro Training bleiben – die Sätze pro Woche verdoppeln sich.)'
+      : 'Jeder Trainingstag läuft jetzt 1× pro Woche.\n\nSätze pro Training wieder verdoppeln, damit die Sätze pro Woche gleich bleiben?\n\n(„Abbrechen“: Sätze pro Training bleiben – die Sätze pro Woche halbieren sich.)')) {
+      wiz.volDiv = n;
+    }
+    render();
+    toast(wiz.volDiv === n ? 'Sätze pro Woche bleiben gleich' : `Sätze pro Woche ${more ? 'verdoppelt' : 'halbiert'}`);
+  },
   'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
   'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
@@ -562,13 +591,14 @@ Object.assign(actions, {
     wiz.days = [];
     Object.assign(wiz, { volume: {}, volKey: {}, rir: {}, picks: {}, prio: [], low: [] });
     const list = SPLITS.filter(s => s.tag === wiz.cat);
-    if (list.length === 1) { wiz.split = list[0].id; wiz.days = splitDays(wiz.split); }
+    if (list.length === 1) { wiz.split = list[0].id; wiz.days = splitDays(wiz.split); applySplitPerWeek(); }
     go('wizard');
   },
   // Vorlage wählen: Tage neu setzen, Volumen/RIR/Übungen werden danach neu vorgeschlagen
   'wiz-split': el => {
     wiz.split = el.dataset.id;
     wiz.days = splitDays(wiz.split);
+    applySplitPerWeek();
     Object.assign(wiz, { volume: {}, volKey: {}, rir: {}, picks: {}, prio: [], low: [] });
     render();
   },
