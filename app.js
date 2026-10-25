@@ -31,11 +31,14 @@ function withDefaults(ex) {
   return ex;
 }
 
-/* Mehrere Pläne: data.plans = [{ id, name, days, volume, rirPlan }], data.activePlanId.
-   data.days / data.volume / data.rirPlan zeigen immer auf den aktiven Plan (nicht mitgespeichert). */
+/* Mehrere Pläne: data.plans = [{ id, name, days, volume, rirPlan, endedAt? }], data.activePlanId.
+   data.days / data.volume / data.rirPlan zeigen immer auf den aktiven Plan (nicht mitgespeichert).
+   activePlanId = null: kein Plan aktiv (z. B. nach „Plan beenden“) – dann gilt ein leerer Platzhalter-Plan. */
 function activePlan(d = data) {
-  return d.plans.find(p => p.id === d.activePlanId) || d.plans[0];
+  return d.plans.find(p => p.id === d.activePlanId)
+    || activePlan.none || (activePlan.none = { ...newPlan('Kein aktiver Plan'), none: true });
 }
+const hasActivePlan = () => !activePlan().none;
 
 function newPlan(name, days = []) {
   return {
@@ -76,7 +79,8 @@ function upgradeData(d) {
     if (!p.weekProgression) p.weekProgression = {};
     if (![1, 2].includes(p.perWeek)) p.perWeek = 1;  // wie oft jeder Trainingstag pro Woche absolviert wird
   }
-  if (!d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
+  // null = bewusst kein Plan aktiv; fehlt die Angabe (ältere Daten) oder gibt es den Plan nicht mehr -> erster Plan
+  if (d.activePlanId !== null && !d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
   bindPlanAccessors(d);
 
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
@@ -182,6 +186,74 @@ function toast(msg) {
   $toast.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { $toast.hidden = true; }, 2200);
+}
+
+/* ---------- Erfolgs-Mitteilung ---------- */
+
+// Neue Erfolge erscheinen nacheinander oben als Mitteilung (wie eine Push-Mitteilung). Nach oben wischen
+// schließt sie, Antippen öffnet die Erfolge, sonst verschwindet sie nach einigen Sekunden.
+const notifyQueue = [];
+let notifyBusy = false;
+
+function celebrate(list) {
+  if (!list || !list.length) return;
+  notifyQueue.push(...list);
+  if (!notifyBusy) nextNotify();
+}
+
+function nextNotify() {
+  const a = notifyQueue.shift();
+  if (!a) { notifyBusy = false; return; }
+  notifyBusy = true;
+  const more = notifyQueue.length;
+  const sparks = Array.from({ length: 14 }, (_, i) => {
+    const ang = (i / 14) * Math.PI * 2;
+    const dist = 34 + (i % 3) * 12;
+    return `<i class="spark" style="--dx:${Math.round(Math.cos(ang) * dist)}px;--dy:${Math.round(Math.sin(ang) * dist)}px;--d:${(i % 4) * 40}ms"></i>`;
+  }).join('');
+  const el = document.createElement('div');
+  el.className = 'notify';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<div class="notify-icon">${a.icon}${sparks}</div>
+    <div class="notify-body">
+      <div class="notify-head"><span>🏆 Neuer Erfolg</span><span>jetzt</span></div>
+      <b>${esc(a.name)}</b><small>${esc(a.desc)}</small>
+      ${more ? `<small class="notify-more">+ ${more} weitere${more === 1 ? 'r' : ''}</small>` : ''}
+    </div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+
+  let gone = false;
+  const close = () => {
+    if (gone) return;
+    gone = true;
+    clearTimeout(timer);
+    el.classList.remove('show');
+    setTimeout(() => { el.remove(); nextNotify(); }, 420);
+  };
+  const timer = setTimeout(close, 5000);
+  el.addEventListener('click', () => {
+    close();
+    notifyQueue.length = 0;  // alle anzeigen lassen sich in der Übersicht
+    chartState.mode = 'awards';
+    go('charts');
+  });
+  let y0 = null;
+  el.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchmove', e => {
+    if (y0 != null && e.touches[0].clientY - y0 < -25) { y0 = null; close(); }
+  }, { passive: true });
+}
+
+// Erfolge, die durch eine Änderung (fn) neu freigeschaltet wurden, als Mitteilung zeigen; liefert sie zurück
+function withAwards(fn) {
+  const before = unlockedIds();
+  fn();
+  const fresh = achievementProgress().done.filter(a => !before.has(a.id))
+    .map(({ icon, name, desc }) => ({ icon, name, desc }));
+  celebrate(fresh);
+  return fresh;
 }
 
 /* ---------- Progression ---------- */
@@ -1395,13 +1467,22 @@ function hintsCard() {
 }
 
 function renderStart() {
-  let h = cycleCard(cycleInfo()) + hintsCard();
+  let h = (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
       <p class="sub">begonnen ${fmtDate(draft.date)}</p>
       <button class="btn primary" data-action="resume">Fortsetzen</button>
     </div>`;
+  }
+  if (!hasActivePlan()) {
+    return h + `<div class="card no-plan">
+        <div class="check-emoji" aria-hidden="true">🏁</div>
+        <h2>Kein Plan aktiv</h2>
+        <p class="hint">Erstelle einen neuen Plan oder aktiviere einen bisherigen im Reiter „Plan“. Deine Trainings und Erfolge bleiben erhalten.</p>
+        <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
+        ${data.plans.length ? '<button class="btn center" data-action="tab" data-tab="plan">Bisherigen Plan aktivieren</button>' : ''}
+      </div>`;
   }
   if (!data.days.length) {
     return h + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
@@ -1611,15 +1692,22 @@ function renderPlan() {
   let h = '<h2>Meine Pläne</h2>';
   for (const p of data.plans) {
     const isActive = p.id === active.id;
-    h += `<div class="plan-row ${isActive ? 'active' : ''}">
+    const state = isActive ? ' · aktiv'
+      : (p.endedAt ? ` · beendet am ${fmtDate(p.endedAt + 'T12:00:00')}` : '') + ' · antippen zum Aktivieren';
+    h += `<div class="plan-row ${isActive ? 'active' : ''} ${p.endedAt && !isActive ? 'ended' : ''}">
       <button class="plan-pick" data-action="plan-activate" data-id="${p.id}">
-        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${isActive ? ' · aktiv' : ' · antippen zum Aktivieren'}</small>
+        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${state}</small>
       </button>
       <button class="icon-btn" data-action="plan-rename" data-id="${p.id}" aria-label="Umbenennen">✎</button>
       <button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>
     </div>`;
   }
+  if (!hasActivePlan()) {
+    return h + `<p class="hint">Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.</p>
+      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>`;
+  }
   h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
+    <button class="btn outline" data-action="plan-end">⏹ „${esc(active.name)}“ beenden</button>
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
@@ -2277,18 +2365,12 @@ function saveTraining() {
   // Trainingsdauer in Minuten (über 10 Stunden = vermutlich vergessen zu speichern -> nicht werten)
   const minutes = Math.round((Date.now() - Date.parse(draft.date)) / 60000);
   if (minutes > 0 && minutes < 600) session.duration = minutes;
-  const before = unlockedIds();
-  data.sessions.push(session);
-  const fresh = achievementProgress().done.filter(a => !before.has(a.id))
-    .map(({ icon, name, desc }) => ({ icon, name, desc }));
+  const fresh = withAwards(() => data.sessions.push(session));  // neue Erfolge als Mitteilung
   saveData();
   draft = null;
   saveDraft();
   toast('Training gespeichert ✔');
   go('session', { id: session.id, fresh });
-  if (fresh.length) {
-    toast(fresh.length > 2 ? `🏆 ${fresh.length} neue Erfolge freigeschaltet!` : `🏆 Erfolg freigeschaltet: ${fresh.map(a => a.name).join(', ')}`);
-  }
 }
 
 async function exportData() {
@@ -2611,8 +2693,20 @@ const actions = {
     if (data.activePlanId === el.dataset.id) return;
     if (draft && !confirm(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den Plan wechseln?`)) return;
     data.activePlanId = el.dataset.id;
+    const wasEnded = !!activePlan().endedAt;
+    delete activePlan().endedAt;
     saveData(); render();
-    toast(`„${activePlan().name}“ ist jetzt aktiv`);
+    toast(`„${activePlan().name}“ ist ${wasEnded ? 'wieder' : 'jetzt'} aktiv`);
+  },
+  // Plan beenden: bleibt in der Liste (beendet am …), danach ist kein Plan aktiv
+  'plan-end': () => {
+    const p = activePlan();
+    if (draft) { alert(`Es läuft noch ein Training (${draft.dayName}). Bitte erst speichern oder verwerfen.`); return; }
+    if (!confirm(`Plan „${p.name}“ beenden?\n\nEr bleibt in der Liste und kann jederzeit wieder aktiviert werden. Trainings, Verlauf und Erfolge bleiben erhalten.`)) return;
+    p.endedAt = todayISO();
+    data.activePlanId = null;
+    saveData(); render();
+    toast(`„${p.name}“ beendet`);
   },
   'plan-rename': el => {
     const p = data.plans.find(x => x.id === el.dataset.id);
@@ -2624,8 +2718,12 @@ const actions = {
     if (!confirm(`Plan „${p.name}“ mit ${p.days.length} Trainingstagen löschen?`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.\n\nGespeicherte Trainings, Verlauf und Erfolge bleiben erhalten.')) return;
     data.plans = data.plans.filter(x => x !== p);
-    if (!data.plans.length) data.plans.push(newPlan('Mein Plan'));  // es gibt immer mindestens einen Plan
-    if (!data.plans.some(x => x.id === data.activePlanId)) data.activePlanId = data.plans[0].id;
+    if (!data.plans.length) {
+      data.plans.push(newPlan('Mein Plan'));  // es gibt immer mindestens einen Plan
+      data.activePlanId = data.plans[0].id;
+    } else if (!data.plans.some(x => x.id === data.activePlanId)) {
+      data.activePlanId = null;  // aktiven Plan gelöscht -> kein Plan aktiv (nicht einfach einen anderen starten)
+    }
     saveData(); render();
     toast('Plan gelöscht');
   },
@@ -2806,7 +2904,9 @@ const actions = {
   },
   'se-save': () => {
     const { id, week } = current.params;
-    if (!saveSessionEdit()) return;
+    let ok = false;
+    withAwards(() => { ok = saveSessionEdit(); });  // nachträglich mehr geschafft -> evtl. neuer Erfolg
+    if (!ok) return;
     toast('Änderungen gespeichert ✔');
     go('session', { id, week });
   },

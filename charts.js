@@ -690,16 +690,15 @@ function applyHealthText(text) {
     alert('In der Zwischenablage wurden keine Schritte oder kein Gewicht gefunden.\n\nErwartet wird z. B.: „Datum: 2026-10-23 Schritte: 8432 Gewicht: 89,4“');
     return;
   }
-  const before = unlockedIds();
-  if (steps != null) saveSteps(date, steps);
-  if (kg != null) saveBodyweight(date, kg);
+  withAwards(() => {
+    if (steps != null) saveSteps(date, steps);
+    if (kg != null) saveBodyweight(date, kg);
+  });
   saveData();
-  const fresh = achievementProgress().done.filter(a => !before.has(a.id));
   chartState.pasteBox = false;
   render();
   const parts = [steps != null ? `${deNum(steps)} Schritte` : null, kg != null ? `${fmtNum(kg)} kg` : null].filter(Boolean);
-  toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}` +
-    (fresh.length ? ` · 🏆 ${fresh.map(a => a.name).join(', ')}` : ''));
+  toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}`);
 }
 
 function renderCharts() {
@@ -803,11 +802,9 @@ Object.assign(actions, {
   'steps-save': () => {
     const n = parseInt(document.getElementById('steps-n').value.replace(/\D/g, ''), 10);
     if (!isFinite(n) || n < 0 || n > 200000) { alert('Bitte eine gültige Schrittzahl eintragen.'); return; }
-    const before = unlockedIds();
-    saveSteps(document.getElementById('steps-date').value || todayISO(), n);
+    withAwards(() => saveSteps(document.getElementById('steps-date').value || todayISO(), n));
     saveData();
-    const fresh = achievementProgress().done.filter(a => !before.has(a.id));
-    toast('Schritte gespeichert ✔' + (fresh.length ? ` · 🏆 ${fresh.map(a => a.name).join(', ')}` : ''));
+    toast('Schritte gespeichert ✔');
     render();
   },
   'steps-del': el => {
