@@ -516,8 +516,9 @@ function renderWizard() {
       ${sugg.length ? `<p class="lbl chips-title">Vorschläge</p><div class="variants">${sugg.map(s =>
         `<button class="vchip" data-action="wiz-chip" data-name="${esc(s)}">+ ${esc(s)}</button>`).join('')}</div>` : ''}
     </div>
-    <div class="row"><button class="btn" data-action="wiz-gprev">Zurück</button>
-      <button class="btn primary" data-action="wiz-gnext">${wiz.gi < groups.length - 1 ? 'Nächste Muskelgruppe' : 'Zur Vorschau'}</button></div>`;
+    <div class="row"><button class="btn" data-action="wiz-gprev">${wiz.gi === 0 && wiz.fromPreview ? 'Zur Vorschau' : 'Zurück'}</button>
+      <button class="btn primary" data-action="wiz-gnext">${wiz.gi < groups.length - 1 ? 'Nächste Muskelgruppe' : 'Zur Vorschau'}</button></div>
+    ${wiz.fromPreview && wiz.gi > 0 && wiz.gi < groups.length - 1 ? '<button class="btn outline" data-action="wiz-topreview">✔ Fertig – zurück zur Vorschau</button>' : ''}`;
   }
 
   // Vorschau
@@ -679,6 +680,7 @@ Object.assign(actions, {
     go('wizard');
   },
   'wiz-auto': el => {
+    wiz.fromPreview = false;
     if (el.dataset.yes) {
       for (const g of wizGroups()) wiz.picks[g] = autoPicks(g);
       wiz.step = 'preview';
@@ -688,9 +690,19 @@ Object.assign(actions, {
     }
     go('wizard');
   },
-  'wiz-adjust': () => { wiz.gi = 0; wiz.step = 'manual'; go('wizard'); },
-  'wiz-gprev': () => { if (wiz.gi > 0) wiz.gi--; else wiz.step = 'auto'; go('wizard'); },
-  'wiz-gnext': () => { if (wiz.gi < wizGroups().length - 1) wiz.gi++; else wiz.step = 'preview'; go('wizard'); },
+  // Übungen aus der Vorschau heraus anpassen: „Zurück“ bei der ersten Muskelgruppe führt wieder zur Vorschau
+  'wiz-adjust': () => { wiz.gi = 0; wiz.step = 'manual'; wiz.fromPreview = true; go('wizard'); },
+  'wiz-gprev': () => {
+    if (wiz.gi > 0) wiz.gi--;
+    else { wiz.step = wiz.fromPreview ? 'preview' : 'auto'; wiz.fromPreview = false; }
+    go('wizard');
+  },
+  'wiz-gnext': () => {
+    if (wiz.gi < wizGroups().length - 1) wiz.gi++;
+    else { wiz.step = 'preview'; wiz.fromPreview = false; }
+    go('wizard');
+  },
+  'wiz-topreview': () => { wiz.step = 'preview'; wiz.fromPreview = false; go('wizard'); },
   'wiz-unpick': el => { wiz.picks[wizGroups()[wiz.gi]].splice(Number(el.dataset.i), 1); render(); },
   'wiz-chip': el => wizAddPick(el.dataset.name),
   'wiz-add-typed': () => {
