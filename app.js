@@ -1454,6 +1454,7 @@ const views = {
     back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { start: p.week }] : ['history', {}],
     render: renderSession },
   check:    { title: 'Vor dem Training', tab: 'start', back: 'start', render: renderCheck },
+  firstmax: { title: 'Neue Übungen',     tab: 'start', back: 'start', render: renderFirstMax },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
 };
 
@@ -1632,6 +1633,10 @@ function renderTraining() {
       const t = en.target;
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
+      if (t.max10 == null && !last) {
+        h += `<p class="first-max-hint">🆕 Erstes Mal: Wähle ein Gewicht, das sich passend anfühlt, und trag ein, was du geschafft hast –
+          Gewicht, Wdh. und Tank. Das Max. bei 10 Wdh. wird danach berechnet.</p>`;
+      }
     }
     if (en.weekFirst) {
       h += `<p class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):<br>
@@ -1654,7 +1659,8 @@ function renderTraining() {
     } else {
       h += last
         ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
-        : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+        : en.target && en.target.max10 == null ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
+          : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
     const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
     h += `<div class="variants"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
@@ -2072,7 +2078,8 @@ function renderLibEx({ name }) {
       <p class="hint lib-muscles"><b>Zielmuskel:</b> ${group || '–'}${t.also ? ` · <b>mit dabei:</b> ${esc(t.also)}` : ''}</p>
     </div>
     ${trained ? `<button class="btn nav" data-action="open-exercise" data-name="${esc(name)}">Deine Einträge zu dieser Übung</button>` : ''}
-    <p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>`;
+    ${['neuling', 'einsteiger'].includes(activePlan().level) ? coachNote()
+      : '<p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>'}`;
 }
 
 // Trainings einer Kalenderwoche (start = Montag), mit Blättern zur Vor-/Folgewoche
@@ -2227,6 +2234,28 @@ function renderSession({ id, fresh, edit, week }) {
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
 
+// Vor dem ersten Training mit neuen Übungen: „Max. bei 10 Wdh.“ eintragen oder leer lassen
+function renderFirstMax({ id, exIds }) {
+  const day = findDay(id);
+  const list = day.exercises.filter(e => exIds.includes(e.id));
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(day.name)} · ${list.length === 1 ? '1 neue Übung' : `${list.length} neue Übungen`}</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Wie viel schaffst du bei 10 Wiederholungen?</h2></div>
+      <p class="hint wiz-q-explain"><b>Max. bei 10 Wdh.</b> (auch „10 RM“) ist das Gewicht, mit dem du eine Übung gerade so
+        <b>10-mal sauber</b> schaffst – eine 11. Wiederholung ginge nicht mehr. Daraus berechnet die App deine Gewichte für jedes Training.</p>
+      ${list.map(ex => `<div class="fm-row">
+        <span class="fm-name">${esc(ex.name)}${libInfoBtn(ex.name)}</span>
+        <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="first-max" data-id="${ex.id}"
+          placeholder="kg" value="${ex.max10 == null ? '' : fmtNum(ex.max10)}">
+      </div>`).join('')}
+    </div>
+    <div class="first-max-note"><span aria-hidden="true">💡</span><p><b>Du weißt es nicht genau?</b> Dann lass das Feld einfach leer
+      und trag im Training ganz normal ein, was du im Satz geschafft hast – Gewicht, Wiederholungen und wie viele noch im Tank
+      gewesen wären. Die App berechnet das Max. bei 10 Wdh. danach selbst. Bei Übungen ohne Gewicht (z. B. Klimmzüge) ebenfalls leer lassen.</p></div>
+    <div class="row"><button class="btn" data-action="back">Abbrechen</button>
+      <button class="btn primary" data-action="first-max-done">Weiter</button></div>`;
+}
+
 function renderCheck({ id, step, areas }) {
   const total = currentComplaints() == null ? 3 : 2;  // Beschwerden nur einmal pro Zyklus
   if (step === 3) {
@@ -2282,14 +2311,21 @@ function renderData() {
 
 /* ---------- Aktionen ---------- */
 
-// Vor dem Training: zwei kurze Fragen, danach startDay mit dem Abzug
-function beginCheck(id) {
+// Übungen, die zum ersten Mal drankommen: kein „Max. bei 10 Wdh.“ und noch nie trainiert
+const firstTimeExercises = day => day.exercises.filter(e => e.name.trim() && e.max10 == null && !lastEntry(e.name));
+
+// Vor dem Training: neue Übungen nach „Max. bei 10 Wdh.“ fragen, dann zwei kurze Fragen, danach startDay mit dem Abzug
+function beginCheck(id, maxAsked = false) {
   const day = findDay(id);
   if (!day.exercises.some(e => e.name.trim())) {
     alert('Dieser Trainingstag hat noch keine Übungen. Lege sie unter „Plan“ an.');
     return;
   }
-  if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+  if (!maxAsked) {
+    if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+    const fresh = firstTimeExercises(day);
+    if (fresh.length) { go('firstmax', { id, exIds: fresh.map(e => e.id) }); return; }
+  }
   if (cycleInfo().deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
   else go('check', { id, step: 1 });
 }
@@ -2439,6 +2475,15 @@ function entryResult(en) {
   return result;
 }
 
+// Max. bei 10 Wdh. aus dem ersten normalen Satz: Wdh. + Tank = Wdh. bis zum Versagen bei diesem Gewicht
+// (Tank nicht eingetragen -> Ziel-Tank der Woche)
+function estimateMax10(en) {
+  const first = en.sets.find(s => !s.variant);
+  if (!first || !first.weight || first.reps == null) return null;
+  const rir = first.rir != null ? first.rir : en.target ? en.target.rir : 0;
+  return roundTo(first.weight / repFactor(first.reps + rir), 0.5);
+}
+
 const setPlanMax10 = (name, max10) => {
   for (const day of data.days) {
     for (const ex of day.exercises) if (nameKey(ex.name) === nameKey(name)) ex.max10 = max10;
@@ -2480,6 +2525,12 @@ function saveTraining() {
     if (!result) continue;
     en.result = result;
     setPlanMax10(en.name, result.max10);
+  }
+  // Noch gar kein „Max. bei 10 Wdh.“ (neue Übung, z. B. im Deload): aus dem ersten Satz schätzen
+  for (const en of entries) {
+    if (en.result || knownMax10(en.name) != null) continue;
+    const est = estimateMax10(en);
+    if (est != null) setPlanMax10(en.name, est);
   }
 
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
@@ -2652,6 +2703,7 @@ const actions = {
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
+  'first-max-done': () => beginCheck(current.params.id, true),
   'check-answer': el => {
     const yes = el.dataset.answer === 'yes';
     const { id, step } = current.params;
@@ -3130,6 +3182,12 @@ const fields = {
   'ex-group': el => {
     findDay(current.params.id).exercises[el.dataset.i].group = el.value || null;
     saveData(); render();
+  },
+  // neue Übung vor dem ersten Training: gilt für alle Tage mit dieser Übung
+  'first-max': el => {
+    const ex = findDay(current.params.id).exercises.find(e => e.id === el.dataset.id);
+    setPlanMax10(ex.name, parseNum(el.value));
+    saveData();
   },
   'ex-max': el => {
     const ex = findDay(current.params.id).exercises[el.dataset.i];

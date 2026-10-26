@@ -466,8 +466,29 @@ p.wiz-q-explain { margin: 0 0 16px; font-size: 16.5px; line-height: 1.5; }
 .sessions-opt.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
 .sessions-opt.on small { color: rgba(255, 255, 255, .85); }
 .sessions-opt:active { transform: scale(.96); }
+.sessions-opt.rec { box-shadow: inset 0 0 0 2px var(--accent); }
+.sessions-opt em { margin-top: 2px; font-size: 12px; font-style: normal; font-weight: 700; color: var(--accent-text); }
+.sessions-opt.on em { color: #fff; }
+.coach-note, .first-max-note {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--warn-soft);
+}
+.first-max-note { background: var(--accent-soft); }
+.coach-note > span, .first-max-note > span { font-size: 26px; line-height: 1.2; }
+.coach-note p, .first-max-note p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text); }
+
+/* Neue Übungen vor dem ersten Training: Name + Max. bei 10 Wdh. */
+.fm-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.fm-name { display: flex; flex: 1; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; line-height: 1.3; }
+.fm-row .inp.kg { flex: none; width: 92px; }
+.first-max-hint { margin: 0 0 12px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); font-size: 15px; line-height: 1.4; }
 .wiz-q .split-opt.cat { background: var(--fill); box-shadow: none; }
 .wiz-q .split-opt.cat .cat-icon { background: var(--card); }
+.wiz-q .split-opt.cat.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .freq-opt { padding: 14px 16px; }
 .freq-opt b { margin-bottom: 4px; font-size: 18px; }
 .freq-opt small { display: block; font-size: 15px; line-height: 1.45; }

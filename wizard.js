@@ -2,7 +2,7 @@
 
 /* ---------- Plan-Assistent: neuen Plan aus Trainingstagen, Schwerpunkten, Volumen und RIR erstellen ---------- */
 
-// Ablauf (eine Entscheidung pro Bildschirm): sessions (Trainings pro Woche) → split (passende Vorlage oder eigene
+// Ablauf (eine Entscheidung pro Bildschirm): level (Erfahrung) → sessions (Trainings pro Woche) → split (passende Vorlage oder eigene
 // Aufteilung) → freq (Abwechslung oder Wiederholung, nur bei Vorlagen mit Paaren) → days (Trainingstage) → basics
 // (Name, Zykluslänge) → start → prog (Progression) → prio → low → volume → rir → auto → (manual: Übungen je
 // Muskelgruppe) → preview. Bei „Eigene Aufteilung“: sessions → split → days → freq → basics …
@@ -31,6 +31,7 @@ const G_SHOULDER_ARMS = ['schulter_vorne', 'schulter_seite', 'schulter_hinten', 
 const SPLITS = [
   { id: 'fb1', tag: 'Ganzkörper', label: 'Ganzkörper', days: [['Ganzkörper', 'heavy', G_FULL]] },
   { id: 'fb2', tag: 'Ganzkörper', label: 'Ganzkörper A/B', pairs: true, days: [['Ganzkörper A', 'heavy', G_FULL], ['Ganzkörper B', 'light', G_FULL]] },
+  { id: 'fb3', tag: 'Ganzkörper', label: 'Ganzkörper A/B/C', days: [['Ganzkörper A', 'heavy', G_FULL], ['Ganzkörper B', 'light', G_FULL], ['Ganzkörper C', 'heavy', G_FULL]] },
   { id: 'fbpp', tag: '2er-Split', label: 'Ganzkörper Push/Pull', days: [['Ganzkörper Push', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL]] },
   { id: 'ppl', tag: '3er-Split', label: 'Push/Pull/Beine', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
@@ -54,6 +55,17 @@ const WEEKLY_TARGET = {
   ruecken_unten: [2, 2, 3, 3],
 };
 const SESSION_CAP = 25;  // höchstens so viele Sätze pro Training – in jeder Woche des Zyklus
+
+// Erfahrungsstufe: empfohlene Trainingstage pro Woche, Startvolumen (Anteil der Wochenziele), Tank-Ziel
+// (+ = weiter weg vom Muskelversagen) und – für Neulinge – nur einfache Aufteilungen
+const LEVELS = {
+  neuling: { label: 'Neuling', icon: '🌱', desc: 'Keine oder kaum Trainingserfahrung (unter 6 Monaten)',
+    days: [2, 3], vol: 0.7, rir: 1, tags: ['Ganzkörper', '2er-Split'] },
+  einsteiger: { label: 'Einsteiger', icon: '🌿', desc: '6–12 Monate Trainingserfahrung', days: [3, 4], vol: 0.9, rir: 0.5 },
+  fortgeschritten: { label: 'Fortgeschritten', icon: '💪', desc: '1–5 Jahre Trainingserfahrung', days: [4, 5], vol: 1, rir: 0 },
+  hase: { label: 'Alter Hase', icon: '🦉', desc: 'Mehr als 5 Jahre Trainingserfahrung', days: [4, 6], vol: 1, rir: -0.5 },
+};
+const wizLevel = () => LEVELS[wiz.level] || LEVELS.fortgeschritten;
 
 // Standard-Auswahl je Muskelgruppe (komplexe Übungen zuerst)
 const DEFAULT_PICKS = {
@@ -148,7 +160,7 @@ function dayLibrary() {
   };
   for (const t of data.dayTemplates) add(t.name, t.intensity, [...t.groups], t.id);
   for (const p of data.plans) for (const d of p.days) add(d.name, dayIntensity(d), groupsOfDay(d), null);
-  for (const s of SPLITS) for (const [name, int, groups] of s.days) add(name.replace(/ [AB]$/, ''), int, [...groups], null);
+  for (const s of SPLITS) for (const [name, int, groups] of s.days) add(name.replace(/ [ABC]$/, ''), int, [...groups], null);
   return list;
 }
 
@@ -163,7 +175,8 @@ const SPLIT_CATS = [
 
 function wizStart() {
   wiz = {
-    step: 'sessions',
+    step: 'level',
+    level: null,     // Erfahrungsstufe (LEVELS)
     sessions: null,  // gewünschte Trainings pro Woche (wählt die passenden Vorlagen aus)
     name: `Plan ${data.plans.length + 1}`,
     weeks: data.cycle.buildWeeks,
@@ -187,10 +200,11 @@ function wizStart() {
 // Muskelgruppe. Hätte ein Tag in der Intro-Woche mehr als SESSION_CAP Sätze, wird anteilig gekürzt.
 function templateVolume(groups) {
   const vol = {};
+  const share = wizLevel().vol;  // Startvolumen je nach Erfahrung
   for (const g of groups) {
     const freq = Math.max(1, daysWith(g));
     const adj = focusAdj(g);
-    vol[g] = (WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w + adj) / freq)));
+    vol[g] = (WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w * share + adj) / freq)));
   }
   capSessions(vol);
   return vol;
@@ -264,7 +278,8 @@ function syncGroups() {
       wiz.volKey[g] = key;
       delete wiz.weekWanted[g];  // neu vorgeschlagen -> eingetippte Wochenzahlen gelten nicht mehr
     }
-    if (!wiz.rir[g]) wiz.rir[g] = [...RIR_PLAN[4]];
+    // Tank-Ziel je nach Erfahrung: Neulinge weiter weg vom Muskelversagen, Alte Hasen näher dran
+    if (!wiz.rir[g]) wiz.rir[g] = RIR_PLAN[4].map(v => Math.max(0, v + wizLevel().rir));
     if (!wiz.picks[g]) wiz.picks[g] = existingFor(g);
   }
   for (const g of Object.keys(wiz.volume)) {
@@ -292,7 +307,7 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
+const STEP_PILL = { level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
   volume: 3, rir: 4, auto: 5, manual: 5, preview: 5 };
 
 function wizSteps() {
@@ -306,7 +321,7 @@ function wizSteps() {
 function wizFlow() {
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
-  const steps = ['sessions', 'split'];
+  const steps = ['level', 'sessions', 'split'];
   if (custom) steps.push('days', 'freq');
   else {
     if (tpl && tpl.pairs) steps.push('freq');
@@ -315,8 +330,8 @@ function wizFlow() {
   return [...steps, 'basics', 'start', 'prog', 'prio', 'low', 'volume', 'rir', 'auto'];
 }
 
-// Vorlagen mit genau so vielen Trainings pro Woche
-const splitsFor = n => SPLITS.filter(s => s.days.length === n);
+// Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
+const splitsFor = n => SPLITS.filter(s => s.days.length === n && (!wizLevel().tags || wizLevel().tags.includes(s.tag)));
 const wizPrev = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) - 1] || 'cancel'; };
 const wizNext = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) + 1]; };
 
@@ -391,15 +406,34 @@ function startWeekRow() {
     <p class="hint">${cycleWeekLabel(entry, wiz.weeks)} ab <b>${date(wiz.startWeek)}</b>, ${after}.</p>`;
 }
 
+// Hinweis für Neulinge und Einsteiger: Übungen zeigen lassen, Figuren nur grobe Info
+const coachNote = () => `<div class="coach-note"><span aria-hidden="true">🧑‍🏫</span><p><b>Wichtig:</b> Lass dir die Übungen am besten
+  von einem Trainer im Studio, einem Coach oder einem erfahrenen Sportler zeigen. Die Darstellungen in der App dienen nur als
+  grobe Info und haben keinen Anspruch auf Vollständigkeit.</p></div>`;
+const needsCoach = () => wiz.level === 'neuling' || wiz.level === 'einsteiger';
+
+// Schritt „Erfahrung“: bestimmt empfohlene Tage, Vorlagen, Startvolumen und Tank-Ziel
+function renderWizLevel() {
+  const opts = Object.entries(LEVELS).map(([k, l]) => `<button class="split-opt cat ${wiz.level === k ? 'on' : ''}" data-action="wiz-level" data-k="${k}">
+      <span class="cat-icon">${l.icon}</span><b>${l.label}</b><small>${l.desc}</small></button>`).join('');
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🎓</span><h2>Wie viel Trainingserfahrung hast du?</h2></div>
+      <p class="hint wiz-q-explain">Danach richtet die App deinen Plan aus: wie viele Trainingstage sie empfiehlt, mit wie vielen Sätzen
+        du startest und wie nah du ans Muskelversagen gehst. Ehrlich einschätzen lohnt sich – steigern kannst du jederzeit.</p>
+      ${opts}
+    </div>${navRow('cancel', null)}`;
+}
+
 // Schritt „Trainings pro Woche“: bestimmt, welche Vorlagen vorgeschlagen werden
 function renderWizSessions() {
+  const [lo, hi] = wizLevel().days;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📆</span><h2>Wie viele Tage pro Woche möchtest du trainieren?</h2></div>
-      <p class="hint wiz-q-explain">Danach schlägt dir die App passende Pläne vor. Für den Einstieg sind 2–3 Trainings pro Woche ideal,
-        mit mehr Erfahrung 4–6. Wähle lieber eine Zahl, die du auch auf Dauer schaffst.</p>
-      <div class="sessions-grid">${[1, 2, 3, 4, 5, 6].map(n => `<button class="sessions-opt ${wiz.sessions === n ? 'on' : ''}"
-        data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small></button>`).join('')}</div>
-    </div>${navRow('cancel', null)}`;
+      <p class="hint wiz-q-explain">Danach schlägt dir die App passende Pläne vor. Als ${wizLevel().label} sind <b>${lo}–${hi} Trainings
+        pro Woche</b> ideal (markiert). Wähle lieber eine Zahl, die du auch auf Dauer schaffst.</p>
+      <div class="sessions-grid">${[1, 2, 3, 4, 5, 6].map(n => `<button class="sessions-opt ${wiz.sessions === n ? 'on' : ''} ${n >= lo && n <= hi ? 'rec' : ''}"
+        data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small>${n >= lo && n <= hi ? '<em>empfohlen</em>' : ''}</button>`).join('')}</div>
+    </div>${needsCoach() ? coachNote() : ''}${navRow('level', null)}`;
 }
 
 // Schritt „Vorlage“: passende Vorlagen zur Zahl der Trainings, dazu „Eigene Aufteilung“
@@ -407,9 +441,12 @@ function renderWizSplit() {
   const n = wiz.sessions;
   const list = splitsFor(n);
   const catOf = s => SPLIT_CATS.find(c => c.tag === s.tag) || {};
+  const simpleOnly = wizLevel().tags
+    ? `<p class="hint">Für den Anfang schlägt die App nur Ganzkörper- und 2er-Splits vor – damit lernst du die Übungen am schnellsten.${list.length ? '' : ` Für ${n} Trainings pro Woche gibt es dafür keine Vorlage – wähle eine andere Zahl oder stelle deine Tage selbst zusammen.`}</p>`
+    : '';
   return wizCard('🗂️', `Pläne für ${n} Training${n === 1 ? '' : 's'} pro Woche`,
     'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.',
-    list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
+    simpleOnly + list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
       <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
       <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}</small>
     </button>`).join('') +
@@ -524,7 +561,7 @@ function renderWizFocus(kind) {
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
-  const simple = { sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
+  const simple = { level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
     basics: renderWizBasics, start: renderWizStart, prog: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
@@ -622,7 +659,7 @@ function renderWizard() {
     h += `<p class="complaint-note">Zu wenige Übungen für höchstens ${MAX_SETS_PER_EX} Sätze pro Übung: ${tight.map(g =>
       `${MUSCLES[g]} (${Math.max(...wiz.volume[g])} Sätze → mind. ${Math.ceil(Math.max(...wiz.volume[g]) / MAX_SETS_PER_EX)} Übungen)`).join(', ')}. Überzählige Sätze fallen weg.</p>`;
   }
-  return h + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
+  return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>
     <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
     <p class="hint">Der Plan wird zusätzlich zu deinen bisherigen Plänen gespeichert und aktiv gesetzt.</p>`;
@@ -681,6 +718,16 @@ Object.assign(actions, {
   'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
   'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
+  // Erfahrung wählen: ändert Empfehlungen, Vorlagen, Volumen und Tank -> Plan wird neu vorgeschlagen
+  'wiz-level': el => {
+    if (wiz.level !== el.dataset.k) {
+      wiz.level = el.dataset.k;
+      wiz.sessions = null; wiz.cat = null; wiz.split = null; wiz.days = [];
+      wizResetPlan();
+    }
+    wiz.step = 'sessions';
+    go('wizard');
+  },
   // Trainings pro Woche wählen -> passende Vorlagen
   'wiz-sessions': el => {
     wiz.sessions = Number(el.dataset.n);
@@ -801,6 +848,7 @@ Object.assign(actions, {
     plan.rirPlan = wiz.rir;
     plan.progression = { ...wiz.progression };
     plan.perWeek = wiz.perWeek;
+    if (wiz.level) plan.level = wiz.level;
     data.plans.push(plan);
     data.activePlanId = plan.id;
     // eingetippte Wochenzahlen jetzt mit den echten Tagen genau verteilen (ggf. 1 Satz mehr an einzelnen Tagen)
