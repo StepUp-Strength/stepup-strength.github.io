@@ -166,12 +166,20 @@ const FIG_PATTERNS = {
     props: [...SEAT, ...BACKREST], gear: [{ at: 'ha', type: 'bar' }], thumb: 1,
     poses: [{ ...SEATED, torso: -100, ua: 165, fa: 0 }, { ...SEATED, torso: -100, ua: -5, fa: -5 }],
   },
+  // Butterfly-Maschine von vorn: Oberarme seitlich, Unterarme senkrecht an den Polstern
   fly: {
-    front: true, gear: [{ at: 'ha', type: 'pad', from: [10, 40] }, { at: 'ha2', type: 'pad', from: [190, 40] }],
+    front: true, noFeet: true, props: [['r', 72, 24, 56, 72, 6], ['r', 66, 100, 68, 8], ['l', 100, 108, 100, 148, 4]],
+    gear: [{ at: 'el', type: 'line', ang: 90, len: 20, off: [0, -11], fixed: true },
+      { at: 'el2', type: 'line', ang: 90, len: 20, off: [0, -11], fixed: true }],
     poses: [
-      { ...FRONT, ua: 175, fa: 195 },
-      { ...FRONT, ua: 50, ual: .6, fa: -60, fal: .45 },
+      { root: 'hip', at: [100, 100], th: 95, thl: .4, sn: 90, ua: 180, fa: -90 },
+      { root: 'hip', at: [100, 100], th: 95, thl: .4, sn: 90, ua: 12, ual: .35, fa: -90 },
     ],
+  },
+  // Fliegende auf der Bank, von der Seite: fast gestreckte Arme von seitlich unten bis über die Brust
+  flyLying: {
+    props: BENCH, gear: [{ at: 'ha', type: 'db', from: [40, 146] }],
+    poses: [{ ...LYING, ua: 95, ual: .8, fa: 100, fal: .8 }, { ...LYING, ua: -85, fa: -72 }],
   },
   crossover: {
     front: true, gear: [{ at: 'ha', type: 'cable', from: [12, 6] }, { at: 'ha2', type: 'cable', from: [188, 6] }],
@@ -639,9 +647,16 @@ const FIG_TEXT = {
   },
   fly: {
     also: 'vordere Schulter',
-    steps: ['Arme leicht gebeugt seitlich öffnen – der Ellbogenwinkel bleibt die ganze Zeit gleich.',
-      'In einem weiten Bogen vor der Brust zusammenführen.', 'Langsam wieder öffnen, bis eine Dehnung in der Brust spürbar ist.'],
-    tips: ['Nicht zu weit nach hinten öffnen – schont die Schultern.', 'Die Bewegung kommt aus der Schulter, nicht aus dem Ellbogen.'],
+    steps: ['Sitz so einstellen, dass die Griffe bzw. Polster etwa auf Brusthöhe sind, Rücken an die Lehne.',
+      'Arme in einem Bogen vor der Brust zusammenführen.', 'Langsam wieder öffnen, bis eine Dehnung in der Brust spürbar ist.'],
+    tips: ['Nicht zu weit nach hinten öffnen – schont die Schultern.', 'Schultern unten lassen, Brust raus.'],
+  },
+  flyLying: {
+    also: 'vordere Schulter',
+    steps: ['Auf der Bank liegen, Gewichte mit leicht gebeugten Armen über der Brust.',
+      'Arme in einem weiten Bogen seitlich absenken – der Ellbogenwinkel bleibt gleich.',
+      'Wenn die Brust gedehnt ist, im gleichen Bogen wieder über der Brust zusammenführen.'],
+    tips: ['Nur so tief, wie es für die Schultern angenehm ist (etwa Höhe der Bank).', 'Lieber leichter – die Hebel sind lang.'],
   },
   crossover: {
     also: 'vordere Schulter',
@@ -1029,14 +1044,14 @@ const LIB_EX = {
   'Brustpresse Maschine Negativ': ['chestpress', 'Drückt schräg nach unten – betont die untere Brust.'],
   'Brustpresse Kabelzug stehend': ['crossover', 'Im Stand nach vorn drücken – Rumpf muss mitstabilisieren.'],
   'Butterfly Maschine': ['fly', 'Geführt – die Brust arbeitet ohne Trizeps.'],
-  'Butterfly Kabelzug': ['fly', 'Am Kabel bleibt die Spannung über die ganze Bewegung gleich.', 'cable'],
-  'Fliegende Flachbank (Kurzhantel)': ['fly', 'Auf der Flachbank liegend, Arme in weitem Bogen öffnen und schließen.', 'db'],
-  'Fliegende Schrägbank (Kurzhantel)': ['fly', 'Auf der Schrägbank (ca. 30°) – obere Brust.', 'db'],
-  'Fliegende Negativbank (Kurzhantel)': ['fly', 'Auf der Negativbank – untere Brust.', 'db'],
+  'Butterfly Kabelzug': ['crossover', 'Zwischen zwei Kabelzügen auf Schulterhöhe – die Spannung bleibt über die ganze Bewegung gleich.'],
+  'Fliegende Flachbank (Kurzhantel)': ['flyLying', 'Auf der Flachbank – ganze Brust.'],
+  'Fliegende Schrägbank (Kurzhantel)': ['flyLying', 'Auf der Schrägbank (ca. 30°) – obere Brust.'],
+  'Fliegende Negativbank (Kurzhantel)': ['flyLying', 'Auf der Negativbank – untere Brust.'],
   'Kabelzug Crossover': ['crossover', 'Zug von Schulterhöhe – ganze Brust.'],
   'Kabelzug Crossover von oben': ['crossover', 'Zug von oben nach unten – betont die untere Brust.'],
   'Kabelzug Crossover von unten': ['crossover', 'Zug von unten nach oben – betont die obere Brust.'],
-  'Kabelzug Fliegende Schrägbank': ['fly', 'Auf der Schrägbank zwischen zwei Kabelzügen – obere Brust.', 'cable'],
+  'Kabelzug Fliegende Schrägbank': ['flyLying', 'Auf der Schrägbank zwischen zwei Kabelzügen – obere Brust, gleichmäßige Spannung.'],
   'Dips (Brust)': ['dips', 'Oberkörper deutlich nach vorn neigen, Ellbogen etwas nach außen.'],
   'Dips assistiert (Maschine)': ['dips', 'Die Maschine nimmt einen Teil des Körpergewichts ab – mehr Gewicht = leichter.'],
   'Liegestütze': ['pushup', 'Klassische Ausführung ohne Geräte.'],

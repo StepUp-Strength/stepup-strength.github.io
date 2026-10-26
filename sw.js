@@ -1,8 +1,8 @@
-// Service Worker: hält die App offline verfügbar.
+﻿// Service Worker: hält die App offline verfügbar.
 // Antwortet sofort aus dem Cache und lädt im Hintergrund die neueste Version nach
 // (Änderungen sind dann beim nächsten Öffnen der App sichtbar).
 
-const CACHE = 'trainingsapp-v61';
+const CACHE = 'trainingsapp-v62';
 const FILES = [
   './',
   './index.html',
