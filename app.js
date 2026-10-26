@@ -1783,14 +1783,12 @@ function renderPlan() {
       <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}</span></button>`;
   });
   const perWeek = active.perWeek || 1;
+  // Nur bei Plänen, deren Tage 2× pro Woche laufen: kurzer Hinweis (festgelegt beim Erstellen des Plans)
   h += `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
-    <div class="card per-week">
-      <div class="row" style="margin-top:0"><span>Jeder Trainingstag pro Woche<br>
-        <small class="hint">${data.days.length * perWeek} Trainings pro Woche</small></span>
-        <div class="stepper">${[1, 2].map(n => `<button class="toggle ${perWeek === n ? 'on' : ''}" data-action="plan-perweek" data-n="${n}">${n}×</button>`).join('')}</div>
-      </div>
-      ${perWeek > 1 ? '<p class="hint">Das 2. Training eines Tages in der Woche richtet sich nach dem 2. Training derselben Woche im letzten Zyklus und liegt nie über dem Plan des 1. Trainings dieser Woche.</p>' : ''}
-    </div>
+    ${perWeek > 1 ? `<div class="card per-week">
+      <p class="per-week-title">🔁 Jeder Trainingstag 2× pro Woche · ${data.days.length * perWeek} Trainings</p>
+      <p class="hint">Die Tage wiederholen sich der Reihe nach. Das 2. Training eines Tages in der Woche richtet sich nach dem 2. Training derselben Woche im letzten Zyklus und liegt nie über dem Plan des 1. Trainings dieser Woche.</p>
+    </div>` : ''}
     <h2>Periodisierung</h2>
     <div class="card">
       <div class="row" style="margin-top:0">
@@ -2995,17 +2993,6 @@ const actions = {
     draft.entries.forEach(en => { if (comments.get(nameKey(en.name))) en.comment = comments.get(nameKey(en.name)); });
     saveDraft(); render();
     toast(`${PROG_KEYS[key]}: Progression heute ${draft.progression[key] ? 'an' : 'aus'}`);
-  },
-  // Wie oft jeder Trainingstag pro Woche absolviert wird – Sätze pro Training auf Wunsch so anpassen,
-  // dass die Wochensumme gleich bleibt
-  'plan-perweek': el => {
-    const p = activePlan(), n = Number(el.dataset.n), old = p.perWeek || 1;
-    if (n === old) return;
-    if (confirm(`Sätze pro Training anpassen, damit die Sätze pro Woche gleich bleiben?\n\n(${n > old ? 'ungefähr halbiert' : 'verdoppelt'}; „Abbrechen“ lässt die Sätze pro Training, wie sie sind)`)) {
-      for (const g of Object.keys(p.volume)) p.volume[g] = p.volume[g].map(v => Math.max(1, Math.round(v * old / n)));
-    }
-    p.perWeek = n;
-    saveData(); render();
   },
   // Progression im Plan: Grundeinstellung (ganzer Zyklus) bzw. eine einzelne Woche (data-monday)
   'prog-plan': el => {

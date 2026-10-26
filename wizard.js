@@ -2,9 +2,10 @@
 
 /* ---------- Plan-Assistent: neuen Plan aus Trainingstagen, Schwerpunkten, Volumen und RIR erstellen ---------- */
 
-// Ablauf (eine Entscheidung pro Bildschirm): cat (Aufteilung) → split (Vorlage) → freq (1×/2× pro Woche) → days
-// (Trainingstage) → basics (Name, Zykluslänge) → start → prog (Progression) → prio → low → volume → rir → auto
-// → (manual: Übungen je Muskelgruppe) → preview. Bei „Eigene Aufteilung“: cat → days → freq → basics …
+// Ablauf (eine Entscheidung pro Bildschirm): sessions (Trainings pro Woche) → split (passende Vorlage oder eigene
+// Aufteilung) → freq (Abwechslung oder Wiederholung, nur bei Vorlagen mit Paaren) → days (Trainingstage) → basics
+// (Name, Zykluslänge) → start → prog (Progression) → prio → low → volume → rir → auto → (manual: Übungen je
+// Muskelgruppe) → preview. Bei „Eigene Aufteilung“: sessions → split → days → freq → basics …
 // Der fertige Plan kommt als zusätzlicher Plan in data.plans und wird aktiv.
 
 const KIND_ORDER = { compound: 0, normal: 1, assist: 2 };
@@ -162,7 +163,8 @@ const SPLIT_CATS = [
 
 function wizStart() {
   wiz = {
-    step: 'cat',
+    step: 'sessions',
+    sessions: null,  // gewünschte Trainings pro Woche (wählt die passenden Vorlagen aus)
     name: `Plan ${data.plans.length + 1}`,
     weeks: data.cycle.buildWeeks,
     cat: null,     // gewählte Aufteilung (Kennzeichen) oder 'custom'
@@ -290,7 +292,7 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
+const STEP_PILL = { sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
   volume: 3, rir: 4, auto: 5, manual: 5, preview: 5 };
 
 function wizSteps() {
@@ -304,15 +306,17 @@ function wizSteps() {
 function wizFlow() {
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
-  const steps = ['cat'];
+  const steps = ['sessions', 'split'];
   if (custom) steps.push('days', 'freq');
   else {
-    if (SPLITS.filter(s => s.tag === wiz.cat).length > 1) steps.push('split');
     if (tpl && tpl.pairs) steps.push('freq');
     steps.push('days');
   }
   return [...steps, 'basics', 'start', 'prog', 'prio', 'low', 'volume', 'rir', 'auto'];
 }
+
+// Vorlagen mit genau so vielen Trainings pro Woche
+const splitsFor = n => SPLITS.filter(s => s.days.length === n);
 const wizPrev = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) - 1] || 'cancel'; };
 const wizNext = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) + 1]; };
 
@@ -387,30 +391,30 @@ function startWeekRow() {
     <p class="hint">${cycleWeekLabel(entry, wiz.weeks)} ab <b>${date(wiz.startWeek)}</b>, ${after}.</p>`;
 }
 
-// Schritt „Aufteilung“: nur die Arten der Aufteilung
-function renderWizCat() {
+// Schritt „Trainings pro Woche“: bestimmt, welche Vorlagen vorgeschlagen werden
+function renderWizSessions() {
   return `<div class="card wiz-q">
-      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🗂️</span><h2>Wie möchtest du aufteilen?</h2></div>
-      <p class="hint wiz-q-explain">Die Aufteilung (Split) legt fest, welche Muskelgruppen an welchem Tag trainiert werden.
-        Weniger Trainings pro Woche → eher Ganzkörper, mehr Trainings → eher Split.</p>
-    </div>` + SPLIT_CATS.map(c => {
-    const list = SPLITS.filter(s => s.tag === c.tag);
-    const info = c.tag === 'custom' ? c.desc : `${c.desc} · ${list.map(s => s.label).join(', ')}`;
-    return `<button class="split-opt cat" data-action="wiz-cat" data-cat="${c.tag}">
-      <span class="cat-icon">${c.icon}</span><b>${c.label || c.tag}</b><small>${info}</small></button>`;
-  }).join('') + navRow('cancel', null);
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📆</span><h2>Wie viele Tage pro Woche möchtest du trainieren?</h2></div>
+      <p class="hint wiz-q-explain">Danach schlägt dir die App passende Pläne vor. Für den Einstieg sind 2–3 Trainings pro Woche ideal,
+        mit mehr Erfahrung 4–6. Wähle lieber eine Zahl, die du auch auf Dauer schaffst.</p>
+      <div class="sessions-grid">${[1, 2, 3, 4, 5, 6].map(n => `<button class="sessions-opt ${wiz.sessions === n ? 'on' : ''}"
+        data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small></button>`).join('')}</div>
+    </div>${navRow('cancel', null)}`;
 }
 
-// Schritt „Vorlage“ (nur, wenn es in der Aufteilung mehrere gibt)
+// Schritt „Vorlage“: passende Vorlagen zur Zahl der Trainings, dazu „Eigene Aufteilung“
 function renderWizSplit() {
-  const cat = SPLIT_CATS.find(c => c.tag === wiz.cat);
-  const list = SPLITS.filter(s => s.tag === wiz.cat);
-  return wizCard(cat.icon, 'Welche Vorlage?',
-    'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit. Im nächsten Schritt kannst du sie noch anpassen.',
-    list.map(s => `<button class="split-opt ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
-      <b>${s.label}</b>
-      <small>${s.days.length} Training${s.days.length > 1 ? 's' : ''} pro Woche · ${s.days.map(d => d[0]).join(' · ')}</small>
-    </button>`).join(''), false);
+  const n = wiz.sessions;
+  const list = splitsFor(n);
+  const catOf = s => SPLIT_CATS.find(c => c.tag === s.tag) || {};
+  return wizCard('🗂️', `Pläne für ${n} Training${n === 1 ? '' : 's'} pro Woche`,
+    'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.',
+    list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
+      <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
+      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}</small>
+    </button>`).join('') +
+    `<button class="split-opt cat" data-action="wiz-custom">
+      <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>`, false);
 }
 
 // Schritt „Häufigkeit“: jeden Tag 1× (mehr Abwechslung) oder halb so viele Tage je 2× (einfacher)
@@ -420,10 +424,11 @@ function renderWizFreq() {
       <b>${title}</b><small>${text}</small></button>`;
   if (custom) {
     const n = wiz.days.length;
+    const fits = k => wiz.sessions === n * k ? ` – passt zu deinen ${wiz.sessions} Trainings pro Woche` : '';
     return wizCard('🔁', 'Wie oft pro Woche trainierst du jeden Tag?',
-      `Du hast ${n} Trainingstag${n === 1 ? '' : 'e'} zusammengestellt. Die Sätze pro Woche bleiben gleich – bei 2× werden sie auf doppelt so viele Trainings verteilt.`,
-      opt(1, `1× pro Woche – ${n} Training${n === 1 ? '' : 's'}`, 'Jeder deiner Tage kommt einmal pro Woche dran.') +
-      opt(2, `2× pro Woche – ${n * 2} Trainings`, 'Jeder deiner Tage kommt zweimal pro Woche dran, die Tage wiederholen sich der Reihe nach.'));
+      `Du hast ${n} Trainingstag${n === 1 ? '' : 'e'} zusammengestellt${wiz.sessions ? ` und möchtest ${wiz.sessions}× pro Woche trainieren` : ''}. Die Sätze pro Woche bleiben gleich – bei 2× werden sie auf doppelt so viele Trainings verteilt.`,
+      opt(1, `1× pro Woche – ${n} Training${n === 1 ? '' : 's'}`, `Jeder deiner Tage kommt einmal pro Woche dran${fits(1)}.`) +
+      opt(2, `2× pro Woche – ${n * 2} Trainings`, `Jeder deiner Tage kommt zweimal pro Woche dran, die Tage wiederholen sich der Reihe nach${fits(2)}.`));
   }
   const tpl = SPLITS.find(s => s.id === wiz.split);
   const all = tpl.days.map(d => d[0]), half = halfNames(tpl.id);
@@ -519,7 +524,7 @@ function renderWizFocus(kind) {
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
-  const simple = { cat: renderWizCat, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
+  const simple = { sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
     basics: renderWizBasics, start: renderWizStart, prog: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
@@ -651,7 +656,7 @@ function wizAfterSplit() {
   wiz.perWeek = wiz.volDiv = 1;
   wizResetPlan();
   const f = wizFlow();
-  wiz.step = f[f.indexOf(f.includes('split') ? 'split' : 'cat') + 1];
+  wiz.step = f[f.indexOf('split') + 1];
   go('wizard');
 }
 
@@ -676,20 +681,24 @@ Object.assign(actions, {
   'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
   'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
-  'wiz-cat': el => {
-    wiz.cat = el.dataset.cat || null;
-    wiz.split = null;
-    wiz.days = [];
-    if (!wiz.cat) { wiz.step = 'cat'; wizResetPlan(); go('wizard'); return; }
-    const list = SPLITS.filter(s => s.tag === wiz.cat);
-    if (list.length === 1) { wiz.split = list[0].id; wiz.days = splitDays(wiz.split); }
-    if (list.length > 1) { wiz.step = 'split'; wizResetPlan(); go('wizard'); return; }
-    wizAfterSplit();
+  // Trainings pro Woche wählen -> passende Vorlagen
+  'wiz-sessions': el => {
+    wiz.sessions = Number(el.dataset.n);
+    wiz.cat = null; wiz.split = null; wiz.days = [];
+    wizResetPlan();
+    wiz.step = 'split';
+    go('wizard');
   },
   // Vorlage wählen: Tage neu setzen, Volumen/RIR/Übungen werden danach neu vorgeschlagen
   'wiz-split': el => {
     wiz.split = el.dataset.id;
+    wiz.cat = SPLITS.find(s => s.id === wiz.split).tag;
     wiz.days = splitDays(wiz.split);
+    wizAfterSplit();
+  },
+  // Eigene Aufteilung: Trainingstage selbst zusammenstellen
+  'wiz-custom': () => {
+    wiz.cat = 'custom'; wiz.split = null; wiz.days = [];
     wizAfterSplit();
   },
   'wiz-lib-add': el => { wizAddDay(dayLibrary()[Number(el.dataset.i)]); render(); },
