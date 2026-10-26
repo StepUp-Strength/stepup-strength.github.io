@@ -433,7 +433,25 @@ table.rir .missing-cell { color: var(--warn-text); font-style: italic; }
 .card.no-plan .btn { margin-top: 4px; }
 
 /* ---------- Plan-Assistent ---------- */
-.wiz-steps .pill { flex: 1; }
+.wiz-steps .pill { flex: 1; min-width: 0; font-size: 12.5px; padding: 7px 0; overflow: hidden; text-overflow: ellipsis; }
+.wiz-q { padding: 20px 18px; }
+.wiz-q-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wiz-q-head h2 { margin: 0; font-size: 22px; line-height: 1.25; }
+.wiz-q-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  font-size: 24px;
+}
+p.wiz-q-explain { margin: 0 0 16px; font-size: 16.5px; line-height: 1.5; }
+.freq-opt { padding: 14px 16px; }
+.freq-opt b { margin-bottom: 4px; font-size: 18px; }
+.freq-opt small { display: block; font-size: 15px; line-height: 1.45; }
+.wiz-days-title { margin-top: 22px; }
 .variants.count .vchip { flex: 1; min-width: 0; }
 .split-opt {
   display: block;
