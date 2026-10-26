@@ -1296,6 +1296,10 @@ function libGear(name) {
   return null;
 }
 
+// Kleiner runder i-Knopf, der die Erklärung öffnet (leer, wenn es keine gibt)
+const libInfoBtn = name => libEntry(name)
+  ? `<button class="info-btn" data-action="lib-open" data-name="${esc(name)}" aria-label="Ausführung ansehen">i</button>` : '';
+
 // Animierte (bzw. stehende) Figur zu einer Übung; leer, wenn die Übung nicht in der Bibliothek steht
 function libFigure(name, animate = true) {
   const e = libEntry(name);

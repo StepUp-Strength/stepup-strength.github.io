@@ -77,6 +77,7 @@ function upgradeData(d) {
     // Progression: Grundeinstellung (ganzer Zyklus) und Abweichungen einzelner Wochen (Montag -> { volume, load })
     if (!p.progression) p.progression = { volume: true, load: true };
     if (!p.weekProgression) p.weekProgression = {};
+    if (!p.volExtra) p.volExtra = {};  // Muskelgruppe -> [Intro…W4]: so viele Tage bekommen 1 Satz mehr
     if (![1, 2].includes(p.perWeek)) p.perWeek = 1;  // wie oft jeder Trainingstag pro Woche absolviert wird
   }
   // null = bewusst kein Plan aktiv; fehlt die Angabe (ältere Daten) oder gibt es den Plan nicht mehr -> erster Plan
@@ -684,10 +685,49 @@ function repRangeText(day, ex) {
 }
 
 const VOL_WEEKS = 4;  // Intro, W2, W3, W4 (eine 5. Woche übernimmt die Werte von W4)
-const volumeFor = (g, week, vol = data.volume) => vol[g][Math.min(Math.max(week, 1), VOL_WEEKS) - 1];
-const deloadVolume = (g, vol = data.volume) => Math.ceil(vol[g][VOL_WEEKS - 1] / 2);
+const volWeekIdx = week => Math.min(Math.max(week, 1), VOL_WEEKS) - 1;
+
+// Trainingstage mit Tag-Typ, die Übungen dieser Muskelgruppe haben (in Plan-Reihenfolge)
+const daysWithGroup = g => data.days.filter(d => dayIntensity(d) && d.exercises.some(e => e.name.trim() && groupOf(e) === g));
+
+// Wochenvolumen, das nicht glatt auf die Trainings aufgeht: so viele Tage (die ersten) bekommen 1 Satz mehr.
+// activePlan().volExtra = { Muskelgruppe: [Intro, W2, W3, W4] }
+const volExtraFor = (g, w) => ((activePlan().volExtra || {})[g] || [])[w] || 0;
+
+// Sätze pro Training für eine Muskelgruppe an einem bestimmten Tag (Grundwert + ggf. 1 zusätzlicher Satz).
+// vol = Volumen-Tabelle; der Plan-Assistent rechnet mit seinem Entwurf (dort gibt es keine Zusatzsätze).
+function dayVolume(day, g, week, vol = data.volume) {
+  const w = volWeekIdx(week);
+  let v = vol[g][w];
+  if (vol === data.volume) {
+    const idx = daysWithGroup(g).indexOf(day);
+    if (idx >= 0 && idx < volExtraFor(g, w)) v += 1;
+  }
+  return v;
+}
+
+// Geplante Sätze pro Woche (vor der Verteilung auf die Übungen): Summe über die Tage × Durchgänge pro Woche
+function weeklyTarget(g, w) {
+  const days = daysWithGroup(g);
+  const sum = days.reduce((a, d) => a + dayVolume(d, g, w + 1), 0);
+  return sum * (activePlan().perWeek || 1);
+}
+
+// Wochenvolumen einstellen: gleichmäßig auf die Trainings verteilen, Rest als +1 Satz an einzelnen Tagen
+function setWeeklyVolume(g, w, total) {
+  const p = activePlan();
+  const days = daysWithGroup(g).length, per = p.perWeek || 1;
+  if (!p.volExtra) p.volExtra = {};
+  const extra = p.volExtra[g] || (p.volExtra[g] = [0, 0, 0, 0]);
+  if (!days) { data.volume[g][w] = total; extra[w] = 0; return; }
+  const sessions = days * per;
+  const base = Math.max(1, Math.floor(total / sessions));
+  data.volume[g][w] = base;
+  extra[w] = Math.min(days - 1, Math.floor(Math.max(0, total - base * sessions) / per));
+}
 
 // Sätze pro Woche einer Muskelgruppe über alle Trainingstage mit Tag-Typ: [Intro, W2, W3, W4, Deload]
+// (tatsächlich verteilt – kann unter dem Plan liegen, wenn es zu wenige Übungen gibt)
 function weeklyVolume(g) {
   const weeks = [1, 2, 3, 4].map(w => 0);
   let deload = 0;
@@ -704,18 +744,21 @@ function weeklyVolume(g) {
   return [...weeks, deload].map(x => x * n);
 }
 
-// Plan: Sätze pro Muskelgruppe und Training einstellen, darunter die Summe pro Woche
+// Plan: Sätze pro Muskelgruppe – pro Woche oder pro Training einstellen, das jeweils andere passt sich an
 function volumeEditor() {
   const groups = Object.keys(data.volume);
-  let h = `<details class="award-cat vol-editor" ${current.params.volOpen ? 'open' : ''}><summary>Sätze pro Muskelgruppe</summary>
+  const inp = (field, g, w, v, cls) =>
+    `<td><input class="vol-inp ${cls}" type="text" inputmode="numeric" pattern="[0-9]*" data-field="${field}" data-g="${g}" data-w="${w}" value="${v}"></td>`;
+  let h = `<details class="award-cat vol-editor" open><summary>Sätze pro Muskelgruppe</summary>
     <div class="card">
-    <p class="hint">Sätze <b>pro Training</b> – antippen und Zahl ändern. Die Übungen in allen Trainingstagen mit Tag-Typ passen sich automatisch an. Deload = Hälfte von W4.</p>
+    <p class="hint">Am einfachsten die Sätze <b>pro Woche</b> eintragen – die App verteilt sie auf die Trainings. Oder direkt die Sätze <b>pro Training</b> ändern. Die Übungen passen sich automatisch an.</p>
     <table class="rir vol"><tr><th></th><th>Intro</th><th>W2</th><th>W3</th><th>W4</th></tr>`;
   for (const g of groups) {
-    h += `<tr><td>${MUSCLES[g] || g}</td>` + data.volume[g].map((v, w) =>
-      `<td><input class="vol-inp" type="text" inputmode="numeric" pattern="[0-9]*" data-field="vol" data-g="${g}" data-w="${w}" value="${v}"></td>`).join('') +
-      `</tr><tr class="vol-week"><td colspan="5"><button class="vol-del" data-action="vol-del" data-g="${g}"
-        aria-label="${MUSCLES[g]} entfernen">✕</button><span data-volweek="${g}">${volWeekText(g)}</span></td></tr>`;
+    h += `<tr class="vol-g"><td colspan="5"><button class="vol-del" data-action="vol-del" data-g="${g}"
+        aria-label="${MUSCLES[g]} entfernen">✕</button><b>${MUSCLES[g] || g}</b></td></tr>
+      <tr><td>pro Woche</td>${[0, 1, 2, 3].map(w => inp('volw', g, w, weeklyTarget(g, w) || data.volume[g][w], 'week')).join('')}</tr>
+      <tr class="vol-per"><td>pro Training</td>${data.volume[g].map((v, w) => inp('vol', g, w, v, 'per')).join('')}</tr>
+      <tr class="vol-week"><td colspan="5"><span data-volweek="${g}">${volWeekText(g)}</span></td></tr>`;
   }
   h += '</table>';
   const missing = Object.keys(MUSCLES).filter(g => !data.volume[g] && g !== 'ausdauer');
@@ -727,11 +770,27 @@ function volumeEditor() {
   return h + `<div class="row"><button class="btn outline" data-action="vol-reset">Standardwerte wiederherstellen</button></div></div></details>`;
 }
 
-function volWeekText(g) {
-  const [i, w2, w3, w4, d] = weeklyVolume(g);
-  return i + w2 + w3 + w4 === 0
-    ? 'pro Woche: noch keine Übung im Plan'
-    : `pro Woche: Intro ${i} · W2 ${w2} · W3 ${w3} · W4 ${w4} · Deload ${d}`;
+// Unter der Muskelgruppe: Zahl der Trainings, Deload, Verteilung und ob die Übungen das Volumen genau treffen.
+// typed = gerade eingetippte Wochenzahl [Woche, Wert] – wenn sie sich nicht genau verteilen lässt, steht das dabei.
+function volWeekText(g, typed = null) {
+  const days = daysWithGroup(g);
+  if (!days.length) return 'Noch keine Übung dieser Muskelgruppe in einem Trainingstag mit Tag-Typ.';
+  const per = activePlan().perWeek || 1;
+  const act = weeklyVolume(g);
+  const target = [0, 1, 2, 3].map(w => weeklyTarget(g, w));
+  let t = '';
+  if (typed && target[typed[0]] !== typed[1]) {
+    t += `→ ${typed[1]} lässt sich nicht gleichmäßig auf ${days.length * per} Trainings verteilen – es werden ${target[typed[0]]}. `;
+  }
+  t += `${days.length * per} Training${days.length * per === 1 ? '' : 's'} pro Woche · Deload ${act[4]}`;
+  if ([0, 1, 2, 3].some(w => volExtraFor(g, w))) t += ' · nicht glatt teilbar: einzelne Tage bekommen 1 Satz mehr';
+  if (target.some((x, w) => act[w] !== x)) {
+    const why = [];
+    if (target.some((x, w) => act[w] < x)) why.push(`höchstens ${MAX_SETS_PER_EX} Sätze je Übung – ggf. Übung ergänzen`);
+    if (target.some((x, w) => act[w] > x)) why.push('jede Übung bekommt mindestens 1 Satz');
+    t += ` · ⚠ tatsächlich: ${act.slice(0, 4).join(' · ')} (${why.join('; ')})`;
+  }
+  return t;
 }
 
 const MAX_SETS_PER_EX = 3;  // automatische Verteilung: höchstens so viele Sätze pro Übung
@@ -780,11 +839,11 @@ function autoSetsForDay(day, week, deload, vol = data.volume) {
   for (const [g, exs] of Object.entries(byGroup)) {
     let sets;
     if (deload) {
-      sets = distributeStart(exs, deloadVolume(g, vol));
+      sets = distributeStart(exs, Math.ceil(dayVolume(day, g, VOL_WEEKS, vol) / 2));
     } else {
-      sets = distributeStart(exs, volumeFor(g, 1, vol));
+      sets = distributeStart(exs, dayVolume(day, g, 1, vol));
       const state = { k: 0 };
-      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, volumeFor(g, w, vol) - volumeFor(g, w - 1, vol)), state);
+      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, dayVolume(day, g, w, vol) - dayVolume(day, g, w - 1, vol)), state);
     }
     sets.forEach((v, id) => res.set(id, v));
   }
@@ -1851,11 +1910,14 @@ function renderDay({ id }) {
   day.exercises.forEach((ex, i) => {
     const isAuto = autoDeload.has(ex.id);
     h += `<div class="card">
-      <input class="inp" type="text" data-field="ex-name" data-i="${i}"
-        autocomplete="off" autocorrect="off" spellcheck="false"
-        value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
+      <div class="ex-name-row">
+        <input class="inp" type="text" data-field="ex-name" data-i="${i}"
+          autocomplete="off" autocorrect="off" spellcheck="false"
+          value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
+        <button class="info-btn" data-action="lib-open" data-i="${i}" aria-label="Ausführung ansehen"
+          ${libEntry(ex.name) ? '' : 'hidden'}>i</button>
+      </div>
       <div class="suggest" hidden></div>
-      ${libEntry(ex.name) ? `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(ex.name)}">ⓘ Ausführung ansehen</button>` : ''}
       ${planCompare(ex, day)}
       <label class="row"><span>Muskelgruppe</span>
         <select class="inp sel" data-field="ex-group" data-i="${i}">
@@ -2523,8 +2585,17 @@ function suggestions(query, pool) {
   return hits.slice(0, 12);
 }
 
+// Vorschlagsliste eines Eingabefelds: direkt dahinter oder – wenn das Feld in einer Zeile mit
+// einem Knopf steht (z. B. i-Knopf im Trainingstag) – hinter dieser Zeile
+function suggestBoxFor(input) {
+  const next = input.nextElementSibling;
+  if (next && next.classList.contains('suggest')) return next;
+  const row = input.closest('.ex-name-row');
+  return row ? row.nextElementSibling : next;
+}
+
 function showSuggestions(input, pool) {
-  const box = input.nextElementSibling;
+  const box = suggestBoxFor(input);
   const list = suggestions(input.value, pool);
   box.innerHTML = list.map(s => `<button type="button" data-action="pick"
     data-name="${esc(s.name)}">${esc(s.name)}${s.own ? ' <small>★</small>' : ''}</button>`).join('');
@@ -2565,10 +2636,13 @@ const actions = {
     if (y != null) window.scrollTo(0, y);
   },
   lib: () => go('library'),
+  // data-name, im Trainingstag data-i (der Name kann sich beim Tippen geändert haben)
   'lib-open': el => {
     const v = views[current.view];
     const tab = typeof v.tab === 'function' ? v.tab(current.params) : v.tab;
-    go('libex', { name: el.dataset.name, from: current.view, fromParams: current.params, returnY: window.scrollY, tab });
+    const name = el.dataset.name || (current.view === 'day' ? findDay(current.params.id).exercises[el.dataset.i].name : '');
+    if (!name) return;
+    go('libex', { name, from: current.view, fromParams: current.params, returnY: window.scrollY, tab });
   },
   // Muskelgruppe auf-/zuklappen (Liste wird erst beim Aufklappen gezeichnet)
   'lib-toggle': el => {
@@ -2685,12 +2759,15 @@ const actions = {
   },
   pick: el => {
     const box = el.closest('.suggest');
-    const input = box.previousElementSibling;
+    const prev = box.previousElementSibling;
+    const input = prev.matches('input') ? prev : prev.querySelector('input');
     input.value = el.dataset.name;
     box.hidden = true;
     input.blur();
     if (input.dataset.field === 'ex-name') {
       findDay(current.params.id).exercises[input.dataset.i].name = el.dataset.name;
+      const info = prev.querySelector && prev.querySelector('.info-btn');
+      if (info) info.hidden = !libEntry(el.dataset.name);
       saveData();
     } else if (input.dataset.field === 'chart-name') {
       showChartFor(el.dataset.name);
@@ -2832,11 +2909,13 @@ const actions = {
     const g = el.dataset.g;
     if (!confirm(`„${MUSCLES[g] || g}“ entfernen? Übungen dieser Muskelgruppe bekommen ihre Sätze dann wieder von Hand.`)) return;
     delete data.volume[g];
+    if (activePlan().volExtra) delete activePlan().volExtra[g];
     saveData(); go('plan', { volOpen: true });
   },
   'vol-reset': () => {
     if (!confirm('Alle Sätze pro Muskelgruppe auf die Standardwerte zurücksetzen?')) return;
     data.volume = defaultVolume();
+    activePlan().volExtra = {};
     saveData(); go('plan', { volOpen: true });
     toast('Standardwerte wiederhergestellt');
   },
@@ -3030,13 +3109,31 @@ const fields = {
   'se-set': el => { sessionEdit.entries[el.dataset.ei].sets[el.dataset.si][el.dataset.prop] = el.value; },
   'se-comment': el => { sessionEdit.entries[el.dataset.ei].comment = el.value; },
   // Sätze pro Muskelgruppe ändern – nur die Wochensumme neu anzeigen, damit das Feld den Fokus behält
+  // Sätze pro Training: gilt für alle Tage gleich (Zusatzsätze dieser Woche entfallen), Wochenzahl anpassen
   vol: el => {
     const n = parseInt(el.value, 10);
     if (!isFinite(n) || n < 0 || n > 30) return;
-    data.volume[el.dataset.g][+el.dataset.w] = n;
+    const g = el.dataset.g, w = +el.dataset.w;
+    data.volume[g][w] = n;
+    const extra = (activePlan().volExtra || {})[g];
+    if (extra) extra[w] = 0;
     saveData();
-    const week = $view.querySelector(`[data-volweek="${el.dataset.g}"]`);
-    if (week) week.textContent = volWeekText(el.dataset.g);
+    const week = $view.querySelector(`[data-field="volw"][data-g="${g}"][data-w="${w}"]`);
+    if (week) week.value = weeklyTarget(g, w) || n;
+    const text = $view.querySelector(`[data-volweek="${g}"]`);
+    if (text) text.textContent = volWeekText(g);
+  },
+  // Sätze pro Woche: auf die Trainings verteilen, Zeile „pro Training“ anpassen
+  volw: el => {
+    const n = parseInt(el.value, 10);
+    if (!isFinite(n) || n < 1 || n > 80) return;
+    const g = el.dataset.g, w = +el.dataset.w;
+    setWeeklyVolume(g, w, n);
+    saveData();
+    const per = $view.querySelector(`[data-field="vol"][data-g="${g}"][data-w="${w}"]`);
+    if (per) per.value = data.volume[g][w];
+    const text = $view.querySelector(`[data-volweek="${g}"]`);
+    if (text) text.textContent = volWeekText(g, [w, n]);
   },
   'vol-add': el => {
     if (!el.value) return;
@@ -3057,6 +3154,9 @@ const fields = {
     findDay(current.params.id).exercises[el.dataset.i].name = el.value;
     saveData();
     showSuggestions(el);
+    // i-Knopf nur, wenn es zur eingetippten Übung eine Erklärung gibt
+    const info = el.parentElement.querySelector('.info-btn');
+    if (info) info.hidden = !libEntry(el.value);
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
@@ -3150,7 +3250,7 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('focusout', e => {
   const f = e.target.dataset && e.target.dataset.field;
   if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name' || f === 'wiz-add') {
-    const box = e.target.nextElementSibling;
+    const box = suggestBoxFor(e.target);
     setTimeout(() => { box.hidden = true; }, 200);
   }
 });
@@ -3160,9 +3260,43 @@ document.addEventListener('focusin', e => {
   if (e.target.matches('.setgrid input, .vol-inp')) setTimeout(() => e.target.select(), 0);
 });
 
+/* ---------- Begrüßung beim allerersten Öffnen ---------- */
+
+// Nur für neue Nutzer (noch keine Trainings) und nur einmal – danach merkt sich die App das in data.welcomeSeen
+function showWelcome() {
+  if (data.welcomeSeen || data.sessions.length) return;
+  const el = document.createElement('div');
+  el.className = 'welcome';
+  el.innerHTML = `<div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
+        <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>
+      <h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
+      <p>Schön, dass du auf StepUp Strength aufmerksam geworden bist! Viel Spaß auf deiner Reise – nimm dir ruhig
+        etwas Zeit, um dich mit den Möglichkeiten der App vertraut zu machen. 🙂</p>
+      <ul class="welcome-tips">
+        <li><b>Plan:</b> Mit dem Assistenten in wenigen Schritten deinen Trainingsplan erstellen.</li>
+        <li><b>Training:</b> Trainingstag antippen und loslegen – die App schlägt Gewichte und Wiederholungen vor.</li>
+        <li><b>Sicherung:</b> Alles bleibt nur auf deinem Handy – sichere es ab und zu.</li>
+      </ul>
+      <button class="btn primary" data-action="welcome-ok">Los geht's 💪</button>
+    </div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+}
+
+actions['welcome-ok'] = () => {
+  data.welcomeSeen = true;
+  saveData();
+  const el = document.querySelector('.welcome');
+  if (!el) return;
+  el.classList.remove('show');
+  setTimeout(() => el.remove(), 350);
+};
+
 /* ---------- Start ---------- */
 
 render();
+showWelcome();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* z. B. ohne HTTPS */ });

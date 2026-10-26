@@ -166,6 +166,7 @@ function wizStart() {
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
     volDiv: 1,                         // Wochensätze auf so viele Durchgänge je Tag verteilen (siehe daysWith)
+    weekWanted: {},                    // eingetippte Sätze pro Woche (Muskelgruppe -> [Intro…W4]), werden beim Speichern genau verteilt
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
   };
@@ -251,6 +252,7 @@ function syncGroups() {
     if (!wiz.volume[g] || wiz.volKey[g] !== key) {
       wiz.volume[g] = tv[g];
       wiz.volKey[g] = key;
+      delete wiz.weekWanted[g];  // neu vorgeschlagen -> eingetippte Wochenzahlen gelten nicht mehr
     }
     if (!wiz.rir[g]) wiz.rir[g] = [...RIR_PLAN[4]];
     if (!wiz.picks[g]) wiz.picks[g] = existingFor(g);
@@ -295,10 +297,19 @@ const navRow = (back, next, nextLabel = 'Weiter') => `<div class="row">
 
 const weekHead = () => '<tr><th></th><th>Intro</th><th>W2</th><th>W3</th><th>W4</th></tr>';
 
+// Gewünschte Sätze pro Woche (eingetippt) bzw. sonst Sätze pro Training × Trainings
+const wizWeekly = (g, w) => {
+  const want = (wiz.weekWanted[g] || [])[w];
+  return want != null ? want : wiz.volume[g][w] * sessionsWith(g);
+};
+
 function wizWeekText(g) {
   const n = sessionsWith(g);
   const v = wiz.volume[g];
-  return `pro Woche (${n} Training${n === 1 ? '' : 's'}): ${v.map(x => x * n).join(' · ')} · Deload ${Math.ceil(v[3] / 2) * n}`;
+  let t = `${n} Training${n === 1 ? '' : 's'} pro Woche · Deload ${Math.ceil(v[3] / 2) * n}`;
+  const uneven = [0, 1, 2, 3].filter(w => wizWeekly(g, w) !== v[w] * n);
+  if (uneven.length) t += ' · nicht glatt teilbar: beim Speichern bekommen einzelne Tage 1 Satz mehr';
+  return t;
 }
 
 const focusBadge = g => wiz.prio.includes(g) ? ' <small class="focus up">⭐ +2/Woche</small>'
@@ -445,13 +456,16 @@ function renderWizard() {
   const groups = wizGroups();
 
   if (wiz.step === 'volume') {
+    const inp = (field, g, w, v, cls) =>
+      `<td><input class="vol-inp ${cls}" type="text" inputmode="numeric" pattern="[0-9]*" data-field="${field}" data-g="${g}" data-w="${w}" value="${v}"></td>`;
     h += `<div class="card"><h2>Volumen</h2>
-      <p class="hint">Sätze <b>pro Training</b> je Muskelgruppe – antippen und Zahl ändern. Die Wochensumme ergibt sich aus der Zahl der Tage mit dieser Muskelgruppe.</p>
+      <p class="hint">Am einfachsten die Sätze <b>pro Woche</b> eintragen – die App verteilt sie auf die Trainings. Oder direkt die Sätze <b>pro Training</b> ändern.</p>
       <table class="rir vol">${weekHead()}`;
     for (const g of groups) {
-      h += `<tr><td>${MUSCLES[g]}</td>` + wiz.volume[g].map((v, w) =>
-        `<td><input class="vol-inp" type="text" inputmode="numeric" pattern="[0-9]*" data-field="wiz-vol" data-g="${g}" data-w="${w}" value="${v}"></td>`).join('') +
-        `</tr><tr class="vol-week"><td colspan="5"><span data-wizweek="${g}">${wizWeekText(g)}</span>${focusBadge(g)}</td></tr>`;
+      h += `<tr class="vol-g"><td colspan="5"><b>${MUSCLES[g]}</b>${focusBadge(g)}</td></tr>
+        <tr><td>pro Woche</td>${[0, 1, 2, 3].map(w => inp('wiz-volw', g, w, wizWeekly(g, w), 'week')).join('')}</tr>
+        <tr class="vol-per"><td>pro Training</td>${wiz.volume[g].map((v, w) => inp('wiz-vol', g, w, v, 'per')).join('')}</tr>
+        <tr class="vol-week"><td colspan="5"><span data-wizweek="${g}">${wizWeekText(g)}</span></td></tr>`;
     }
     return h + '</table></div>' + navRow('low', 'rir');
   }
@@ -493,6 +507,7 @@ function renderWizard() {
         Trainiert an: ${wiz.days.filter(d => d.groups.includes(g)).map(d => esc(d.name)).join(', ')}<br>
         Empfehlung: ${n} Übung${n > 1 ? 'en' : ''}</p>
       <ul class="list reorder">${picks.map((p, i) => `<li class="bw-row"><span>${esc(p)} <small class="hint">· ${KIND_SHORT[kindOf({ name: p })]}</small></span>
+        ${libInfoBtn(p)}
         <button class="icon-btn danger" data-action="wiz-unpick" data-i="${i}" aria-label="Entfernen">✕</button></li>`).join('') ||
         '<li class="hint">Noch keine Übung ausgewählt.</li>'}</ul>
       <input class="inp" type="text" data-field="wiz-add" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
@@ -516,8 +531,9 @@ function renderWizard() {
     const dl = autoSetsForDay(day, 0, true, wiz.volume);
     h += `<div class="card"><h2>${esc(day.name)} <small class="hint">· ${day.intensity === 'heavy' ? 'schwer' : 'leicht'}</small></h2>
       <p class="hint">Sätze: Intro · W2 · W3 · W4 · Deload</p>
-      <ul class="list reorder">${day.exercises.map(e => `<li><b>${esc(e.name)}</b><br>
-        <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></li>`).join('') ||
+      <ul class="list reorder">${day.exercises.map(e => `<li class="wiz-ex"><div><b>${esc(e.name)}</b><br>
+        <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
+        ${libInfoBtn(e.name)}</li>`).join('') ||
         '<li class="hint">Keine Übungen</li>'}</ul>
       <p class="hint">Summe pro Training: ${weeks.map(m => [...m.values()].reduce((a, b) => a + b, 0)).join(' · ')}</p>
     </div>`;
@@ -574,6 +590,7 @@ Object.assign(actions, {
     if (n === wiz.perWeek) return;
     const more = n > wiz.perWeek;
     wiz.perWeek = n;
+    wiz.weekWanted = {};  // andere Zahl an Trainings -> Wochenzahlen neu aus den Sätzen pro Training
     if (wiz.volDiv !== n && confirm(more
       ? 'Jeder Trainingstag läuft jetzt 2× pro Woche.\n\nSätze pro Training halbieren, damit die Sätze pro Woche gleich bleiben?\n\n(„Abbrechen“: Sätze pro Training bleiben – die Sätze pro Woche verdoppeln sich.)'
       : 'Jeder Trainingstag läuft jetzt 1× pro Woche.\n\nSätze pro Training wieder verdoppeln, damit die Sätze pro Woche gleich bleiben?\n\n(„Abbrechen“: Sätze pro Training bleiben – die Sätze pro Woche halbieren sich.)')) {
@@ -692,6 +709,10 @@ Object.assign(actions, {
     plan.perWeek = wiz.perWeek;
     data.plans.push(plan);
     data.activePlanId = plan.id;
+    // eingetippte Wochenzahlen jetzt mit den echten Tagen genau verteilen (ggf. 1 Satz mehr an einzelnen Tagen)
+    for (const [g, list] of Object.entries(wiz.weekWanted)) {
+      list.forEach((n, w) => { if (n != null && plan.volume[g]) setWeeklyVolume(g, w, n); });
+    }
     data.cycle.buildWeeks = wiz.weeks;
     // Einstieg mitten im Zyklus: Intro-Montag entsprechend früher, erster Trainingsmontag in begin
     const entry = wizEntry();
@@ -713,12 +734,30 @@ Object.assign(fields, {
   },
   'wiz-dayname': el => { wiz.days[el.dataset.d].name = el.value; },
   'wiz-newday-name': el => { wiz.newDay.name = el.value; },
+  // Sätze pro Training (für alle Tage gleich) -> Wochenzahl anpassen
   'wiz-vol': el => {
     const n = parseInt(el.value, 10);
     if (!isFinite(n) || n < 0 || n > 30) return;
-    wiz.volume[el.dataset.g][+el.dataset.w] = n;
-    const t = $view.querySelector(`[data-wizweek="${el.dataset.g}"]`);
-    if (t) t.textContent = wizWeekText(el.dataset.g);
+    const g = el.dataset.g, w = +el.dataset.w;
+    wiz.volume[g][w] = n;
+    if (wiz.weekWanted[g]) wiz.weekWanted[g][w] = null;
+    const week = $view.querySelector(`[data-field="wiz-volw"][data-g="${g}"][data-w="${w}"]`);
+    if (week) week.value = wizWeekly(g, w);
+    const t = $view.querySelector(`[data-wizweek="${g}"]`);
+    if (t) t.textContent = wizWeekText(g);
+  },
+  // Sätze pro Woche -> pro Training (abgerundet); der Rest wird beim Speichern auf einzelne Tage verteilt
+  'wiz-volw': el => {
+    const n = parseInt(el.value, 10);
+    if (!isFinite(n) || n < 1 || n > 80) return;
+    const g = el.dataset.g, w = +el.dataset.w;
+    const sessions = Math.max(1, sessionsWith(g));
+    wiz.volume[g][w] = Math.max(1, Math.floor(n / sessions));
+    (wiz.weekWanted[g] || (wiz.weekWanted[g] = [null, null, null, null]))[w] = n;
+    const per = $view.querySelector(`[data-field="wiz-vol"][data-g="${g}"][data-w="${w}"]`);
+    if (per) per.value = wiz.volume[g][w];
+    const t = $view.querySelector(`[data-wizweek="${g}"]`);
+    if (t) t.textContent = wizWeekText(g);
   },
   'wiz-rir': el => {
     const n = parseNum(el.value);
