@@ -2,7 +2,7 @@
 // Antwortet sofort aus dem Cache und lädt im Hintergrund die neueste Version nach
 // (Änderungen sind dann beim nächsten Öffnen der App sichtbar).
 
-const CACHE = 'trainingsapp-v60';
+const CACHE = 'trainingsapp-v61';
 const FILES = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const FILES = [
   './exercises.js',
   './app.js',
   './charts.js',
+  './library.js',
   './wizard.js',
   './manifest.json',
   './apple-touch-icon.png',

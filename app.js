@@ -1387,6 +1387,9 @@ const views = {
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
   exercise: { title: p => p.name,     tab: 'history', back: 'history', render: renderExercise },
   week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
+  library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
+  // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
+  libex:    { title: p => p.name, tab: p => p.tab || 'plan', back: p => [p.from || 'library', p.fromParams || {}], render: renderLibEx },
   // aus der Wochenansicht geöffnet: params.week = Montag dieser Woche
   session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
     back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { start: p.week }] : ['history', {}],
@@ -1537,7 +1540,8 @@ function renderTraining() {
     const last = lastEntry(en.name);
     h += `<section class="card">
       <div class="ex-head">
-        <h2>${esc(en.name)}</h2>
+        <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
+          aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
         <button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
           data-ei="${ei}" aria-label="Kommentar">💬</button>
         <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
@@ -1702,12 +1706,15 @@ function renderPlan() {
       <button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>
     </div>`;
   }
+  const libBtn = `<button class="btn nav lib-open-btn" data-action="lib">📖 Übungsbibliothek
+    <small>Alle Übungen mit Animation, Ausführung und Tipps</small></button>`;
   if (!hasActivePlan()) {
     return h + `<p class="hint">Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.</p>
-      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>`;
+      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
   }
   h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
     <button class="btn outline" data-action="plan-end">⏹ „${esc(active.name)}“ beenden</button>
+    ${libBtn}
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
@@ -1848,6 +1855,7 @@ function renderDay({ id }) {
         autocomplete="off" autocorrect="off" spellcheck="false"
         value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
       <div class="suggest" hidden></div>
+      ${libEntry(ex.name) ? `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(ex.name)}">ⓘ Ausführung ansehen</button>` : ''}
       ${planCompare(ex, day)}
       <label class="row"><span>Muskelgruppe</span>
         <select class="inp sel" data-field="ex-group" data-i="${i}">
@@ -1941,6 +1949,7 @@ function renderExercise({ name }) {
   let h = weights.length
     ? `<p class="sub">Höchstes Gewicht: <b>${fmtNum(Math.max(...weights))} kg</b> · ${rows.length} Trainings</p>`
     : '';
+  if (libEntry(name)) h += `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(name)}">ⓘ Ausführung ansehen</button>`;
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
@@ -1948,6 +1957,62 @@ function renderExercise({ name }) {
       ${r.comment ? `<div class="comment-text">💬 ${esc(r.comment)}</div>` : ''}</li>`;
   }
   return h + '</ul>';
+}
+
+/* ---------- Übungsbibliothek ---------- */
+
+let libQuery = '';           // Suchtext in der Bibliothek
+const libOpenGroups = new Set();  // aufgeklappte Muskelgruppen
+
+function libRow(name) {
+  const kind = KINDS[kindOf({ name })];
+  return `<button class="btn nav lib-row" data-action="lib-open" data-name="${esc(name)}">
+    <span class="lib-thumb">${libFigure(name, false)}</span>
+    <span class="lib-txt">${esc(name)}<small>${kind}</small></span></button>`;
+}
+
+function libResults() {
+  const q = norm(libQuery.trim());
+  if (!q) return '';
+  const hits = EXERCISE_LIST.filter(([n]) => norm(n).includes(q)).slice(0, 40);
+  return hits.length ? hits.map(([n]) => libRow(n)).join('') : '<p class="hint">Keine Übung gefunden.</p>';
+}
+
+function renderLibrary() {
+  let h = `<input class="inp lib-search" type="search" data-field="lib-search" autocomplete="off" autocorrect="off"
+      spellcheck="false" placeholder="Übung suchen, z. B. Rudern …" value="${esc(libQuery)}">
+    <div id="lib-results">${libResults()}</div>
+    <div id="lib-groups" ${libQuery.trim() ? 'hidden' : ''}>
+    <p class="hint">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>`;
+  for (const g of Object.keys(MUSCLES)) {
+    const list = EXERCISE_LIST.filter(e => e[2] === g);
+    if (!list.length) continue;
+    const open = libOpenGroups.has(g);
+    h += `<details class="award-cat lib-group" ${open ? 'open' : ''}>
+      <summary data-action="lib-toggle" data-g="${g}">${MUSCLES[g]} <small class="hint">(${list.length})</small></summary>
+      ${open ? list.map(([n]) => libRow(n)).join('') : ''}</details>`;
+  }
+  return h + '</div>';
+}
+
+function renderLibEx({ name }) {
+  const e = libEntry(name);
+  if (!e) return `<p class="hint">Für „${esc(name)}“ gibt es noch keine Erklärung in der Bibliothek.</p>`;
+  const t = FIG_TEXT[e.pattern] || {};
+  const kind = KINDS[kindOf(planExercise(name) || { name })];
+  const group = MUSCLES[groupOf(planExercise(name) || { name })] || '';
+  const trained = data.sessions.some(s => s.entries.some(en => nameKey(en.name) === nameKey(name)));
+  return `<div class="card lib-fig">${libFigure(name, true)}</div>
+    <div class="lib-chips"><span class="lib-chip">${kind}</span>${group ? `<span class="lib-chip">${group}</span>` : ''}</div>
+    ${e.note ? `<p class="lib-note">${esc(e.note)}</p>` : ''}
+    <div class="card">
+      <h2>Ausführung</h2>
+      <ol class="lib-steps">${(t.steps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+      ${t.tips && t.tips.length ? `<h2>Darauf achten</h2><ul class="lib-tips">${t.tips.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
+      <p class="hint lib-muscles"><b>Zielmuskel:</b> ${group || '–'}${t.also ? ` · <b>mit dabei:</b> ${esc(t.also)}` : ''}</p>
+    </div>
+    ${trained ? `<button class="btn nav" data-action="open-exercise" data-name="${esc(name)}">Deine Einträge zu dieser Übung</button>` : ''}
+    <p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>`;
 }
 
 // Trainings einer Kalenderwoche (start = Montag), mit Blättern zur Vor-/Folgewoche
@@ -2495,7 +2560,23 @@ const actions = {
   back: () => {
     const b = views[current.view].back;
     const [view, params] = typeof b === 'function' ? b(current.params) : [b, {}];
+    const y = current.params.returnY;  // z. B. zurück an dieselbe Stelle im Training
     go(view, params);
+    if (y != null) window.scrollTo(0, y);
+  },
+  lib: () => go('library'),
+  'lib-open': el => {
+    const v = views[current.view];
+    const tab = typeof v.tab === 'function' ? v.tab(current.params) : v.tab;
+    go('libex', { name: el.dataset.name, from: current.view, fromParams: current.params, returnY: window.scrollY, tab });
+  },
+  // Muskelgruppe auf-/zuklappen (Liste wird erst beim Aufklappen gezeichnet)
+  'lib-toggle': el => {
+    const g = el.dataset.g;
+    if (libOpenGroups.has(g)) libOpenGroups.delete(g); else libOpenGroups.add(g);
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
@@ -2940,6 +3021,12 @@ const actions = {
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)
 const fields = {
   'day-name': el => { findDay(current.params.id).name = el.value; saveData(); },
+  // Suche in der Bibliothek: nur die Trefferliste neu zeichnen, damit das Feld den Fokus behält
+  'lib-search': el => {
+    libQuery = el.value;
+    $view.querySelector('#lib-results').innerHTML = libResults();
+    $view.querySelector('#lib-groups').hidden = !!libQuery.trim();
+  },
   'se-set': el => { sessionEdit.entries[el.dataset.ei].sets[el.dataset.si][el.dataset.prop] = el.value; },
   'se-comment': el => { sessionEdit.entries[el.dataset.ei].comment = el.value; },
   // Sätze pro Muskelgruppe ändern – nur die Wochensumme neu anzeigen, damit das Feld den Fokus behält

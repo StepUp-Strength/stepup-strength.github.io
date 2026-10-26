@@ -912,6 +912,55 @@ button.pill:active { transform: scale(.95); }
 .reorder .icon-btn:disabled { opacity: .25; }
 .inp.date { width: auto; margin-left: auto; }
 
+/* ---------- Übungsbibliothek: Figuren ---------- */
+.fig { display: block; width: 100%; height: auto; overflow: visible; }
+.fig .fb { stroke: var(--text); stroke-width: 7; stroke-linecap: round; }
+.fig .fb.torso { stroke-width: 9; }
+.fig .fb.foot { stroke-width: 5; }
+.fig .far { opacity: .32; }
+.fig .fh { fill: var(--text); }
+.fig .fg-plate { fill: var(--card); stroke: var(--accent); stroke-width: 3.5; }
+.fig .fg-db { fill: var(--accent); }
+.fig .fg-cable { stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.fig .fg-line { stroke: var(--accent); stroke-width: 5; stroke-linecap: round; }
+.fig .fp { fill: var(--line-strong); }
+.fig .fp-line { stroke: var(--line-strong); stroke-linecap: round; fill: none; }
+.fig .fground { stroke: var(--line-strong); stroke-width: 2; stroke-linecap: round; }
+
+/* ---------- Übungsbibliothek: Liste & Detail ---------- */
+.lib-search { margin-bottom: 12px; }
+.lib-group summary small { font-weight: 500; }
+.lib-row { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 8px 46px 8px 10px; font-size: 18px; }
+.lib-thumb { flex: none; width: 74px; padding: 2px; border-radius: 14px; background: var(--fill); }
+.lib-thumb .fig .fb { stroke-width: 8; }
+.lib-txt { flex: 1; min-width: 0; }
+.lib-txt small { margin-top: 1px; font-size: 14px; }
+.lib-fig { padding: 10px 14px; }
+.lib-fig .fig { max-width: 360px; margin: 0 auto; }
+.lib-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.lib-chip { padding: 5px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 14.5px; font-weight: 650; }
+.lib-note { margin: 0 4px 14px; font-size: 17px; font-weight: 600; }
+.lib-steps, .lib-tips { margin: 0 0 16px; padding-left: 24px; font-size: 17px; line-height: 1.45; }
+.lib-steps li, .lib-tips li { margin-bottom: 6px; }
+.lib-tips li::marker { color: var(--warn); }
+.lib-muscles { margin: 0; font-size: 15px; }
+.lib-small { margin: 4px 0 0; padding: 6px 0; font-size: 16px; }
+.lib-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; letter-spacing: inherit; }
+.info-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 800;
+  font-style: italic;
+  vertical-align: 3px;
+}
+
 /* ---------- Erfolgs-Mitteilung (wie eine Push-Mitteilung) ---------- */
 .notify {
   position: fixed;
