@@ -3496,7 +3496,17 @@ render();
 showWelcome();
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => { /* z. B. ohne HTTPS */ });
+  // Neue Version übernommen (neuer Service Worker hat die Kontrolle) -> einmal neu laden, damit sie sofort sichtbar ist.
+  // Nicht beim allerersten Start (da gab es noch keinen Service Worker).
+  if (navigator.serviceWorker.controller) {
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+  }
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => { /* z. B. ohne HTTPS */ });
 }
 if (navigator.storage && navigator.storage.persist) {
   navigator.storage.persist().catch(() => {});
