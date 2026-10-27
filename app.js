@@ -535,31 +535,58 @@ function newCycleId(after = data.cycle.start) {
   return today > after ? today : after + 'a';
 }
 
+// Deload „selbst bestimmen“ (plan.deload = 'self'): kein automatischer Deload. Nach der letzten Aufbauwoche geht es
+// Woche für Woche weiter (Woche 5, 6 … mit Volumen und Tank der letzten Aufbauwoche, Gewicht/Wdh. steigen weiter),
+// bis man den Deload selbst einlegt (data.cycle.deloadAt = diese Woche des aktuellen Zyklus). Danach: neuer Zyklus.
+// Sonst ('auto'): Deload = Woche buildWeeks + 1.
+const selfDeload = () => activePlan().deload === 'self' && !ownPlan();
+
+// Ist diese Woche (Durchlauf) ein Deload? Gespeicherte Trainings wissen es selbst, sonst laut Plan-Einstellung.
+function isDeloadRound(start, week) {
+  if (roundSessions(start, week).some(s => s.deload)) return true;
+  if (selfDeload()) return start === data.cycle.start && data.cycle.deloadAt === week;
+  return week === data.cycle.buildWeeks + 1;
+}
+const roundLabel = (start, week) => isDeloadRound(start, week) ? 'Deload-Woche' : weekLabel(week);
+const ciLabel = ci => ci.deload ? 'Deload-Woche' : weekLabel(ci.week);
+
 // Durchlauf nach ci: nächste Woche bzw. nach dem Deload der nächste Zyklus (Kennung: Tag des letzten Deload-Trainings)
 function roundAfter(ci) {
-  if (ci.week <= ci.buildWeeks) return { start: ci.cycleStart, week: ci.week + 1, no: ci.cycle };
+  if (!ci.deload) return { start: ci.cycleStart, week: ci.week + 1, no: ci.cycle };
   const last = roundSessions(ci.cycleStart, ci.week).map(s => new Date(s.date).toLocaleDateString('sv-SE')).sort().pop();
   return { start: last && last > ci.cycleStart ? last : newCycleId(ci.cycleStart), week: 1, no: ci.cycle + 1 };
 }
 
-const toCycleInfo = (start, week, no, bw) => ({
-  cycle: no, week, buildWeeks: bw, cycleStart: start, deload: week === bw + 1, intro: week === 1,
-});
+function toCycleInfo(start, week, no, bw) {
+  const deload = selfDeload() ? start === data.cycle.start && data.cycle.deloadAt === week : week === bw + 1;
+  return { cycle: no, week, buildWeeks: bw, cycleStart: start, deload, intro: week === 1 && !deload, extra: !deload && week > bw };
+}
 
 // Aktueller Durchlauf. Ist der gespeicherte Durchlauf komplett, gilt schon der nächste.
 function cycleInfo() {
   const c = data.cycle;
   const bw = c.buildWeeks;
-  const ci = toCycleInfo(c.start, Math.min(c.week, bw + 1), c.no || 1, bw);
+  const ci = toCycleInfo(c.start, selfDeload() ? c.week : Math.min(c.week, bw + 1), c.no || 1, bw);
   const done = data.days.length && roundSessions(ci.cycleStart, ci.week).length && !roundOpen(ci.cycleStart, ci.week).length;
   if (!done) return ci;
   const n = roundAfter(ci);
   return toCycleInfo(n.start, n.week, n.no, bw);
 }
 
-// Aktuellen Durchlauf festlegen (Assistent, Woche umstellen, nach dem Speichern eines Trainings)
+// Aktuellen Durchlauf festlegen (Assistent, Woche umstellen, nach dem Speichern eines Trainings).
+// Ein selbst eingelegter Deload gilt nur im Zyklus, in dem er eingelegt wurde.
 function setRound(start, week, no) {
+  if (start !== data.cycle.start) delete data.cycle.deloadAt;
   Object.assign(data.cycle, { start, week, no });
+}
+
+// Deload „selbst bestimmen“: ab jetzt Deload-Woche. Wurde in der laufenden Woche schon trainiert, bleibt das dort
+// gespeichert und der Deload ist die nächste Woche.
+function startDeloadNow() {
+  const ci = cycleInfo();
+  const w = roundSessions(ci.cycleStart, ci.week).length ? ci.week + 1 : ci.week;
+  setRound(ci.cycleStart, w, ci.cycle);
+  data.cycle.deloadAt = w;
 }
 
 const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
@@ -1094,7 +1121,7 @@ function nextPreview(en) {
   if (!done.some(Boolean)) return out;
   const bw = data.cycle.buildWeeks;
   const nw = draft.week + 1;
-  if (nw > bw) return done.map(d => d ? '<span>→ Nächste Woche: Deload (leichter)</span>' : '');
+  if (nw > bw && !selfDeload()) return done.map(d => d ? '<span>→ Nächste Woche: Deload (leichter)</span>' : '');
 
   const num = s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir), variant: variantOf(s) });
   const doneSets = en.sets.filter(isDone).map(num);
@@ -1579,17 +1606,22 @@ window.addEventListener('popstate', () => {
 
 // action = Wochen antippbar: 'week-open' (Trainings der Woche ansehen) oder
 // 'cycle-jump' (Plan-Reiter: diese Woche als die gewählte Zykluswoche zählen)
+// Deload „selbst bestimmen“: Wochen bis zur aktuellen (auch über die Aufbauwochen hinaus); die Deload-Pille gibt es
+// beim Ansehen nur, wenn gerade Deload ist – im Plan-Reiter (cycle-jump) legt sie den Deload ein.
 function cyclePills(ci, action = null) {
+  const self = selfDeload();
+  const weeks = !self ? ci.buildWeeks : ci.deload ? Math.max(1, ci.week - 1) : Math.max(ci.buildWeeks, ci.week);
+  const pill = (w, label, cls, state) => action
+    ? `<button class="pill ${cls} ${state}" data-action="${action}" data-w="${w}">${label}</button>`
+    : `<span class="pill ${cls} ${state}">${label}</span>`;
   let h = '<div class="pills">';
-  for (let i = 1; i <= ci.buildWeeks + 1; i++) {
-    const deload = i === ci.buildWeeks + 1;
-    const state = i === ci.week ? 'now' : i < ci.week ? 'past' : '';
-    const cls = deload ? 'dl' : i === 1 ? 'intro' : '';
-    const label = deload ? 'Deload' : i === 1 ? 'Intro' : i;
-    h += action
-      ? `<button class="pill ${cls} ${state}" data-action="${action}" data-w="${i}">${label}</button>`
-      : `<span class="pill ${cls} ${state}">${label}</span>`;
+  for (let i = 1; i <= weeks; i++) {
+    const state = i === ci.week && !ci.deload ? 'now' : i < ci.week || ci.deload ? 'past' : '';
+    h += pill(i, i === 1 ? 'Intro' : i, i === 1 ? 'intro' : '', state);
   }
+  if (!self) h += pill(ci.buildWeeks + 1, 'Deload', 'dl', ci.deload ? 'now' : '');
+  else if (ci.deload) h += pill(ci.week, 'Deload', 'dl', 'now');
+  else if (action === 'cycle-jump') h += pill('deload', 'Deload', 'dl', '');
   return h + '</div>';
 }
 
@@ -1614,12 +1646,15 @@ function cycleCard(ci) {
   }
   const head = ci.deload
     ? `Zyklus ${ci.cycle} · Deload-Woche`
-    : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
+    : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ci.extra ? ' · Verlängerung' : ` von ${ci.buildWeeks}`}`;
+  const self = selfDeload();
   const sub = ci.deload
     ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
     : ci.intro
       ? 'Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh.'
-      : 'Werte derselben Woche im letzten Zyklus, je +1 Wdh.';
+      : ci.extra
+        ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche – Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
+        : 'Werte derselben Woche im letzten Zyklus, je +1 Wdh.';
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
@@ -1627,6 +1662,8 @@ function cycleCard(ci) {
     <p class="round-status">🔄 ${roundStatus(ci)}</p>
     <p class="sub">${sub} Eine Woche ist geschafft, sobald jeder Trainingstag einmal${(activePlan().perWeek || 1) > 1 ? ' bzw. zweimal' : ''} dran war – egal, wie viele Tage du dafür brauchst.</p>
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
+    ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
+      <p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>` : ''}
     <p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>
   </div>`;
 }
@@ -1945,7 +1982,14 @@ function renderPlan() {
           <button data-action="cycle-weeks" data-delta="1" aria-label="Mehr Wochen">+</button>
         </div>
       </div>
-      <p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst. Nach den Trainingswochen folgt 1 Deload-Woche: halbe Sätze der letzten Woche, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
+      <p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
+      <p class="lbl chips-title">Deload</p>
+      <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
+        `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
+      <p class="hint">${selfDeload()
+        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm oder hier über „Deload“.'
+        : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
+        Deload: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
       <p class="lbl chips-title">Aktuelle Woche</p>
       ${cyclePills(cycleInfo(), 'cycle-jump')}
       <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause direkt mit der Deload-Woche oder wieder mit der Intro-Woche.</p>
@@ -2284,7 +2328,7 @@ function renderWeek({ key }) {
 
   let h = `<div class="card week-head">
       <button class="icon-btn" data-action="week-shift" data-dir="-1" aria-label="Vorherige Woche">‹</button>
-      <div><b>${cycleWeekLabel(week, ci.buildWeeks)}</b>${no >= 1 ? `<small>Zyklus ${no}</small>` : ''}${when ? `<small>${when}</small>` : ''}</div>
+      <div><b>${roundLabel(start, week)}</b>${no >= 1 ? `<small>Zyklus ${no}</small>` : ''}${when ? `<small>${when}</small>` : ''}</div>
       <button class="icon-btn" data-action="week-shift" data-dir="1" aria-label="Nächste Woche">›</button>
     </div>`;
   if (sessions.length) {
@@ -2527,8 +2571,8 @@ function askSkipRound(day) {
   const open = roundOpen(ci.cycleStart, ci.week);
   if (!open.length || open.some(x => x.day.id === day.id)) return true;
   const next = roundAfter(ci);
-  const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : cycleWeekLabel(next.week);
-  if (!confirm(`„${day.name}“ war in dieser Woche (${cycleWeekLabel(ci.week)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
+  const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : ciLabel(toCycleInfo(next.start, next.week, next.no, ci.buildWeeks));
+  if (!confirm(`„${day.name}“ war in dieser Woche (${ciLabel(ci)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
     `OK = diese Woche abschließen (offene Trainings auslassen) und mit „${day.name}“ die ${nextLabel} beginnen.\nAbbrechen = nicht starten.`)) return false;
   skipRoundFor = day.id;
   return true;
@@ -2582,8 +2626,9 @@ function draftEntries(day) {
   const bw = data.cycle.buildWeeks;
   const prog = draft.progression;
   // Sätze aus dem Wochenvolumen der Muskelgruppen (nur bei Tag-Typ); ohne Volumenprogression wie in der Vorwoche
+  // (Wochen nach der letzten Aufbauwoche, Deload „selbst bestimmen“: Sätze wie in der letzten Aufbauwoche)
   const setsWeek = draft.deload ? draft.week
-    : volumeWeek({ week: draft.week, cycleStart: draft.cycleStart }, prog.volume);
+    : Math.min(bw, volumeWeek({ week: draft.week, cycleStart: draft.cycleStart }, prog.volume));
   const auto = autoSetsForDay(day, setsWeek, draft.deload);
   return day.exercises.filter(e => e.name.trim()).map(ex => {
     const en = { name: ex.name.trim() };
@@ -3224,16 +3269,43 @@ const actions = {
   // ab jetzt mit der gewählten Zykluswoche weitermachen (Intro … Deload). Vorwärts im selben Zyklus;
   // zurück (z. B. nach Krankheit) beginnt ein neuer Zyklus ab dieser Woche – verglichen wird dann mit den Zyklen davor.
   'cycle-jump': el => {
+    if (el.dataset.w === 'deload') { actions['deload-now'](); return; }  // Deload „selbst bestimmen“
     const w = Number(el.dataset.w);
-    const label = cycleWeekLabel(w);
     const ci = cycleInfo();
-    if (ci.week === w) return;
+    const label = selfDeload() ? weekLabel(w) : cycleWeekLabel(w);
+    if (ci.week === w && !ci.deload) return;
     const started = roundSessions(ci.cycleStart, ci.week).length > 0;
-    if (!confirm(`Ab jetzt mit der ${label} weitermachen?${started ? `\n\nDie Trainings, die du in der ${cycleWeekLabel(ci.week)} schon gemacht hast, bleiben dort gespeichert.` : ''}`)) return;
+    if (!confirm(`Ab jetzt mit der ${label} weitermachen?${started ? `\n\nDie Trainings, die du in der ${ciLabel(ci)} schon gemacht hast, bleiben dort gespeichert.` : ''}`)) return;
     if (w > ci.week) setRound(ci.cycleStart, w, ci.cycle);
     else setRound(newCycleId(ci.cycleStart), w, w === 1 ? ci.cycle + 1 : ci.cycle);
+    delete data.cycle.deloadAt;
     saveData(); render();
     toast(`Jetzt: ${label}`);
+  },
+  // Deload „selbst bestimmen“: jetzt einlegen
+  'deload-now': () => {
+    const ci = cycleInfo();
+    if (ci.deload) return;
+    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 20 % weniger Gewicht, mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
+    startDeloadNow();
+    saveData(); render();
+    toast('Deload-Woche eingelegt');
+  },
+  // Deload automatisch (nach den Trainingswochen) oder selbst bestimmen
+  'plan-deload': el => {
+    const p = activePlan(), mode = el.dataset.m;
+    if ((p.deload || 'auto') === mode) return;
+    const ci = cycleInfo();
+    if (mode === 'auto' && ci.extra && !confirm(`Du bist gerade in ${weekLabel(ci.week)}, also schon nach den geplanten Trainingswochen.\n\nMit „Automatisch“ beginnt jetzt die Deload-Woche. Fortfahren?`)) return;
+    const wasDeload = ci.deload;
+    if (mode === 'self') p.deload = 'self'; else delete p.deload;
+    if (mode === 'self' && wasDeload) { setRound(ci.cycleStart, ci.week, ci.cycle); data.cycle.deloadAt = ci.week; }  // laufender Deload bleibt
+    if (mode === 'auto') {
+      delete data.cycle.deloadAt;
+      if (ci.extra) setRound(newCycleId(ci.cycleStart), data.cycle.buildWeeks + 1, ci.cycle);  // Deload als eigener Abschnitt
+      else if (wasDeload) setRound(ci.cycleStart, data.cycle.buildWeeks + 1, ci.cycle);
+    }
+    saveData(); render();
   },
   'plan-variant': el => {
     findDay(current.params.id).exercises[el.dataset.i].variant = el.dataset.v;

@@ -250,6 +250,7 @@ function wizStart() {
     days: [],
     newDay: { name: '', intensity: 'heavy', groups: [] },
     entry: 1,                         // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
+    deload: 'auto',                   // Deload automatisch nach den Trainingswochen oder 'self' = selbst bestimmen
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
     volDiv: 1,                         // Wochensätze auf so viele Durchgänge je Tag verteilen (siehe daysWith)
@@ -451,9 +452,12 @@ const wizEntry = () => wiz.entry === 'deload' ? wiz.weeks + 1 : Math.min(wiz.ent
 // Einstieg: mit welcher Zykluswoche der Plan beginnt (er startet mit dem nächsten Training)
 function startWeekRow() {
   const entry = wizEntry();
+  const left = wiz.weeks - entry;
   const after = entry > wiz.weeks
     ? 'Danach beginnt der neue Zyklus mit der Intro-Woche.'
-    : `Danach ${entry < wiz.weeks ? `noch ${wiz.weeks - entry} Aufbauwoche${wiz.weeks - entry === 1 ? '' : 'n'} und ` : ''}die Deload-Woche.`;
+    : wiz.deload === 'self'
+      ? `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'}, dann ` : ''}geht es Woche für Woche weiter, bis du den Deload einlegst.`
+      : `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'} und ` : ''}die Deload-Woche.`;
   return `<p class="lbl chips-title">Einstieg mit</p>
     <div class="pills">${Array.from({ length: wiz.weeks + 1 }, (_, i) => i + 1).map(w => {
       const deload = w > wiz.weeks;
@@ -639,10 +643,16 @@ function renderWizBasics() {
     'Ein Zyklus besteht aus der Intro-Woche zum Einsteigen, den Aufbauwochen, in denen es Woche für Woche etwas schwerer wird, und einer leichten Deload-Woche zum Erholen. Danach beginnt der nächste Zyklus. Eine Woche ist dabei ein Durchlauf: geschafft, sobald jeder Trainingstag dran war – egal, ob du dafür 6, 7 oder 9 Tage brauchst.',
     `<label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
-      <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro, danach 1 Woche Deload</small></span>
+      <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro${wiz.deload === 'self' ? '' : ', danach 1 Woche Deload'}</small></span>
         <div class="stepper">${[4, 5].map(n =>
           `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
-      <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr vor dem Deload.</p>`);
+      <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr${wiz.deload === 'self' ? '' : ' vor dem Deload'}.</p>
+      <p class="lbl chips-title">Deload</p>
+      <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
+        `<button class="vchip ${wiz.deload === m ? 'on' : ''}" data-action="wiz-deload" data-m="${m}">${l}</button>`).join('')}</div>
+      <p class="hint">${wiz.deload === 'self'
+        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter – Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter. Die Deload-Woche legst du selbst ein, wann du sie brauchst (Knopf auf dem Startbildschirm).'
+        : 'Nach den Trainingswochen folgt automatisch eine leichte Deload-Woche. Empfohlen, wenn du dich nicht selbst darum kümmern möchtest.'}</p>`);
 }
 
 // Schritt „Start“
@@ -858,6 +868,7 @@ Object.assign(actions, {
   'wiz-start': () => wizStart(),
   'wiz-cancel': () => actions.cancel(),
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
+  'wiz-deload': el => { wiz.deload = el.dataset.m; render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
   // Die Sätze pro Woche bleiben immer gleich (volDiv = perWeek).
   'wiz-freq': el => {
@@ -1062,8 +1073,11 @@ Object.assign(actions, {
       list.forEach((n, w) => { if (n != null && plan.volume[g]) setWeeklyVolume(g, w, n); });
     }
     data.cycle.buildWeeks = wiz.weeks;
+    if (wiz.deload === 'self') plan.deload = 'self';
     // neuer Zyklus 1, beginnend mit der gewählten Einstiegswoche beim nächsten Training
-    setRound(newCycleId(), wizEntry(), 1);
+    // (Deload „selbst bestimmen“ + Einstieg mit Deload: die erste Woche ist der Deload)
+    if (wiz.deload === 'self' && wiz.entry === 'deload') { setRound(newCycleId(), 1, 1); data.cycle.deloadAt = 1; }
+    else setRound(newCycleId(), wizEntry(), 1);
     saveData();
     wiz = null;
     toast(`„${plan.name}“ erstellt und aktiv ✔`);

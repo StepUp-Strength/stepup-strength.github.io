@@ -941,6 +941,7 @@ button.pill:active { transform: scale(.95); }
 .cycle .pill.past { background: rgba(255, 255, 255, .32); color: #fff; }
 .cycle .pill.now { background: #fff; color: var(--accent); }
 .cycle .sub { position: relative; margin: 0; font-size: 16px; line-height: 1.45; color: rgba(255, 255, 255, .88); }
+.card.cycle .deload-btn { position: relative; min-height: 54px; margin: 12px 0 0; border: 0; background: rgba(255, 255, 255, .22); color: #fff; box-shadow: none; text-align: center; font-size: 18px; }
 .cycle .round-status { position: relative; margin: 0 0 8px; font-size: 16.5px; font-weight: 700; line-height: 1.4; }
 .cycle .tap-hint { position: relative; margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: rgba(255, 255, 255, .7); }
 .cycle button.pill { min-height: 40px; }
