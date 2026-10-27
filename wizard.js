@@ -25,24 +25,46 @@ const G_FB_PULL = ['lat', 'trapez', 'schulter_hinten', 'bizeps', 'beinbeuger', '
 const G_CHEST_BACK = ['brust', 'lat', 'trapez'];
 const G_SHOULDER_ARMS = ['schulter_vorne', 'schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps'];
 
-// Feste Vorlagen: [Name, Intensität, Muskelgruppen] je Trainingstag.
+// Feste Vorlagen: [Name, Intensität, Muskelgruppen] je Trainingstag. Angezeigt werden die mit passender Tageszahl.
 // pairs: die zweite Hälfte der Tage wiederholt die erste als B- bzw. leichte Variante – dann kann man stattdessen
 // nur die erste Hälfte nehmen und jeden Tag 2× pro Woche trainieren (gleich viele Trainings, weniger Tage).
+// note: Hinweis unter der Vorlage, z. B. wenn eine Hälfte eines 2er-Splits öfter drankommt.
+// 2er-Splits mit 3, 5 oder 6 Tagen: die beiden Hälften wechseln sich ab (A/C schwer, B leicht).
+const UL = n => ['A', 'A', 'B', 'B', 'C', 'C'].slice(0, n).map((v, i) =>
+  [`${i % 2 ? 'Unterkörper' : 'Oberkörper'} ${v}`, v === 'B' ? 'light' : 'heavy', i % 2 ? G_LOWER : G_UPPER]);
+const FBPP = n => ['A', 'A', 'B', 'B', 'C', 'C'].slice(0, n).map((v, i) =>
+  [`Ganzkörper ${i % 2 ? 'Pull' : 'Push'} ${v}`, v === 'B' ? 'light' : 'heavy', i % 2 ? G_FB_PULL : G_FB_PUSH]);
 const SPLITS = [
+  // 1 Training pro Woche
   { id: 'fb1', tag: 'Ganzkörper', label: 'Ganzkörper', days: [['Ganzkörper', 'heavy', G_FULL]] },
+  // 2
   { id: 'fb2', tag: 'Ganzkörper', label: 'Ganzkörper A/B', pairs: true, days: [['Ganzkörper A', 'heavy', G_FULL], ['Ganzkörper B', 'light', G_FULL]] },
-  { id: 'fb3', tag: 'Ganzkörper', label: 'Ganzkörper A/B/C', days: [['Ganzkörper A', 'heavy', G_FULL], ['Ganzkörper B', 'light', G_FULL], ['Ganzkörper C', 'heavy', G_FULL]] },
   { id: 'fbpp', tag: '2er-Split', label: 'Ganzkörper Push/Pull', days: [['Ganzkörper Push', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL]] },
+  { id: 'ob2', tag: '2er-Split', label: 'Oberkörper/Beine', days: [['Oberkörper', 'heavy', G_UPPER], ['Beine', 'heavy', G_LOWER]] },
+  // 3
+  { id: 'fb3', tag: 'Ganzkörper', label: 'Ganzkörper A/B/C', days: [['Ganzkörper A', 'heavy', G_FULL], ['Ganzkörper B', 'light', G_FULL], ['Ganzkörper C', 'heavy', G_FULL]] },
+  { id: 'fbpp3', tag: '2er-Split', label: 'Ganzkörper Push/Pull', note: 'Push 2×, Pull 1× pro Woche',
+    days: [['Ganzkörper Push A', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL], ['Ganzkörper Push B', 'light', G_FB_PUSH]] },
+  { id: 'ul3', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 2×, Unterkörper 1× pro Woche',
+    days: [['Oberkörper A', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER], ['Oberkörper B', 'light', G_UPPER]] },
   { id: 'ppl', tag: '3er-Split', label: 'Push/Pull/Beine', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
+  // 4
   { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper schwer', 'heavy', G_UPPER], ['Unterkörper schwer', 'heavy', G_LOWER],
     ['Oberkörper leicht', 'light', G_UPPER], ['Unterkörper leicht', 'light', G_LOWER]] },
+  { id: 'fbpp4', tag: '2er-Split', label: 'Ganzkörper Push/Pull', pairs: true, days: FBPP(4) },
+  // 5
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Oberkörper', 'light', G_UPPER], ['Unterkörper', 'light', G_LOWER]] },
+  { id: 'ul5', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 3×, Unterkörper 2× pro Woche', days: UL(5) },
+  { id: 'fbpp5', tag: '2er-Split', label: 'Ganzkörper Push/Pull', note: 'Push 3×, Pull 2× pro Woche', days: FBPP(5) },
+  // 6
   { id: 'ppl2', tag: '3er-Split', label: 'Push/Pull/Beine ×2', pairs: true, days: [['Push A', 'heavy', G_PUSH], ['Pull A', 'heavy', G_PULL], ['Beine A', 'heavy', G_LOWER],
     ['Push B', 'light', G_PUSH], ['Pull B', 'light', G_PULL], ['Beine B', 'light', G_LOWER]] },
   { id: 'arnold2', tag: '3er-Split', label: 'Arnold-Split ×2', pairs: true, days: [['Brust/Rücken A', 'heavy', G_CHEST_BACK], ['Schultern/Arme A', 'heavy', G_SHOULDER_ARMS], ['Beine A', 'heavy', G_LOWER],
     ['Brust/Rücken B', 'light', G_CHEST_BACK], ['Schultern/Arme B', 'light', G_SHOULDER_ARMS], ['Beine B', 'light', G_LOWER]] },
+  { id: 'ul6', tag: '2er-Split', label: 'Ober-/Unterkörper ×3', days: UL(6) },
+  { id: 'fbpp6', tag: '2er-Split', label: 'Ganzkörper Push/Pull ×3', days: FBPP(6) },
 ];
 
 // Wochenziele (Sätze pro Woche: Intro, W2, W3, W4). Die Vorlagen teilen sie auf die Trainings der Woche auf.
@@ -436,7 +458,7 @@ function renderWizSplit() {
     'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.',
     simpleOnly + list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
       <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
-      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}</small>
+      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}</small>
     </button>`).join('') +
     `<button class="split-opt cat" data-action="wiz-custom">
       <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>`, false);
