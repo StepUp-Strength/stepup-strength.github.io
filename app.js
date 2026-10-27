@@ -89,10 +89,33 @@ function upgradeData(d) {
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
-  // Periodisierung: buildWeeks Aufbauwochen ab start (Montag), danach 1 Deload-Woche
-  if (!d.cycle) d.cycle = { buildWeeks: 4, start: mondayISO(new Date()) };
+  // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
+  if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
   d.cycle.buildWeeks = Math.min(5, Math.max(4, d.cycle.buildWeeks));  // 4–5 Trainingswochen
+  if (d.cycle.week == null) upgradeCycle(d);
   return d;
+}
+
+// Früher waren Zykluswochen Kalenderwochen: jedem Training seine damalige Woche mitgeben, Wochen-Abweichungen
+// der Progression (Schlüssel: Montag) umschlüsseln und mit der aktuellen Kalender-Zykluswoche als Durchlauf weitermachen.
+function upgradeCycle(d) {
+  const c = d.cycle;
+  for (const s of d.sessions) {
+    if (s.cycleStart) continue;
+    const lc = legacyCycleInfo(c, new Date(s.date));
+    Object.assign(s, { cycleStart: lc.cycleStart, week: lc.week });
+  }
+  for (const p of d.plans) {
+    const own = {};
+    for (const [k, v] of Object.entries(p.weekProgression || {})) {
+      if (!/^\d{4}-\d\d-\d\d$/.test(k)) { own[k] = v; continue; }
+      const lc = legacyCycleInfo(c, new Date(k + 'T12:00:00'));
+      own[`${lc.cycleStart}|${lc.week}`] = v;
+    }
+    p.weekProgression = own;
+  }
+  const now = legacyCycleInfo(c, new Date());
+  d.cycle = { buildWeeks: c.buildWeeks, start: now.cycleStart, week: now.week, no: now.cycle };
 }
 
 function loadData() {
@@ -468,49 +491,85 @@ const addWeeks = (iso, n) => {
   return d.toLocaleDateString('sv-SE');
 };
 
-// Wo im Zyklus liegt das Datum? Woche 1..buildWeeks = Aufbau, buildWeeks + 1 = Deload
-// c.begin (optional): erster Trainingsmontag, wenn mitten im Zyklus eingestiegen wird (z. B. mit Woche 3
-// oder dem Deload nach einer Pause) – c.start liegt dann entsprechend viele Wochen davor.
-// Vor c.begin gilt der Plan als noch nicht gestartet (future) und zeigt die Einstiegswoche.
-function cycleInfo(date = new Date()) {
-  const c = data.cycle;
+// Früheres Modell (nur noch für die Übernahme alter Daten): Zykluswochen = Kalenderwochen ab c.start (Montag),
+// c.begin = erster Trainingsmontag bei Einstieg mitten im Zyklus.
+// Wird schon beim Laden der Daten gebraucht (vor den const-Hilfen weiter unten) -> ohne sie geschrieben.
+function legacyCycleInfo(c, date) {
   const begin = c.begin && c.begin > c.start ? c.begin : c.start;
-  const weeksBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / WEEK_MS);
+  const day = iso => new Date(iso + 'T12:00:00');
   const monday = mondayISO(date);
   const len = c.buildWeeks + 1;
-  const future = monday < begin;
-  const n = weeksBetween(c.start, future ? begin : monday);
+  const n = Math.max(0, Math.round((day(monday < begin ? begin : monday) - day(c.start)) / (7 * 86400000)));
   const cycle = Math.floor(n / len) + 1;
-  const pos = n % len;
-  const cycleStart = addWeeks(c.start, (cycle - 1) * len);
-  return {
-    cycle,
-    week: pos + 1,
-    buildWeeks: c.buildWeeks,
-    deload: !future && pos === c.buildWeeks,
-    intro: !future && pos === 0,
-    future,
-    begin,
-    cycleStart,
-    deloadStart: addWeeks(cycleStart, c.buildWeeks),
-    nextStart: addWeeks(cycleStart, len),
-  };
+  const start = day(c.start);
+  start.setDate(start.getDate() + 7 * (cycle - 1) * len);
+  return { cycle, week: n % len + 1, cycleStart: start.toLocaleDateString('sv-SE') };
+}
+
+// Zykluswochen sind Durchläufe, keine Kalenderwochen: eine Woche ist geschafft, sobald jeder Trainingstag des
+// Plans (bei 2× pro Woche: zweimal) trainiert wurde – egal, ob in 6, 7 oder 9 Tagen. Woche 1..buildWeeks = Aufbau,
+// buildWeeks + 1 = Deload, danach der nächste Zyklus.
+// data.cycle = { buildWeeks, start, week, no }: aktueller Durchlauf (start = Kennung des Zyklus, sortierbar wie ein
+// Datum; no = Nummer des Zyklus). Jedes Training speichert cycleStart + week seines Durchlaufs.
+const roundKey = (start, week) => `${start}|${week}`;
+const roundSessions = (start, week) => data.sessions.filter(s => s.cycleStart === start && s.week === week);
+
+// Noch offene Trainings eines Durchlaufs: [{ day, left }] für die Tage des aktiven Plans
+function roundOpen(start, week) {
+  const per = activePlan().perWeek || 1;
+  const done = roundSessions(start, week);
+  return data.days.filter(d => d.exercises.some(e => e.name.trim()))
+    .map(day => ({ day, left: per - done.filter(s => s.dayId === day.id).length }))
+    .filter(x => x.left > 0);
+}
+
+// Neue Zykluskennung: heutiges Datum, aber immer später als alle bisherigen
+function newCycleId(after = data.cycle.start) {
+  const today = todayISO();
+  return today > after ? today : after + 'a';
+}
+
+// Durchlauf nach ci: nächste Woche bzw. nach dem Deload der nächste Zyklus (Kennung: Tag des letzten Deload-Trainings)
+function roundAfter(ci) {
+  if (ci.week <= ci.buildWeeks) return { start: ci.cycleStart, week: ci.week + 1, no: ci.cycle };
+  const last = roundSessions(ci.cycleStart, ci.week).map(s => new Date(s.date).toLocaleDateString('sv-SE')).sort().pop();
+  return { start: last && last > ci.cycleStart ? last : newCycleId(ci.cycleStart), week: 1, no: ci.cycle + 1 };
+}
+
+const toCycleInfo = (start, week, no, bw) => ({
+  cycle: no, week, buildWeeks: bw, cycleStart: start, deload: week === bw + 1, intro: week === 1,
+});
+
+// Aktueller Durchlauf. Ist der gespeicherte Durchlauf komplett, gilt schon der nächste.
+function cycleInfo() {
+  const c = data.cycle;
+  const bw = c.buildWeeks;
+  const ci = toCycleInfo(c.start, Math.min(c.week, bw + 1), c.no || 1, bw);
+  const done = data.days.length && roundSessions(ci.cycleStart, ci.week).length && !roundOpen(ci.cycleStart, ci.week).length;
+  if (!done) return ci;
+  const n = roundAfter(ci);
+  return toCycleInfo(n.start, n.week, n.no, bw);
+}
+
+// Aktuellen Durchlauf festlegen (Assistent, Woche umstellen, nach dem Speichern eines Trainings)
+function setRound(start, week, no) {
+  Object.assign(data.cycle, { start, week, no });
 }
 
 const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
 
 // Progression, getrennt schaltbar: volume = mehr Sätze von Woche zu Woche, load = Gewicht/Wdh. steigern.
-// Grundeinstellung des Plans (ganzer Zyklus) -> Abweichung einer Woche (Schlüssel: Montag) ->
+// Grundeinstellung des Plans (ganzer Zyklus) -> Abweichung einer Woche (Schlüssel: roundKey) ->
 // Abweichung eines einzelnen Trainings (draft.progression).
 const PROG_KEYS = { volume: 'Volumen', load: 'Gewicht & Wdh.' };
 const planProgression = (p = activePlan()) => ({ volume: true, load: true, ...p.progression });
-const weekProgression = (monday, p = activePlan()) => ({ ...planProgression(p), ...(p.weekProgression || {})[monday] });
+const weekProgression = (key, p = activePlan()) => ({ ...planProgression(p), ...(p.weekProgression || {})[key] });
 
 // Satz-Woche: ohne Volumenprogression gelten die Sätze der Vorwoche – also die der letzten Woche
 // dieses Zyklus mit Volumenprogression (sonst Intro). volumeNow = Einstellung für das aktuelle Training.
 function volumeWeek(ci, volumeNow) {
   if (volumeNow) return ci.week;
-  for (let w = ci.week - 1; w > 1; w--) if (weekProgression(addWeeks(ci.cycleStart, w - 1)).volume) return w;
+  for (let w = ci.week - 1; w > 1; w--) if (weekProgression(roundKey(ci.cycleStart, w)).volume) return w;
   return 1;
 }
 
@@ -872,12 +931,9 @@ function deloadTarget(t) {
   };
 }
 
-// In welchem Zyklus (Startdatum) und welcher Woche lag ein gespeichertes Training?
-function sessionCycle(s) {
-  if (s.cycleStart) return { cycleStart: s.cycleStart, week: s.week };
-  const c = cycleInfo(new Date(s.date));
-  return { cycleStart: c.cycleStart, week: c.week };
-}
+// In welchem Zyklus und welcher Woche (Durchlauf) lag ein gespeichertes Training?
+// (Ältere Trainings ohne Angabe bekommen sie beim Laden, siehe upgradeData.)
+const sessionCycle = s => ({ cycleStart: s.cycleStart || '', week: s.week || 0 });
 
 const sameCycleWeek = (a, b) => a.cycleStart === b.cycleStart && a.week === b.week;
 
@@ -1036,11 +1092,10 @@ function nextPreview(en) {
 
   const num = s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir), variant: variantOf(s) });
   const doneSets = en.sets.filter(isDone).map(num);
-  const nextMonday = addWeeks(draft.cycleStart, draft.week);
   const ex = planExercise(en.name) || { name: en.name };
   const t = { ...en.plan, rir: rirFor(kindOf(ex), nw, bw, groupOf(ex)) };
   delete t.hold; delete t.intro;
-  const hold = !weekProgression(nextMonday).load;
+  const hold = !weekProgression(roundKey(draft.cycleStart, nw)).load;
   // derselbe Durchgang nächste Woche (beim 2. Training kann dort noch das 1. Training der Woche begrenzen)
   const occ = draft.occurrence || 1;
   const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart, occurrence: occ });
@@ -1449,9 +1504,9 @@ const views = {
   library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
   // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
   libex:    { title: p => p.name, tab: p => p.tab || 'plan', back: p => [p.from || 'library', p.fromParams || {}], render: renderLibEx },
-  // aus der Wochenansicht geöffnet: params.week = Montag dieser Woche
+  // aus der Wochenansicht geöffnet: params.week = roundKey dieser Woche
   session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
-    back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { start: p.week }] : ['history', {}],
+    back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { key: p.week }] : ['history', {}],
     render: renderSession },
   check:    { title: 'Vor dem Training', tab: 'start', back: 'start', render: renderCheck },
   firstmax: { title: 'Neue Übungen',     tab: 'start', back: 'start', render: renderFirstMax },
@@ -1492,21 +1547,32 @@ function cyclePills(ci, action = null) {
   return h + '</div>';
 }
 
+// Stand des Durchlaufs: „1 von 3 Trainings erledigt · offen: Pull, Beine“
+function roundStatus(ci) {
+  const per = activePlan().perWeek || 1;
+  const total = data.days.filter(d => d.exercises.some(e => e.name.trim())).length * per;
+  const open = roundOpen(ci.cycleStart, ci.week);
+  const left = open.reduce((a, x) => a + x.left, 0);
+  if (!total) return '';
+  return `${total - left} von ${total} Trainings erledigt` +
+    (left ? ` · offen: ${open.map(x => esc(x.day.name) + (x.left > 1 ? ` (${x.left}×)` : '')).join(', ')}` : '');
+}
+
 function cycleCard(ci) {
-  const head = ci.future
-    ? `Start am ${fmtDate(ci.begin + 'T12:00:00')}${ci.week > 1 ? ` mit ${cycleWeekLabel(ci.week, ci.buildWeeks)}` : ''}`
-    : ci.deload
-      ? `Zyklus ${ci.cycle} · Deload-Woche`
-      : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
+  const head = ci.deload
+    ? `Zyklus ${ci.cycle} · Deload-Woche`
+    : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
   const sub = ci.deload
-    ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Nächster Zyklus ab ${fmtDate(ci.nextStart)}.`
+    ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
     : ci.intro
-      ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh. Deload ab ${fmtDate(ci.deloadStart)}.`
-      : `Werte derselben Woche im letzten Zyklus, je +1 Wdh. Deload-Woche ab ${fmtDate(ci.deloadStart)}.`;
-  const wp = weekProgression(mondayISO(new Date()));
-  const off = ci.deload || ci.future ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
+      ? 'Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh.'
+      : 'Werte derselben Woche im letzten Zyklus, je +1 Wdh.';
+  const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
+  const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
-    <h2>${head}</h2>${cyclePills(ci, 'week-open')}<p class="sub">${sub}</p>
+    <h2>${head}</h2>${cyclePills(ci, 'week-open')}
+    <p class="round-status">🔄 ${roundStatus(ci)}</p>
+    <p class="sub">${sub} Eine Woche ist geschafft, sobald jeder Trainingstag einmal${(activePlan().perWeek || 1) > 1 ? ' bzw. zweimal' : ''} dran war – egal, wie viele Tage du dafür brauchst.</p>
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     <p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>
   </div>`;
@@ -1553,18 +1619,23 @@ function renderStart() {
   }
   h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
   const sessions = sessionsNewestFirst();
-  // als Nächstes dran: der Tag nach dem zuletzt trainierten Tag dieses Plans
+  // als Nächstes dran: der nächste noch offene Tag des Durchlaufs, gezählt ab dem zuletzt trainierten Tag
+  const ci = cycleInfo();
+  const open = new Set(roundOpen(ci.cycleStart, ci.week).map(x => x.day.id));
   const lastOwn = sessions.find(s => findDay(s.dayId));
-  const nextId = !draft && lastOwn ? data.days[(data.days.indexOf(findDay(lastOwn.dayId)) + 1) % data.days.length].id : null;
+  const from = lastOwn ? data.days.indexOf(findDay(lastOwn.dayId)) + 1 : 0;
+  const order = data.days.map((_, i) => data.days[(from + i) % data.days.length]);
+  const nextDay = !draft && lastOwn ? order.find(d => open.has(d.id)) : null;
   data.days.forEach((day, i) => {
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
+    const done = day.exercises.some(e => e.name.trim()) && !open.has(day.id);
     const info = `${day.exercises.length} Übungen` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
       (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
-    const next = day.id === nextId;
-    h += `<button class="btn nav day-btn ${next ? 'next' : ''}" data-action="start-day" data-id="${day.id}">
-      <span class="day-no">${i + 1}</span>
-      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}<small>${info}</small></span></button>`;
+    const next = day === nextDay;
+    h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''}" data-action="start-day" data-id="${day.id}">
+      <span class="day-no">${done ? '✓' : i + 1}</span>
+      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}${done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   });
   return h;
 }
@@ -1805,12 +1876,10 @@ function renderPlan() {
           <button data-action="cycle-weeks" data-delta="1" aria-label="Mehr Wochen">+</button>
         </div>
       </div>
-      <label class="row"><span>Zyklus-Start</span>
-        <input class="inp date" type="date" data-field="cycle-start" value="${c.start}"></label>
-      <p class="hint">Danach folgt automatisch 1 Deload-Woche: halbe Sätze der letzten Woche, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
+      <p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst. Nach den Trainingswochen folgt 1 Deload-Woche: halbe Sätze der letzten Woche, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
       <p class="lbl chips-title">Aktuelle Woche</p>
       ${cyclePills(cycleInfo(), 'cycle-jump')}
-      <p class="hint">Antippen, um diese Woche anders einzuordnen – z. B. nach Krankheit oder längerer Pause direkt in die Deload-Woche oder zurück in die Intro-Woche. Der Zyklus verschiebt sich entsprechend.</p>
+      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause direkt mit der Deload-Woche oder wieder mit der Intro-Woche.</p>
       ${progressionTable()}
       ${rirTable(c.buildWeeks)}
     </div>
@@ -1828,16 +1897,16 @@ function progressionTable() {
       <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, def[k], 'data-action="prog-plan"')).join('')}</div></div>
     <table class="rir prog-table"><tr><th>Woche</th><th>Volumen</th><th>Gewicht & Wdh.</th></tr>`;
   for (let w = 1; w <= ci.buildWeeks; w++) {
-    const monday = addWeeks(ci.cycleStart, w - 1);
-    const p = weekProgression(monday);
+    const round = roundKey(ci.cycleStart, w);
+    const p = weekProgression(round);
     const cell = k => {
       if (k === 'volume' && w === 1) return '<td class="hint">–</td>';  // Intro: Start-Sätze, keine Steigerung
-      const differs = own[monday] && own[monday][k] !== undefined;
+      const differs = own[round] && own[round][k] !== undefined;
       return `<td><button class="prog-cell ${p[k] ? 'on' : 'off'} ${differs ? 'own' : ''}" data-action="prog-week"
-        data-key="${k}" data-monday="${monday}" aria-label="${PROG_KEYS[k]} ${w === 1 ? 'Intro' : 'Woche ' + w}">${p[k] ? '✓' : '✕'}</button></td>`;
+        data-key="${k}" data-round="${esc(round)}" aria-label="${PROG_KEYS[k]} ${w === 1 ? 'Intro' : 'Woche ' + w}">${p[k] ? '✓' : '✕'}</button></td>`;
     };
-    h += `<tr class="${!ci.deload && !ci.future && ci.week === w ? 'cur' : ''}"><td>${w === 1 ? 'Intro' : 'W' + w}
-      <small class="hint">${fmtDate(monday + 'T12:00:00').replace(/^\w+\., /, '')}</small></td>${cell('volume')}${cell('load')}</tr>`;
+    h += `<tr class="${!ci.deload && ci.week === w ? 'cur' : ''}"><td>${w === 1 ? 'Intro' : 'W' + w}
+      ${ci.week === w ? '<small class="hint">jetzt</small>' : ''}</td>${cell('volume')}${cell('load')}</tr>`;
   }
   return h + `</table>
     <p class="hint">Volumen = mehr Sätze von Woche zu Woche (aus: Sätze wie in der Vorwoche). Gewicht & Wdh. = Steigerung von Training zu Training (aus: Werte vom letzten Mal halten). Einzelne Wochen antippen, um nur dort abzuweichen (umrandet). Für ein einzelnes Training lässt es sich direkt im Training umschalten.</p>`;
@@ -1867,7 +1936,7 @@ function stepperRow(label, prop, i, value) {
 // Im Plan: Werte der Vergleichswoche für die aktuelle Zykluswoche
 function planCompare(ex, day) {
   const ci = cycleInfo();
-  if (!ex.name.trim() || ci.deload || ci.future) return '';
+  if (!ex.name.trim() || ci.deload) return '';
   const cmp = comparisonEntry(ex.name, day.id, ci);
   if (!cmp) return '';
   return `<p class="compare">Diese Woche (${weekLabel(ci.week)}) – Vergleich letzter Zyklus:<br>
@@ -2082,19 +2151,33 @@ function renderLibEx({ name }) {
       : '<p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>'}`;
 }
 
-// Trainings einer Kalenderwoche (start = Montag), mit Blättern zur Vor-/Folgewoche
-function renderWeek({ start }) {
-  const ci = cycleInfo(new Date(start + 'T12:00:00'));
-  const sunday = new Date(start + 'T12:00:00');
-  sunday.setDate(sunday.getDate() + 6);
-  const label = ci.future ? 'Vor dem Start' : cycleWeekLabel(ci.week, ci.buildWeeks);
-  const sessions = data.sessions.filter(s => mondayISO(new Date(s.date)) === start)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const thisWeek = mondayISO(new Date());
+// Alle Wochen (Durchläufe) zum Blättern: mit Trainings und die des aktuellen Zyklus, in zeitlicher Reihenfolge
+function allRounds() {
+  const ci = cycleInfo();
+  const keys = new Set(data.sessions.filter(s => s.cycleStart).map(s => roundKey(s.cycleStart, s.week)));
+  for (let w = 1; w <= ci.buildWeeks + 1; w++) keys.add(roundKey(ci.cycleStart, w));
+  const split = k => { const i = k.lastIndexOf('|'); return [k.slice(0, i), Number(k.slice(i + 1))]; };
+  return [...keys].map(split).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]).map(([s, w]) => roundKey(s, w));
+}
+
+// Trainings einer Zykluswoche (key = roundKey), mit Blättern zur Vor-/Folgewoche
+function renderWeek({ key }) {
+  const ci = cycleInfo();
+  const i = key.lastIndexOf('|');
+  const start = key.slice(0, i), week = Number(key.slice(i + 1));
+  const sessions = roundSessions(start, week).sort((a, b) => a.date.localeCompare(b.date));
+  const isNow = start === ci.cycleStart && week === ci.week;
+  const ahead = start === ci.cycleStart && week > ci.week;
+  // Zyklus-Nummer: vom aktuellen Zyklus aus zurückgezählt
+  const starts = [...new Set(allRounds().map(k => k.slice(0, k.lastIndexOf('|'))))];
+  const no = ci.cycle - (starts.indexOf(ci.cycleStart) - starts.indexOf(start));
+  const first = sessions.length ? fmtDate(sessions[0].date) : '';
+  const last = sessions.length ? fmtDate(sessions[sessions.length - 1].date) : '';
+  const when = first ? first + (last !== first ? ` – ${last}` : '') : isNow ? 'läuft gerade' : ahead ? 'kommt noch' : '';
 
   let h = `<div class="card week-head">
       <button class="icon-btn" data-action="week-shift" data-dir="-1" aria-label="Vorherige Woche">‹</button>
-      <div><b>${label}</b>${ci.future ? '' : `<small>Zyklus ${ci.cycle}</small>`}<small>${fmtDate(start + 'T12:00:00')} – ${fmtDate(sunday)}</small></div>
+      <div><b>${cycleWeekLabel(week, ci.buildWeeks)}</b>${no >= 1 ? `<small>Zyklus ${no}</small>` : ''}${when ? `<small>${when}</small>` : ''}</div>
       <button class="icon-btn" data-action="week-shift" data-dir="1" aria-label="Nächste Woche">›</button>
     </div>`;
   if (sessions.length) {
@@ -2103,20 +2186,13 @@ function renderWeek({ start }) {
       <div class="stat"><span>Bewegt</span><b>${fmtTons(tons)}</b></div></div>`;
   }
   for (const s of sessions) {
-    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}" data-week="${start}">
+    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}" data-week="${esc(key)}">
       ${esc(s.dayName)}<small>${fmtDate(s.date)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}</small></button>`;
   }
   if (!sessions.length) {
-    h += `<p class="hint">${start > thisWeek ? 'Diese Woche liegt noch vor dir.' : 'In dieser Woche wurde nicht trainiert.'}</p>`;
+    h += `<p class="hint">${ahead ? 'Diese Woche liegt noch vor dir.' : isNow ? 'In dieser Woche wurde noch nicht trainiert.' : 'In dieser Woche wurde nicht trainiert.'}</p>`;
   }
-  if (start === thisWeek && data.days.length) {
-    const per = activePlan().perWeek || 1;
-    const open = data.days
-      .map(d => ({ d, left: per - sessions.filter(s => s.dayId === d.id).length }))
-      .filter(x => x.left > 0);
-    h += `<p class="hint">${open.length ? `Noch offen diese Woche: ${open.map(x => esc(x.d.name) + (per > 1 ? ` (${x.left}×)` : '')).join(', ')}`
-      : 'Alle Trainings dieser Woche erledigt 💪'}</p>`;
-  }
+  if (isNow && data.days.length) h += `<p class="hint">🔄 ${roundStatus(ci)}</p>`;
   if (sessions.length) h += '<p class="hint">Training antippen, um es anzusehen oder nachträglich zu ändern.</p>';
   return h;
 }
@@ -2323,11 +2399,38 @@ function beginCheck(id, maxAsked = false) {
   }
   if (!maxAsked) {
     if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+    if (!askSkipRound(day)) return;
     const fresh = firstTimeExercises(day);
     if (fresh.length) { go('firstmax', { id, exIds: fresh.map(e => e.id) }); return; }
   }
-  if (cycleInfo().deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
+  if (trainingRound(id).deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
   else go('check', { id, step: 1 });
+}
+
+// Tag, für den die laufende Woche vorzeitig abgeschlossen wird (er war in dieser Woche schon dran)
+let skipRoundFor = null;
+
+// War der Tag in dieser Woche (Durchlauf) schon dran, während andere noch offen sind: Woche abschließen und mit ihm
+// die nächste beginnen? false = nicht starten.
+function askSkipRound(day) {
+  skipRoundFor = null;
+  const ci = cycleInfo();
+  const open = roundOpen(ci.cycleStart, ci.week);
+  if (!open.length || open.some(x => x.day.id === day.id)) return true;
+  const next = roundAfter(ci);
+  const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : cycleWeekLabel(next.week);
+  if (!confirm(`„${day.name}“ war in dieser Woche (${cycleWeekLabel(ci.week)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
+    `OK = diese Woche abschließen (offene Trainings auslassen) und mit „${day.name}“ die ${nextLabel} beginnen.\nAbbrechen = nicht starten.`)) return false;
+  skipRoundFor = day.id;
+  return true;
+}
+
+// Zykluswoche, in die ein Training dieses Tages fällt (ggf. schon die nächste, siehe askSkipRound)
+function trainingRound(id) {
+  const ci = cycleInfo();
+  if (skipRoundFor !== id) return ci;
+  const n = roundAfter(ci);
+  return toCycleInfo(n.start, n.week, n.no, ci.buildWeeks);
 }
 
 // readiness = { sleptWell, stress }; jede negative Antwort zieht 1 Wdh. pro Übung ab
@@ -2336,7 +2439,8 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   const exercises = day.exercises.filter(e => e.name.trim());
   if (!exercises.length) return;
 
-  const ci = cycleInfo();
+  const ci = trainingRound(id);
+  skipRoundFor = null;
   draft = {
     dayId: day.id,
     dayName: day.name,
@@ -2345,10 +2449,11 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     intro: ci.intro,
     cycleStart: ci.cycleStart,
     week: ci.week,
+    cycleNo: ci.cycle,
     readiness,
     penalty: ci.deload ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
     // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
-    progression: ci.deload ? { volume: true, load: true } : weekProgression(mondayISO(new Date())),
+    progression: ci.deload ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
     occurrence: nextOccurrence(day.id, ci),  // 2 = dieser Tag wurde diese Woche schon einmal trainiert
     entries: [],
   };
@@ -2537,7 +2642,10 @@ function saveTraining() {
   if (draft.deload) session.deload = true;
   else if (!prog.volume || !prog.load) session.progression = { volume: prog.volume, load: prog.load };
   if (draft.penalty) session.readiness = draft.readiness;
-  if (draft.cycleStart) Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
+  if (draft.cycleStart) {
+    Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
+    setRound(draft.cycleStart, draft.week, draft.cycleNo || data.cycle.no);  // ab jetzt gilt dieser Durchlauf
+  }
   // Trainingsdauer in Minuten (über 10 Stunden = vermutlich vergessen zu speichern -> nicht werten)
   const minutes = Math.round((Date.now() - Date.parse(draft.date)) / 60000);
   if (minutes > 0 && minutes < 600) session.duration = minutes;
@@ -2720,7 +2828,7 @@ const actions = {
   'check-areas-done': el => {
     const { id, sleptWell, stress } = current.params;
     const areas = el.dataset.none ? [] : current.params.areas || [];
-    data.complaints.push({ cycleStart: cycleInfo().cycleStart, date: new Date().toISOString(), areas });
+    data.complaints.push({ cycleStart: trainingRound(id).cycleStart, date: new Date().toISOString(), areas });
     saveData();
     startDay(id, { sleptWell, stress });
   },
@@ -2977,17 +3085,19 @@ const actions = {
     data.cycle.buildWeeks = Math.min(5, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
     saveData(); render();
   },
-  // diese Woche als gewählte Zykluswoche zählen (Intro … Deload), der Zyklus verschiebt sich
+  // ab jetzt mit der gewählten Zykluswoche weitermachen (Intro … Deload). Vorwärts im selben Zyklus;
+  // zurück (z. B. nach Krankheit) beginnt ein neuer Zyklus ab dieser Woche – verglichen wird dann mit den Zyklen davor.
   'cycle-jump': el => {
     const w = Number(el.dataset.w);
     const label = cycleWeekLabel(w);
     const ci = cycleInfo();
-    if (!ci.future && ci.week === w) return;
-    if (!confirm(`Ab dieser Woche mit der ${label} weitermachen?\n\nDer Zyklus wird entsprechend verschoben.`)) return;
-    data.cycle.start = addWeeks(mondayISO(new Date()), -(w - 1));
-    delete data.cycle.begin;
+    if (ci.week === w) return;
+    const started = roundSessions(ci.cycleStart, ci.week).length > 0;
+    if (!confirm(`Ab jetzt mit der ${label} weitermachen?${started ? `\n\nDie Trainings, die du in der ${cycleWeekLabel(ci.week)} schon gemacht hast, bleiben dort gespeichert.` : ''}`)) return;
+    if (w > ci.week) setRound(ci.cycleStart, w, ci.cycle);
+    else setRound(newCycleId(ci.cycleStart), w, w === 1 ? ci.cycle + 1 : ci.cycle);
     saveData(); render();
-    toast(`Diese Woche: ${label}`);
+    toast(`Jetzt: ${label}`);
   },
   'plan-variant': el => {
     findDay(current.params.id).exercises[el.dataset.i].variant = el.dataset.v;
@@ -3030,7 +3140,7 @@ const actions = {
     if (!confirm('Dieses Training endgültig löschen?')) return;
     data.sessions = data.sessions.filter(s => s.id !== el.dataset.id);
     saveData(); toast('Training gelöscht');
-    if (current.params.week) go('week', { start: current.params.week }); else go('history');
+    if (current.params.week) go('week', { key: current.params.week }); else go('history');
   },
   // Progression nur für dieses Training umschalten -> Vorschläge neu berechnen
   'prog-today': el => {
@@ -3046,23 +3156,23 @@ const actions = {
     saveDraft(); render();
     toast(`${PROG_KEYS[key]}: Progression heute ${draft.progression[key] ? 'an' : 'aus'}`);
   },
-  // Progression im Plan: Grundeinstellung (ganzer Zyklus) bzw. eine einzelne Woche (data-monday)
+  // Progression im Plan: Grundeinstellung (ganzer Zyklus) bzw. eine einzelne Woche (data-round)
   'prog-plan': el => {
     const p = activePlan(), key = el.dataset.key;
     p.progression = { ...planProgression(p), [key]: !planProgression(p)[key] };
     // Wochen, die jetzt der Grundeinstellung entsprechen, sind keine Abweichung mehr
-    for (const [monday, own] of Object.entries(p.weekProgression)) {
+    for (const [round, own] of Object.entries(p.weekProgression)) {
       if (own[key] === p.progression[key]) delete own[key];
-      if (!Object.keys(own).length) delete p.weekProgression[monday];
+      if (!Object.keys(own).length) delete p.weekProgression[round];
     }
     saveData(); render();
   },
   'prog-week': el => {
-    const p = activePlan(), key = el.dataset.key, monday = el.dataset.monday;
-    const value = !weekProgression(monday)[key];
-    const own = { ...(p.weekProgression[monday] || {}) };
+    const p = activePlan(), key = el.dataset.key, round = el.dataset.round;
+    const value = !weekProgression(round)[key];
+    const own = { ...(p.weekProgression[round] || {}) };
     if (value === planProgression(p)[key]) delete own[key]; else own[key] = value;  // wie Grundeinstellung -> keine Abweichung
-    if (Object.keys(own).length) p.weekProgression[monday] = own; else delete p.weekProgression[monday];
+    if (Object.keys(own).length) p.weekProgression[round] = own; else delete p.weekProgression[round];
     saveData(); render();
   },
   // Aufwärmsatz hinzufügen: etwas schwerer als der letzte (+20 % vom Arbeitssatz, höchstens 90 %), weniger Wdh.
@@ -3083,8 +3193,12 @@ const actions = {
     saveDraft(); render();
   },
   // Wochenansicht: Woche w des aktuellen Zyklus öffnen bzw. eine Woche vor/zurück blättern
-  'week-open': el => go('week', { start: addWeeks(cycleInfo().cycleStart, Number(el.dataset.w) - 1) }),
-  'week-shift': el => go('week', { start: addWeeks(current.params.start, Number(el.dataset.dir)) }),
+  'week-open': el => go('week', { key: roundKey(cycleInfo().cycleStart, Number(el.dataset.w)) }),
+  'week-shift': el => {
+    const all = allRounds();
+    const to = all[all.indexOf(current.params.key) + Number(el.dataset.dir)];
+    if (to) go('week', { key: to }); else toast(Number(el.dataset.dir) < 0 ? 'Keine frühere Woche' : 'Keine spätere Woche');
+  },
   // gespeichertes Training nachträglich bearbeiten
   'se-edit': el => {
     startSessionEdit(data.sessions.find(s => s.id === el.dataset.id));
@@ -3118,8 +3232,7 @@ const actions = {
     Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
-    data.cycle.start = mondayISO(new Date());
-    delete data.cycle.begin;
+    setRound(todayISO(), 1, 1);
     saveData();
     draft = null; saveDraft();
     toast('Trainings gelöscht – Plan ist noch da');
@@ -3205,12 +3318,6 @@ const fields = {
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
-  'cycle-start': el => {
-    if (!el.value) return;
-    data.cycle.start = mondayISO(el.value + 'T12:00:00');  // immer auf den Montag dieser Woche
-    delete data.cycle.begin;
-    saveData(); render();
-  },
   'tr-weight': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.weight = el.value;

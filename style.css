@@ -241,6 +241,9 @@ nav button.active svg { stroke-width: 2.3; }
 .day-txt { flex: 1; min-width: 0; }
 .day-btn.next { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow); }
 .day-btn.next .day-no { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+/* in dieser Woche (Durchlauf) schon trainiert */
+.day-btn.done .day-no { background: var(--success-soft); color: var(--success); }
+.badge.done { background: var(--success-soft); color: var(--success); }
 .badge {
   display: inline-block;
   margin-left: 6px;
@@ -915,6 +918,7 @@ button.pill:active { transform: scale(.95); }
 .cycle .pill.past { background: rgba(255, 255, 255, .32); color: #fff; }
 .cycle .pill.now { background: #fff; color: var(--accent); }
 .cycle .sub { position: relative; margin: 0; font-size: 16px; line-height: 1.45; color: rgba(255, 255, 255, .88); }
+.cycle .round-status { position: relative; margin: 0 0 8px; font-size: 16.5px; font-weight: 700; line-height: 1.4; }
 .cycle .tap-hint { position: relative; margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: rgba(255, 255, 255, .7); }
 .cycle button.pill { min-height: 40px; }
 .cycle .prog-note { position: relative; display: inline-block; margin: 10px 0 0; padding: 5px 12px; border-radius: 999px; background: rgba(255, 255, 255, .2); font-size: 14.5px; font-weight: 650; }

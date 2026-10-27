@@ -2,7 +2,7 @@
 // Antwortet sofort aus dem Cache und lädt im Hintergrund die neueste Version nach
 // (Änderungen sind dann beim nächsten Öffnen der App sichtbar).
 
-const CACHE = 'trainingsapp-v72';
+const CACHE = 'trainingsapp-v73';
 const FILES = [
   './',
   './index.html',

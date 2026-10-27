@@ -184,8 +184,7 @@ function wizStart() {
     split: null,   // gewählte Vorlage
     days: [],
     newDay: { name: '', intensity: 'heavy', groups: [] },
-    startWeek: mondayISO(new Date()),  // Montag der ersten Trainingswoche des neuen Plans
-    entry: 1,                          // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
+    entry: 1,                         // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
     volDiv: 1,                         // Wochensätze auf so viele Durchgänge je Tag verteilen (siehe daysWith)
@@ -380,30 +379,19 @@ function dayCard(d, di, removable) {
 // Einstiegswoche als Zahl: 1 = Intro … wiz.weeks, Deload = wiz.weeks + 1
 const wizEntry = () => wiz.entry === 'deload' ? wiz.weeks + 1 : Math.min(wiz.entry, wiz.weeks);
 
-// Einstieg (mit welcher Zykluswoche) und Startwoche (diese, nächste oder beliebige Woche, zählt ab deren Montag)
+// Einstieg: mit welcher Zykluswoche der Plan beginnt (er startet mit dem nächsten Training)
 function startWeekRow() {
-  const thisWeek = mondayISO(new Date());
-  const nextWeek = addWeeks(thisWeek, 1);
   const entry = wizEntry();
-  const date = iso => fmtDate(iso + 'T12:00:00');
   const after = entry > wiz.weeks
-    ? `danach beginnt am ${date(addWeeks(wiz.startWeek, 1))} der neue Zyklus mit der Intro-Woche`
-    : `Deload ab ${date(addWeeks(wiz.startWeek, wiz.weeks + 1 - entry))}`;
+    ? 'Danach beginnt der neue Zyklus mit der Intro-Woche.'
+    : `Danach ${entry < wiz.weeks ? `noch ${wiz.weeks - entry} Aufbauwoche${wiz.weeks - entry === 1 ? '' : 'n'} und ` : ''}die Deload-Woche.`;
   return `<p class="lbl chips-title">Einstieg mit</p>
     <div class="pills">${Array.from({ length: wiz.weeks + 1 }, (_, i) => i + 1).map(w => {
       const deload = w > wiz.weeks;
       return `<button class="pill ${deload ? 'dl' : w === 1 ? 'intro' : ''} ${w === entry ? 'now' : ''}"
         data-action="wiz-entry" data-w="${deload ? 'deload' : w}">${deload ? 'Deload' : w === 1 ? 'Intro' : w}</button>`;
     }).join('')}</div>
-    <p class="hint">Normal ist die Intro-Woche. Nach Krankheit oder längerer Pause z. B. mit der Deload-Woche einsteigen.</p>
-    <p class="lbl chips-title">Ab wann</p>
-    <div class="variants">
-      <button class="vchip ${wiz.startWeek === thisWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${thisWeek}">Diese Woche</button>
-      <button class="vchip ${wiz.startWeek === nextWeek ? 'on' : ''}" data-action="wiz-startweek" data-w="${nextWeek}">Nächste Woche</button>
-    </div>
-    <label class="row"><span>oder Woche wählen</span>
-      <input class="inp date" type="date" data-field="wiz-start-date" value="${wiz.startWeek}"></label>
-    <p class="hint">${cycleWeekLabel(entry, wiz.weeks)} ab <b>${date(wiz.startWeek)}</b>, ${after}.</p>`;
+    <p class="hint">Dein nächstes Training gehört zur <b>${cycleWeekLabel(entry, wiz.weeks)}</b>. ${after}</p>`;
 }
 
 // Hinweis für Neulinge und Einsteiger: Übungen zeigen lassen, Figuren nur grobe Info
@@ -516,7 +504,7 @@ function renderWizDays() {
 // Schritt „Name & Zykluslänge“
 function renderWizBasics() {
   return wizCard('✏️', 'Name und Zykluslänge',
-    'Ein Zyklus besteht aus der Intro-Woche zum Einsteigen, den Aufbauwochen, in denen es Woche für Woche etwas schwerer wird, und einer leichten Deload-Woche zum Erholen. Danach beginnt der nächste Zyklus.',
+    'Ein Zyklus besteht aus der Intro-Woche zum Einsteigen, den Aufbauwochen, in denen es Woche für Woche etwas schwerer wird, und einer leichten Deload-Woche zum Erholen. Danach beginnt der nächste Zyklus. Eine Woche ist dabei ein Durchlauf: geschafft, sobald jeder Trainingstag dran war – egal, ob du dafür 6, 7 oder 9 Tage brauchst.',
     `<label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
       <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro, danach 1 Woche Deload</small></span>
@@ -527,7 +515,7 @@ function renderWizBasics() {
 
 // Schritt „Start“
 function renderWizStart() {
-  return wizCard('📅', 'Wann und wie startest du?',
+  return wizCard('📅', 'Mit welcher Woche startest du?',
     'Normalerweise beginnst du mit der Intro-Woche. Nach Krankheit oder einer längeren Pause kannst du z. B. direkt mit der leichten Deload-Woche einsteigen.',
     startWeekRow());
 }
@@ -703,7 +691,6 @@ Object.assign(actions, {
   'wiz-start': () => wizStart(),
   'wiz-cancel': () => { wiz = null; go('plan'); },
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
-  'wiz-startweek': el => { wiz.startWeek = el.dataset.w; render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
   // Die Sätze pro Woche bleiben immer gleich (volDiv = perWeek).
   'wiz-freq': el => {
@@ -856,10 +843,8 @@ Object.assign(actions, {
       list.forEach((n, w) => { if (n != null && plan.volume[g]) setWeeklyVolume(g, w, n); });
     }
     data.cycle.buildWeeks = wiz.weeks;
-    // Einstieg mitten im Zyklus: Intro-Montag entsprechend früher, erster Trainingsmontag in begin
-    const entry = wizEntry();
-    data.cycle.start = addWeeks(wiz.startWeek, -(entry - 1));
-    if (entry > 1) data.cycle.begin = wiz.startWeek; else delete data.cycle.begin;
+    // neuer Zyklus 1, beginnend mit der gewählten Einstiegswoche beim nächsten Training
+    setRound(newCycleId(), wizEntry(), 1);
     saveData();
     wiz = null;
     toast(`„${plan.name}“ erstellt und aktiv ✔`);
@@ -869,11 +854,6 @@ Object.assign(actions, {
 
 Object.assign(fields, {
   'wiz-name': el => { wiz.name = el.value; },
-  'wiz-start-date': el => {
-    if (!el.value) return;
-    wiz.startWeek = mondayISO(el.value + 'T12:00:00');
-    render();
-  },
   'wiz-dayname': el => { wiz.days[el.dataset.d].name = el.value; },
   'wiz-newday-name': el => { wiz.newDay.name = el.value; },
   // Sätze pro Training (für alle Tage gleich) -> Wochenzahl anpassen
