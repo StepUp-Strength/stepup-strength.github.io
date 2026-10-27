@@ -1640,6 +1640,7 @@ function render() {
   $view.innerHTML = v.render(current.params);
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
   syncBackKey();
+  syncTyping();  // Feld beim Neuzeichnen verschwunden (z. B. Seitenwechsel) -> Leiste wieder zeigen
 }
 
 // „Abbrechen“ oben rechts bei mehrstufigen Vorgängen: views[…].cancel = { ask, run } (oder Funktion der params,
@@ -1662,11 +1663,20 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 // hängen bzw. beim Scrollen aus dem Bild wandern
 const isTypingField = el => el && (el.tagName === 'TEXTAREA'
   || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'file', 'date'].includes(el.type)));
+// Leiste nur ausblenden, solange wirklich in ein Feld getippt wird (sichtbare App, Feld hat den Fokus)
+const syncTyping = () => document.body.classList.toggle('typing',
+  document.visibilityState === 'visible' && isTypingField(document.activeElement));
 document.addEventListener('focusin', e => { if (isTypingField(e.target)) document.body.classList.add('typing'); });
-document.addEventListener('focusout', () => {
-  // kurz warten: beim Wechsel ins nächste Feld bleibt die Tastatur offen
-  setTimeout(() => { if (!isTypingField(document.activeElement)) document.body.classList.remove('typing'); }, 100);
+// kurz warten: beim Wechsel ins nächste Feld bleibt die Tastatur offen
+document.addEventListener('focusout', () => setTimeout(syncTyping, 100));
+// Mitten im Tippen zum Homebildschirm o. Ä. gewechselt: Feld verlassen (Tastatur zu), beim Zurückkommen Leiste
+// wieder zeigen und die Bildschirmposition neu berechnen lassen (sonst bleibt die Leiste verrutscht)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && isTypingField(document.activeElement)) document.activeElement.blur();
+  syncTyping();
+  if (document.visibilityState === 'visible') requestAnimationFrame(() => window.scrollTo(window.scrollX, window.scrollY));
 });
+window.addEventListener('pageshow', syncTyping);
 
 function syncBackKey() {
   if (skipPop) return;
