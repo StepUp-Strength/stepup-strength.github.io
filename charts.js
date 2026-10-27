@@ -639,8 +639,28 @@ function healthCard() {
     ${chartState.pasteBox ? `<textarea class="inp comment" id="health-text" rows="3"
         placeholder="Hier lange drücken → Einsetzen"></textarea>
       <div class="row"><button class="btn" data-action="health-apply">Übernehmen</button></div>` : ''}
+    ${healthGuide()}
   </div>`;
 }
+
+// Anleitung (iPhone): Kurzbefehl, der Schritte und Gewicht aus Health in die Zwischenablage kopiert,
+// und eine Automation, die ihn jeden Tag von selbst ausführt
+const healthGuide = () => `<details class="health-guide">
+    <summary>📲 So richtest du den Kurzbefehl ein (iPhone)</summary>
+    <p><b>1. Kurzbefehl erstellen</b> – App „Kurzbefehle“ öffnen, unten „Kurzbefehle“, oben rechts <b>+</b>. Name z. B. „StepUp Health“. Dann diese Aktionen hinzufügen (oben ins Suchfeld eintippen):</p>
+    <ol>
+      <li><b>Health-Samples suchen</b>: Typ „Schritte“, Startdatum „ist heute“.</li>
+      <li><b>Statistiken berechnen</b>: „Summe“ von den Health-Samples aus Schritt 1.</li>
+      <li><b>Health-Samples suchen</b> (zweites Mal): Typ „Gewicht“, sortiert nach „Startdatum“, „Neueste zuerst“, Limit „1“.</li>
+      <li><b>Text</b>: <code>Datum: </code> und die Variable „Aktuelles Datum“, dann <code> Schritte: </code> und das Ergebnis aus Schritt 2, dann <code> Gewicht: </code> und das Ergebnis aus Schritt 3. Ergibt z. B. „Datum: 27.10.2026 Schritte: 8432 Gewicht: 89,4 kg“.</li>
+      <li><b>In Zwischenablage kopieren</b> (kopiert den Text).</li>
+      <li>Optional <b>Mitteilung anzeigen</b>: „Health-Daten bereit – StepUp öffnen und einfügen“.</li>
+    </ol>
+    <p>Einmal auf ▶︎ tippen und Zugriff auf Health erlauben.</p>
+    <p><b>2. Täglich automatisch ausführen</b> – in „Kurzbefehle“ unten „Automation“, <b>+</b>, „Tageszeit“ wählen, z. B. 21:00 Uhr, „Täglich“. „Sofort ausführen“ einstellen, dann „Weiter“ und den Kurzbefehl „StepUp Health“ auswählen.</p>
+    <p><b>3. In die App übernehmen</b> – StepUp öffnen und hier auf „❤️ Aus Health einfügen“ tippen (ggf. „Einsetzen“ erlauben).</p>
+    <p class="hint">Ganz ohne Tippen geht es leider nicht: Das iPhone lässt Web-Apps nicht selbst auf Health zugreifen. Der Kurzbefehl legt die Daten jeden Tag bereit – am besten am selben Abend einfügen, bevor du etwas anderes kopierst.</p>
+  </details>`;
 
 // Datum (JJJJ-MM-TT oder TT.MM.JJ[JJ]), Schritte und Gewicht aus dem Text lesen
 function parseHealthText(text) {

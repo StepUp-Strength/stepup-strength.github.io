@@ -626,6 +626,25 @@ const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
 const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken[^(]*\(langhantel|kreuzheben|schulterdrucken langhantel|rudern langhantel|dips|umsetzen|reissen)/;
 const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
 
+// Eigengewichtsübungen: Steigerung nur über die Wdh. (kg-Spalte = Körpergewicht), kein automatisches Aufwärmen.
+// ex.bwLoad = true: Gewichtsprogression trotzdem an (z. B. mit Zusatzgewicht) – dann wie eine normale Übung.
+const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic curls|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge)/;
+const isBodyweightName = name => BODYWEIGHT.test(norm(String(name || '').trim()));
+const isBodyweight = ex => !!ex && !ex.bwLoad && isBodyweightName(ex.name);
+
+// Bezugstraining ohne Gewichte (für Eigengewichtsübungen: nur die Wdh. zählen)
+const withoutWeight = e => e && {
+  ...e,
+  sets: (e.sets || []).map(s => ({ ...s, weight: null })),
+  planned: (e.planned || []).map(p => p && { ...p, weight: null }),
+};
+
+// Zuletzt eingetragenes Körpergewicht (kg) oder null
+function currentBodyweight() {
+  const last = [...data.bodyweight].sort((a, b) => b.date.localeCompare(a.date))[0];
+  return last ? last.kg : null;
+}
+
 // Übungsart: selbst gewählt > Übungsliste > Vermutung anhand des Namens
 function kindOf(ex) {
   if (ex.kind) return ex.kind;
@@ -1261,7 +1280,7 @@ function proposeSet(en, i, v) {
   let p = null, rule = null;
   if (t.hold) {
     // Gewichts-/Wdh.-Progression aus: Werte vom letzten Mal 1:1
-    const ref = holdSets(en.name, v, t.own);
+    const ref = holdSets(en.name, v, t.own).map(s => t.bodyweight ? { ...s, weight: null } : s);
     if (ref.length) {
       const src = refAt(ref, k);
       p = { weight: src.weight, reps: src.reps };
@@ -1270,7 +1289,7 @@ function proposeSet(en, i, v) {
   } else {
     ({ p, rule } = refProposal(t, en.prevWeek, en.compare, i, k, v));
     if (!p && v) {
-      const lastV = lastVariantSets(en.name, v);
+      const lastV = lastVariantSets(en.name, v).map(s => t.bodyweight ? { ...s, weight: null } : s);
       if (lastV.length) p = fromRef(refAt(lastV, k), t, k === 0, i);
     }
   }
@@ -1455,6 +1474,7 @@ const WARM_REPS = 10;   // … und so vielen Wdh.
 // 'barbell' = Grundübung mit Langhantel (Stange + Steigerung, Scheiben-Anzeige), 'normal' = 1 Satz mit 50 %,
 // null = kein Aufwärmen (Assistenzübungen, Dips)
 function warmupKind(en) {
+  if (isBodyweightName(en.name)) return null;  // Eigengewichtsübungen (auch mit Zusatzgewicht): kein Aufwärmsatz
   const k = kindOf(planExercise(en.name) || { name: en.name });
   if (k === 'compound') return /dips/.test(norm(en.name)) ? null : 'barbell';
   return k === 'normal' ? 'normal' : null;
@@ -1575,7 +1595,7 @@ const CANCEL_START = {
 };
 
 const views = {
-  start:    { title: 'Training',      tab: 'start',   render: renderStart },
+  start:    { title: 'Training',      tab: 'start',   render: renderStart, after: startTrainingTimer },
   training: { title: () => draft ? draft.dayName : 'Training', tab: 'start', back: 'start', render: renderTraining, after: startTrainingTimer },
   plan:     { title: 'Trainingsplan', tab: 'plan',    render: renderPlan },
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
@@ -1599,7 +1619,7 @@ const views = {
   firstmax: { title: 'Neue Übungen',     tab: 'start', render: renderFirstMax, cancel: () => CANCEL_START,
     back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
   cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
-  data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
+  data:     { title: 'Sicherung',     tab: 'data',    render: renderData, after: showAppVersion },
 };
 
 function go(view, params = {}) {
@@ -1633,6 +1653,20 @@ function viewCancel() {
 // Eintrag im Browser-Verlauf, den die Taste verbraucht, statt die App zu schließen. Auf den Hauptseiten wird er
 // wieder entfernt, damit die Taste die App dort wie gewohnt schließt.
 let skipPop = false;  // Eintrag wird gerade selbst entfernt -> dieses popstate nicht als „Zurück“ werten
+
+// Beim Zurückgehen im Browser-Verlauf stellt der Browser sonst die damalige Scroll-Position wieder her –
+// die App springt dann plötzlich z. B. ganz nach unten. Die Position bestimmt die App selbst (go/back).
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+// Während getippt wird (Tastatur offen), die untere Leiste ausblenden – sie würde sonst über der Tastatur
+// hängen bzw. beim Scrollen aus dem Bild wandern
+const isTypingField = el => el && (el.tagName === 'TEXTAREA'
+  || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'file', 'date'].includes(el.type)));
+document.addEventListener('focusin', e => { if (isTypingField(e.target)) document.body.classList.add('typing'); });
+document.addEventListener('focusout', () => {
+  // kurz warten: beim Wechsel ins nächste Feld bleibt die Tastatur offen
+  setTimeout(() => { if (!isTypingField(document.activeElement)) document.body.classList.remove('typing'); }, 100);
+});
 
 function syncBackKey() {
   if (skipPop) return;
@@ -1735,6 +1769,7 @@ function renderStart() {
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
+      ${data.timerHome ? '<button class="home-timer" data-action="timer-home" aria-label="Timer auf der Startseite ausblenden">⏱ <b id="tr-timer">0:00</b></button>' : ''}
       <p class="sub">begonnen ${fmtDate(draft.date)}</p>
       <button class="btn primary" data-action="resume">Fortsetzen</button>
     </div>`;
@@ -1786,8 +1821,10 @@ function renderTraining() {
         || 'Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.'}</p>`
       : '';
   const lastDur = lastDuration(draft.dayId);
-  h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
-    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
+  // Antippen: Timer auch auf dem Startbildschirm anzeigen (ein/aus)
+  h = `<button class="timer-bar" data-action="timer-home" aria-label="Timer auch auf dem Startbildschirm anzeigen">
+    <span>⏱ <b id="tr-timer">0:00</b>${data.timerHome ? '<small class="pin">📌 auch auf der Startseite</small>' : ''}</span>
+    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></button>` + h;
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>${draft.own
     ? 'Trag nach jedem Satz ein, was du geschafft hast und wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt.'
     : 'Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.'}</p>`;
@@ -1830,8 +1867,11 @@ function renderTraining() {
     }
     const stall = stalls.find(s => s.key === nameKey(en.name));
     if (stall) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
-    if (!en.warmupEdited) syncWarmup(en);  // Vorschlag passend zum aktuellen ersten Arbeitssatz
-    h += warmupBlock(en, ei);
+    const body = en.target && en.target.bodyweight;  // Eigengewicht: kein Aufwärmen, kg = Körpergewicht
+    if (!body) {
+      if (!en.warmupEdited) syncWarmup(en);  // Vorschlag passend zum aktuellen ersten Arbeitssatz
+      h += warmupBlock(en, ei);
+    }
     const lastComment = lastCommentFor(en.name);
     if (lastComment) {
       h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
@@ -1840,13 +1880,14 @@ function renderTraining() {
     }
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
+    if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
     if (en.target && en.target.own) {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
       const t = en.target;
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
-      if (t.max10 == null && !last) {
+      if (t.max10 == null && !last && !body) {
         h += `<p class="first-max-hint">🆕 Erstes Mal: Wähle ein Gewicht, das sich passend anfühlt, und trag ein, was du geschafft hast –
           Gewicht, Wdh. und Tank. Das Max. bei 10 Wdh. wird danach berechnet.</p>`;
       }
@@ -1875,7 +1916,7 @@ function renderTraining() {
       h += last
         ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
         : en.target && en.target.own ? '<p class="last">Erstes Mal – Werte aus deinem Plan.</p>'
-        : en.target && en.target.max10 == null ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
+        : en.target && en.target.max10 == null && !body ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
           : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
     const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
@@ -1886,12 +1927,14 @@ function renderTraining() {
     h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
     const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
     const next = nextPreview(en);
+    const bodyKg = body ? currentBodyweight() : null;
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
       h += `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
           aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>
-        <input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
-          data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">
+        ${body ? `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`
+        : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
+          data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
         <input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
@@ -1927,10 +1970,28 @@ function progressionCard() {
     </div>`;
 }
 
+// Schnellauswahl beim Ersetzen: verwandte Übungen derselben Muskelgruppe – zuerst gleiche Bewegung (Figur in der
+// Bibliothek) und gleiche Übungsfamilie (erstes Wort, z. B. „Rudern“), dann gleiche Übungsart, schon trainierte vorn
+function relatedExercises(name, n = 6) {
+  const g = groupOf({ name }), kind = kindOf({ name });
+  const lib = libEntry(name), word = n2 => norm(n2).split(/[\s(]/)[0];
+  const taken = new Set([nameKey(name), ...draft.entries.map(e => nameKey(e.name))]);
+  const trained = new Set(data.sessions.flatMap(s => s.entries.map(e => nameKey(e.name))));
+  const pool = [...new Map([...EXERCISE_LIST.map(([x]) => x), ...ownExerciseNames()].map(x => [nameKey(x), x])).values()];
+  const score = c => (lib && libEntry(c) && libEntry(c).pattern === lib.pattern ? 4 : 0) + (word(c) === word(name) ? 3 : 0)
+    + (kindOf({ name: c }) === kind ? 2 : 0) + (trained.has(nameKey(c)) ? 1 : 0);
+  return pool.filter(c => !taken.has(nameKey(c)) && groupOf({ name: c }) === g)
+    .map(c => [c, score(c)]).sort((a, b) => b[1] - a[1]).slice(0, n).map(([c]) => c);
+}
+
 function renderReplace(en, ei) {
   const t = en.target;
+  const quick = relatedExercises(en.replacedFrom || en.name);
   return `<div class="replace">
     <p class="lbl">Ersatzübung</p>
+    ${quick.length ? `<p class="hint quick-title">Schnellauswahl – ähnliche Übungen:</p>
+      <div class="quick-picks">${quick.map(q => `<button class="vchip" data-action="rep-quick" data-ei="${ei}" data-name="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+      <p class="hint quick-title">… oder selbst suchen:</p>` : ''}
     <input class="inp" type="text" data-field="rep-name" data-ei="${ei}"
       autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
     <div class="suggest" hidden></div>
@@ -2124,6 +2185,16 @@ function volumeSummary(day) {
   return h + '</table></div></div>';
 }
 
+// Nur bei Eigengewichtsübungen: nur Körpergewicht (Steigerung über die Wdh.) oder mit Zusatzgewicht (Gewichtsprogression)
+function bodyweightRow(ex, i) {
+  if (!isBodyweightName(ex.name)) return '';
+  return `<div class="variants plan"><span>Gewicht</span>${[[0, 'Nur Körpergewicht'], [1, 'Mit Zusatzgewicht']].map(([v, l]) =>
+      `<button class="vchip ${!!ex.bwLoad === !!v ? 'on' : ''}" data-action="ex-bwload" data-i="${i}" data-v="${v}">${l}</button>`).join('')}</div>
+    <p class="hint kind-hint">${ex.bwLoad
+      ? 'Gewichtsprogression an: Trag im Training dein Zusatzgewicht ein – es wird wie bei anderen Übungen gesteigert.'
+      : 'Eigengewichtsübung: kein Gewicht, Steigerung nur über die Wiederholungen, kein Aufwärmsatz.'}</p>`;
+}
+
 // Übung im Trainingstag eines eigenen Plans: nur Sätze × Wdh., Startgewicht und Ausführung
 function ownExerciseCard(ex, i) {
   return `<div class="card">
@@ -2137,9 +2208,10 @@ function ownExerciseCard(ex, i) {
     <div class="suggest" hidden></div>
     ${stepperRow('Sätze', 'sets', i, ex.sets)}
     ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
-    <label class="row"><span>Startgewicht<br><small class="hint">nur fürs erste Training</small></span>
+    ${bodyweightRow(ex, i)}
+    ${isBodyweight(ex) ? '' : `<label class="row"><span>Startgewicht<br><small class="hint">nur fürs erste Training</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="ex-start" data-i="${i}"
-        placeholder="kg" value="${ex.startWeight == null ? '' : fmtNum(ex.startWeight)}"></label>
+        placeholder="kg" value="${ex.startWeight == null ? '' : fmtNum(ex.startWeight)}"></label>`}
     <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
       `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
     </div>
@@ -2214,7 +2286,8 @@ function renderDay({ id }) {
       <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
       </div>
-      <label class="row">
+      ${bodyweightRow(ex, i)}
+      ${isBodyweight(ex) ? '' : `<label class="row">
         <span>Max. kg bei 10 Wdh.</span>
         <input class="inp kg ${ex.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal"
           autocomplete="off" data-field="ex-max" data-i="${i}" placeholder="kg"
@@ -2226,7 +2299,7 @@ function renderDay({ id }) {
           ${[2, 2.5].map(v => `<button class="toggle ${stepFor(ex) === v ? 'on' : ''}"
             data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
         </div>
-      </div>
+      </div>`}
       <div class="row">
         <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
         <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten">↓</button>
@@ -2599,13 +2672,25 @@ function renderData() {
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (das „Max. kg bei 10 Wdh.“ wird geleert). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    <p class="hint app-version" id="app-version"></p>
 `;
+}
+
+// App-Version = Name des Offline-Speichers (CACHE in sw.js), z. B. „Version 82“ – zum Prüfen, ob ein Update angekommen ist
+function showAppVersion() {
+  const el = document.getElementById('app-version');
+  if (!el || !window.caches) return;
+  caches.keys().then(keys => {
+    const v = keys.map(k => (k.match(/^trainingsapp-v(\d+)$/) || [])[1]).filter(Boolean).map(Number).sort((a, b) => b - a)[0];
+    if (v) el.textContent = `App-Version ${v}`;
+  }).catch(() => {});
 }
 
 /* ---------- Aktionen ---------- */
 
 // Übungen, die zum ersten Mal drankommen: kein „Max. bei 10 Wdh.“ und noch nie trainiert
-const firstTimeExercises = day => day.exercises.filter(e => e.name.trim() && e.max10 == null && !lastEntry(e.name));
+// (Eigengewichtsübungen ohne Gewichtsprogression brauchen keinen Wert)
+const firstTimeExercises = day => day.exercises.filter(e => e.name.trim() && e.max10 == null && !lastEntry(e.name) && !isBodyweight(e));
 
 // Vor dem Training, der Reihe nach: Woche abschließen? (askSkipRound) → erstes Training nach einem verlängerten
 // Zyklus: Vergleich versetzen? → neue Übungen: „Max. bei 10 Wdh.“ → zwei kurze Fragen → startDay mit dem Abzug.
@@ -2732,19 +2817,23 @@ function draftEntries(day) {
 // Deload -> halbiert & leichter; sonst Werte der Vergleichswoche + 1 Wdh., falls vorhanden
 // variantFor(i) liefert die Ausführungsvariante von Satz i
 function setupEntry(en, target, variantFor = () => '') {
+  // Eigengewichtsübung: ohne Gewicht rechnen – Steigerung nur über die Wdh.
+  const body = isBodyweight(planExercise(en.name) || { name: en.name });
+  target = body ? { ...target, bodyweight: true, max10: null } : (({ bodyweight, ...t }) => t)(target);
+  const strip = e => body ? withoutWeight(e) : e;
   en.plan = target;
   if (draft.deload) target = deloadTarget(target);
   else if (draft.intro) target = { ...target, intro: true };
   // ohne Gewichtsprogression (hold) keine Bezugswochen – es gelten die Werte vom letzten Mal
-  const cmp = draft.deload || target.hold ? null : comparisonEntry(en.name, draft.dayId, draft);
-  const prev = draft.deload || draft.intro || target.hold ? null : previousWeekEntry(en.name, draft.dayId, draft);
+  const cmp = draft.deload || target.hold ? null : strip(comparisonEntry(en.name, draft.dayId, draft));
+  const prev = draft.deload || draft.intro || target.hold ? null : strip(previousWeekEntry(en.name, draft.dayId, draft));
   // Satzzahl laut Wochenplan der Übung (Deload: halbiert)
   const n = target.sets;
   en.target = { ...target, sets: n };
   en.compare = cmp;
   en.prevWeek = prev;
   // 2. Training dieses Tages in der Woche: nie mehr als im 1. Training dieser Woche geschafft
-  en.weekFirst = draft.occurrence > 1 && !draft.deload ? weekFirstEntry(en.name, draft.dayId, draft) : null;
+  en.weekFirst = draft.occurrence > 1 && !draft.deload ? strip(weekFirstEntry(en.name, draft.dayId, draft)) : null;
   en.rule = null;
   en.base = buildSets(en.name, en.target);  // Vorschlag ohne Bezugswoche
   en.sets = [];
@@ -2758,13 +2847,18 @@ function setupEntry(en, target, variantFor = () => '') {
 // Vorgeschlagene Sätze für den Trainingsstart
 function buildSets(name, target) {
   // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
+  // (Eigengewichtsübung: kein Gewicht, nur Wdh.)
   const last = lastEntry(name);
-  const tw = target.deload ? target.weight : targetWeight(target);
+  const tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(target);
   const sets = [];
-  const lastSets = last ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
+  const lastSets = last && !target.bodyweight ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
   for (let i = 0; i < target.sets; i++) {
     const ls = lastSets[i] || lastSets[lastSets.length - 1];
     const lw = ls && ls.weight != null ? ls.weight : null;
+    if (target.own && target.bodyweight) {
+      sets.push({ weight: '', reps: String(target.reps), rir: '', auto: true });
+      continue;
+    }
     if (target.own) {
       // eigener Plan (noch nie in diesem Plan trainiert): in jedem Satz die Wdh. laut Plan, Startgewicht –
       // ohne Startgewicht das zuletzt verwendete Gewicht dieser Übung (z. B. aus einem früheren Plan)
@@ -2944,6 +3038,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
+      cycleShift: d.cycleShift, timerHome: d.timerHome, welcomeSeen: d.welcomeSeen,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -3138,6 +3233,15 @@ const actions = {
     saveDraft(); render();
   },
   'tr-save': () => saveTraining(),
+  // Trainings-Timer auch auf dem Startbildschirm anzeigen – jederzeit wieder ausschaltbar
+  'timer-home': () => {
+    const on = !!data.timerHome;
+    if (!confirm(on ? 'Timer nicht mehr auf dem Startbildschirm anzeigen?'
+      : 'Timer auch auf dem Startbildschirm anzeigen?\n\nSo siehst du die Trainingszeit auch, wenn du zwischendurch zur Startseite wechselst. Lässt sich jederzeit wieder ausschalten (Timer antippen).')) return;
+    if (on) delete data.timerHome; else data.timerHome = true;
+    saveData(); render();
+    toast(on ? 'Timer nur noch im Training' : 'Timer auch auf der Startseite 📌');
+  },
   'tr-cancel': () => {
     if (!confirm('Training wirklich verwerfen? Die Eingaben gehen verloren.')) return;
     draft = null; saveDraft(); go('start');
@@ -3151,7 +3255,7 @@ const actions = {
   },
   'open-day': el => go('day', { id: el.dataset.id }),
   'day-done': () => {
-    const missing = ownPlan() ? [] : findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null);
+    const missing = ownPlan() ? [] : findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null && !isBodyweight(e));
     if (missing.length && !confirm(
       `Bei ${missing.length === 1 ? '1 Übung' : missing.length + ' Übungen'} fehlt noch „Max. kg bei 10 Wdh.“:\n\n` +
       missing.map(e => '• ' + e.name.trim()).join('\n') +
@@ -3194,11 +3298,20 @@ const actions = {
     }
   },
 
+  // nicht gleich ins Suchfeld springen – sonst verdeckt die Tastatur die Schnellauswahl
   'rep-open': el => {
     draft.entries.forEach((en, i) => { en.replacing = i === +el.dataset.ei && !en.replacing; });
     render();
-    const input = $view.querySelector(`[data-field="rep-name"][data-ei="${el.dataset.ei}"]`);
-    if (input) input.focus();
+    const panel = $view.querySelector('.replace');
+    if (panel) panel.scrollIntoView({ block: 'nearest' });
+  },
+  // Schnellauswahl: Übung ins Feld übernehmen (bekanntes Max. dazu), bestätigt wird mit „Ersetzen“
+  'rep-quick': el => {
+    const panel = el.closest('.replace');
+    const input = panel.querySelector('[data-field="rep-name"]');
+    input.value = el.dataset.name;
+    fillReplaceMax(input);
+    panel.querySelectorAll('.quick-picks .vchip').forEach(b => b.classList.toggle('on', b === el));
   },
   'rep-cancel': el => { draft.entries[el.dataset.ei].replacing = false; render(); },
   'add-open': () => {
@@ -3392,6 +3505,12 @@ const actions = {
       if (ci.extra) setRound(newCycleId(ci.cycleStart), data.cycle.buildWeeks + 1, ci.cycle);  // Deload als eigener Abschnitt
       else if (wasDeload) setRound(ci.cycleStart, data.cycle.buildWeeks + 1, ci.cycle);
     }
+    saveData(); render();
+  },
+  // Eigengewichtsübung: Gewichtsprogression (mit Zusatzgewicht) an/aus
+  'ex-bwload': el => {
+    const ex = findDay(current.params.id).exercises[el.dataset.i];
+    if (el.dataset.v === '1') ex.bwLoad = true; else delete ex.bwLoad;
     saveData(); render();
   },
   'plan-variant': el => {
@@ -3764,7 +3883,16 @@ if ('serviceWorker' in navigator) {
       location.reload();
     });
   }
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => { /* z. B. ohne HTTPS */ });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    // Installierte Apps bleiben oft im Hintergrund offen und werden nur wieder nach vorn geholt (ohne Neuladen).
+    // Deshalb auch dann nach einer neuen Version schauen – höchstens alle 5 Minuten.
+    let checked = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - checked < 5 * 60000) return;
+      checked = Date.now();
+      reg.update().catch(() => {});
+    });
+  }).catch(() => { /* z. B. ohne HTTPS */ });
 }
 if (navigator.storage && navigator.storage.persist) {
   navigator.storage.persist().catch(() => {});

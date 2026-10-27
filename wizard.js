@@ -491,7 +491,7 @@ function renderWizMode() {
       <span class="cat-icon">${icon}</span><b>${title}</b><small>${text}</small></button>`;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🧭</span><h2>Wie möchtest du deinen Plan erstellen?</h2></div>
-      <p class="hint wiz-q-explain">Die App kann deinen Plan zusammenstellen und dich Woche für Woche steigern – oder du übernimmst einen Plan, den du schon hast.</p>
+      <p class="hint wiz-q-explain">Die App kann einen Plan für dich zusammenstellen – oder du übernimmst einfach einen Plan, den du schon hast.</p>
       ${opt('app', '📈', 'Plan mit Steigerung durch die App', 'Die App stellt deinen Plan zusammen und schlägt automatisch mehr Gewicht, Wiederholungen und Sätze vor – in Zyklen mit leichten Deload-Wochen.')}
       ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal.')}
     </div>${navRow('cancel', null)}`;
