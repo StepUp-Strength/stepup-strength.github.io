@@ -40,6 +40,10 @@ function activePlan(d = data) {
 }
 const hasActivePlan = () => !activePlan().none;
 
+// Eigener Plan (plan.own): nachgebauter Plan ohne Progressionslogik – keine Zyklen/Deload, keine Steigerung,
+// im Training immer die Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. und ggf. Startgewicht aus dem Plan)
+const ownPlan = () => !!activePlan().own;
+
 function newPlan(name, days = []) {
   return {
     id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, days, volume: defaultVolume(), rirPlan: {},
@@ -406,6 +410,7 @@ function recalcSets(ei) {
   const avgEl = $view.querySelector(`[data-avg="${ei}"]`);
   if (avgEl) avgEl.innerHTML = avgTankText(en);
   updateNextHints(ei);
+  if (t.own) return;  // eigener Plan: folgende Sätze nicht anpassen
   const tt = { step: 2.5, ...t };
   let first = null, firstLast = -1, firstCap = null, firstReduced = false;
   for (let j = 0; j < en.sets.length; j++) {
@@ -1084,7 +1089,7 @@ function lastCommentFor(name) {
 // vorgeschlagen wird – mit denselben Regeln wie proposeSet (refProposal). Liefert HTML je Satz.
 function nextPreview(en) {
   const out = en.sets.map(() => '');
-  if (!en.target || !en.plan || draft.deload || draft.week == null) return out;
+  if (!en.target || !en.plan || draft.deload || draft.own || draft.week == null) return out;
   const done = en.sets.map(s => isDone(s));
   if (!done.some(Boolean)) return out;
   const bw = data.cycle.buildWeeks;
@@ -1136,9 +1141,11 @@ function updateNextHints(ei) {
 }
 
 // Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
-function holdSets(name, v) {
+// onlyPlan: nur Trainings der Tage des aktiven Plans (eigener Plan: Werte aus anderen Plänen zählen nicht)
+function holdSets(name, v, onlyPlan = false) {
+  const own = onlyPlan && new Set(data.days.map(d => d.id));
   for (const s of sessionsNewestFirst()) {
-    if (s.deload) continue;
+    if (s.deload || (own && !own.has(s.dayId))) continue;
     const e = s.entries.find(en => nameKey(en.name) === nameKey(name));
     const sets = e ? ofVariant(e.sets, v) : [];
     if (sets.length) return sets;
@@ -1187,7 +1194,7 @@ function proposeSet(en, i, v) {
   let p = null, rule = null;
   if (t.hold) {
     // Gewichts-/Wdh.-Progression aus: Werte vom letzten Mal 1:1
-    const ref = holdSets(en.name, v);
+    const ref = holdSets(en.name, v, t.own);
     if (ref.length) {
       const src = refAt(ref, k);
       p = { weight: src.weight, reps: src.reps };
@@ -1211,7 +1218,7 @@ function proposeSet(en, i, v) {
     const b = en.base[Math.min(i, en.base.length - 1)];
     p = { weight: parseNum(b.weight), reps: parseNum(b.reps) };
   }
-  p = atLeastMinReps(p, t);
+  if (!t.own) p = atLeastMinReps(p, t);  // eigener Plan: Wdh. bleiben, wie eingetragen
   return {
     set: {
       weight: p.weight != null ? fmtNum(p.weight) : '',
@@ -1598,6 +1605,13 @@ function roundStatus(ci) {
 }
 
 function cycleCard(ci) {
+  if (ownPlan()) {
+    return `<div class="card cycle">
+      <h2>Eigener Plan</h2>
+      <p class="round-status">🔄 ${roundStatus(ci)}</p>
+      <p class="sub">Ohne Zyklen und ohne Steigerung durch die App – im Training stehen immer deine Werte vom letzten Mal.</p>
+    </div>`;
+  }
   const head = ci.deload
     ? `Zyklus ${ci.cycle} · Deload-Woche`
     : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ` von ${ci.buildWeeks}`}`;
@@ -1669,7 +1683,7 @@ function renderStart() {
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
     const done = day.exercises.some(e => e.name.trim()) && !open.has(day.id);
-    const info = `${day.exercises.length} Übungen` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
+    const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
       (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     const next = day === nextDay;
     h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''}" data-action="start-day" data-id="${day.id}">
@@ -1681,7 +1695,9 @@ function renderStart() {
 
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
-  let h = draft.deload
+  let h = draft.own
+    ? '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>'
+    : draft.deload
     ? `<p class="deload-note">Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
     : draft.intro
       ? '<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.</p>'
@@ -1689,7 +1705,9 @@ function renderTraining() {
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
     <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
-  h += `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.</p>`;
+  h += `<p class="sub">${fmtDate(draft.date, true)}<br>${draft.own
+    ? 'Trag nach jedem Satz ein, was du geschafft hast und wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt.'
+    : 'Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.'}</p>`;
   h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
@@ -1739,7 +1757,9 @@ function renderTraining() {
     }
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
-    if (en.target) {
+    if (en.target && en.target.own) {
+      h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
+    } else if (en.target) {
       const t = en.target;
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
         (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
@@ -1769,6 +1789,7 @@ function renderTraining() {
     } else {
       h += last
         ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
+        : en.target && en.target.own ? '<p class="last">Erstes Mal – Werte aus deinem Plan.</p>'
         : en.target && en.target.max10 == null ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
           : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
@@ -1778,7 +1799,7 @@ function renderTraining() {
     </div>`;
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
-    const tankHint = en.target ? targetRirText(en.target).replace('mind. ', '≥') : '–';
+    const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
     const next = nextPreview(en);
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
@@ -1809,7 +1830,7 @@ function renderTraining() {
 
 // Progression nur für dieses Training ein-/ausschalten (nicht im Deload; Volumen erst ab Woche 2)
 function progressionCard() {
-  if (draft.deload || !draft.progression) return '';
+  if (draft.deload || draft.own || !draft.progression) return '';
   const p = draft.progression;
   const keys = draft.week > 1 ? ['volume', 'load'] : ['load'];
   const notes = [];
@@ -1898,6 +1919,15 @@ function renderPlan() {
     h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
       <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}</span></button>`;
   });
+  if (active.own) {
+    return h + `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
+      <h2>Steigerung</h2>
+      <div class="card">
+        <p class="per-week-title">✋ Eigener Plan – ohne Steigerung durch die App</p>
+        <p class="hint">Keine Zyklen, keine Deload-Woche, keine Vorschläge für mehr Gewicht, Wiederholungen oder Sätze. Im Training stehen immer deine Werte vom letzten Mal – beim ersten Mal Sätze × Wdh. und Startgewicht aus deinem Plan.</p>
+        <button class="btn outline" data-action="plan-own-off">📈 Doch die Steigerung der App nutzen</button>
+      </div>`;
+  }
   const perWeek = active.perWeek || 1;
   // Nur bei Plänen, deren Tage 2× pro Woche laufen: kurzer Hinweis (festgelegt beim Erstellen des Plans)
   h += `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
@@ -2002,9 +2032,47 @@ function volumeSummary(day) {
   return h + '</table></div></div>';
 }
 
+// Übung im Trainingstag eines eigenen Plans: nur Sätze × Wdh., Startgewicht und Ausführung
+function ownExerciseCard(ex, i) {
+  return `<div class="card">
+    <div class="ex-name-row">
+      <input class="inp" type="text" data-field="ex-name" data-i="${i}"
+        autocomplete="off" autocorrect="off" spellcheck="false"
+        value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
+      <button class="info-btn" data-action="lib-open" data-i="${i}" aria-label="Ausführung ansehen"
+        ${libEntry(ex.name) ? '' : 'hidden'}>i</button>
+    </div>
+    <div class="suggest" hidden></div>
+    ${stepperRow('Sätze', 'sets', i, ex.sets)}
+    ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
+    <label class="row"><span>Startgewicht<br><small class="hint">nur fürs erste Training</small></span>
+      <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="ex-start" data-i="${i}"
+        placeholder="kg" value="${ex.startWeight == null ? '' : fmtNum(ex.startWeight)}"></label>
+    <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+      `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
+    </div>
+    <div class="row">
+      <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
+      <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten">↓</button>
+      <button class="icon-btn danger" data-action="ex-del" data-i="${i}">Entfernen</button>
+    </div>
+  </div>`;
+}
+
 function renderDay({ id }) {
   const day = findDay(id);
   if (!day) return '<p class="hint">Trainingstag nicht gefunden.</p>';
+  if (ownPlan()) {
+    return `<label class="lbl">Name des Trainingstags
+        <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}"></label>
+      <p class="hint">Eigener Plan: Sätze und Wiederholungen legst du pro Übung selbst fest – die App steigert nichts.</p>
+      <h2>Übungen</h2>${day.exercises.map(ownExerciseCard).join('')}
+      <button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
+      <button class="btn primary" data-action="day-done">✔ Fertig</button>
+      <p class="hint">Änderungen werden automatisch gespeichert.</p>
+      <div class="spacer"></div>
+      <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
+  }
   let h = `<label class="lbl">Name des Trainingstags
       <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}">
     </label>
@@ -2439,6 +2507,7 @@ function beginCheck(id, maxAsked = null) {
   }
   if (!maxAsked) {
     if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+    if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
     if (!askSkipRound(day)) return;
     const fresh = firstTimeExercises(day);
     if (fresh.length) { go('firstmax', { id, exIds: fresh.map(e => e.id) }); return; }
@@ -2480,20 +2549,23 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   if (!exercises.length) return;
 
   const ci = trainingRound(id);
+  const own = ownPlan();
   skipRoundFor = null;
   draft = {
     dayId: day.id,
     dayName: day.name,
     date: new Date().toISOString(),
-    deload: ci.deload,
-    intro: ci.intro,
+    deload: ci.deload && !own,
+    intro: ci.intro && !own,
+    own,
     cycleStart: ci.cycleStart,
     week: ci.week,
     cycleNo: ci.cycle,
     readiness,
-    penalty: ci.deload ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
+    penalty: ci.deload || own ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
     // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
-    progression: ci.deload ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
+    progression: own ? { volume: false, load: false }
+      : ci.deload ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
     occurrence: nextOccurrence(day.id, ci),  // 2 = dieser Tag wurde diese Woche schon einmal trainiert
     entries: [],
   };
@@ -2525,6 +2597,7 @@ function draftEntries(day) {
     const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw);
     const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) };
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
+    if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
     setupEntry(en, target, () => ex.variant);
     return en;
   });
@@ -2567,6 +2640,13 @@ function buildSets(name, target) {
   for (let i = 0; i < target.sets; i++) {
     const ls = lastSets[i] || lastSets[lastSets.length - 1];
     const lw = ls && ls.weight != null ? ls.weight : null;
+    if (target.own) {
+      // eigener Plan (noch nie in diesem Plan trainiert): in jedem Satz die Wdh. laut Plan, Startgewicht –
+      // ohne Startgewicht das zuletzt verwendete Gewicht dieser Übung (z. B. aus einem früheren Plan)
+      const ow = target.startWeight != null ? target.startWeight : lw;
+      sets.push({ weight: ow != null ? fmtNum(ow) : '', reps: String(target.reps), rir: '', auto: true });
+      continue;
+    }
     const w = tw != null ? tw
       : lw != null && target.deload ? roundTo(lw * DELOAD_WEIGHT, target.step || 2.5) : lw;
     if (target.deload) {
@@ -2939,7 +3019,7 @@ const actions = {
   },
   'open-day': el => go('day', { id: el.dataset.id }),
   'day-done': () => {
-    const missing = findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null);
+    const missing = ownPlan() ? [] : findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null);
     if (missing.length && !confirm(
       `Bei ${missing.length === 1 ? '1 Übung' : missing.length + ' Übungen'} fehlt noch „Max. kg bei 10 Wdh.“:\n\n` +
       missing.map(e => '• ' + e.name.trim()).join('\n') +
@@ -2954,7 +3034,7 @@ const actions = {
     saveData(); go('plan');
   },
   'add-ex': () => {
-    findDay(current.params.id).exercises.push(withDefaults({ id: uid(), name: '', sets: 2, setsEnd: 3 }));
+    findDay(current.params.id).exercises.push(withDefaults(ownPlan() ? { id: uid(), name: '', sets: 3 } : { id: uid(), name: '', sets: 2, setsEnd: 3 }));
     saveData(); render();
     const inputs = $view.querySelectorAll('[data-field="ex-name"]');
     inputs[inputs.length - 1].focus();
@@ -2975,6 +3055,8 @@ const actions = {
       showChartFor(el.dataset.name);
     } else if (input.dataset.field === 'wiz-add') {
       wizAddPick(el.dataset.name);
+    } else if (input.dataset.field === 'own-name') {
+      wizOwnPick(input, el.dataset.name);
     } else {
       fillReplaceMax(input);
     }
@@ -3067,6 +3149,16 @@ const actions = {
     data.activePlanId = null;
     saveData(); render();
     toast(`„${p.name}“ beendet`);
+  },
+  // eigener Plan -> ab jetzt mit Zyklen, Deload und Steigerung der App (Tage bleiben „Frei“: Sätze × Wdh. pro Übung)
+  'plan-own-off': () => {
+    const p = activePlan();
+    if (!confirm(`„${p.name}“ ab jetzt mit der Steigerung der App trainieren?\n\nDann gibt es Zyklen mit Intro-, Aufbau- und Deload-Woche, und die App schlägt Woche für Woche mehr Gewicht bzw. Wiederholungen vor.`)) return;
+    delete p.own;
+    p.progression = { volume: true, load: true };
+    setRound(newCycleId(), 1, (data.cycle.no || 0) + 1);
+    saveData(); render();
+    toast('Steigerung eingeschaltet – es beginnt die Intro-Woche');
   },
   'plan-rename': el => {
     const p = data.plans.find(x => x.id === el.dataset.id);
@@ -3171,7 +3263,9 @@ const actions = {
     const ex = findDay(current.params.id).exercises[el.dataset.i];
     const prop = el.dataset.prop;
     const [min, max] = LIMITS[prop];
-    ex[prop] = Math.min(max, Math.max(min, ex[prop] + Number(el.dataset.delta)));
+    const own = ownPlan();  // eigener Plan: auch unter 5 Wdh. möglich, Sätze in jeder Woche gleich
+    ex[prop] = Math.min(max, Math.max(own ? 1 : min, ex[prop] + Number(el.dataset.delta)));
+    if (own && prop === 'sets') ex.setsEnd = ex.sets;
     // Letzte Woche nie weniger Sätze als die Intro-Woche
     if (prop === 'sets' && ex.setsEnd < ex.sets) ex.setsEnd = ex.sets;
     if (prop === 'setsEnd' && ex.setsEnd < ex.sets) ex.setsEnd = ex.sets;
@@ -3345,6 +3439,11 @@ const fields = {
   'first-max': el => {
     const ex = findDay(current.params.id).exercises.find(e => e.id === el.dataset.id);
     setPlanMax10(ex.name, parseNum(el.value));
+    saveData();
+  },
+  // eigener Plan: Gewicht fürs erste Training
+  'ex-start': el => {
+    findDay(current.params.id).exercises[el.dataset.i].startWeight = parseNum(el.value);
     saveData();
   },
   'ex-max': el => {

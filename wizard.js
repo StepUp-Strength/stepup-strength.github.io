@@ -30,7 +30,40 @@ const G_SHOULDER_ARMS = ['schulter_vorne', 'schulter_seite', 'schulter_hinten', 
 // nur die erste Hälfte nehmen und jeden Tag 2× pro Woche trainieren (gleich viele Trainings, weniger Tage).
 // note: Hinweis unter der Vorlage, z. B. wenn eine Hälfte eines 2er-Splits öfter drankommt.
 // 2er-Splits mit 3, 5 oder 6 Tagen: die beiden Hälften wechseln sich ab (A/C schwer, B leicht).
-const UL = n => ['A', 'A', 'B', 'B', 'C', 'C'].slice(0, n).map((v, i) =>
+// Diskopumper: nur Oberkörper, Brust und Arme betont
+const DISKO_WEEKLY = {
+  brust: [12, 12, 14, 16], bizeps: [6, 8, 8, 10], trizeps: [6, 8, 8, 10], schulter_seite: [6, 8, 8, 10],
+  lat: [10, 10, 12, 12], schulter_vorne: [4, 4, 6, 6], schulter_hinten: [4, 6, 6, 8], trapez: [4, 4, 6, 6], bauch: [4, 4, 6, 6],
+};
+const DISKO_DAYS = {
+  2: [['Brust/Schultern/Trizeps', 'heavy', ['brust', 'schulter_vorne', 'schulter_seite', 'trizeps']],
+    ['Rücken/Bizeps/Bauch', 'heavy', ['lat', 'trapez', 'schulter_hinten', 'bizeps', 'bauch']]],
+  3: [['Brust/Trizeps', 'heavy', ['brust', 'schulter_vorne', 'trizeps']],
+    ['Rücken/Bizeps', 'heavy', ['lat', 'trapez', 'schulter_hinten', 'bizeps']],
+    ['Schultern/Arme/Bauch', 'heavy', ['schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps', 'bauch']]],
+  4: [['Brust', 'heavy', ['brust', 'schulter_vorne', 'bauch']], ['Rücken', 'heavy', ['lat', 'trapez', 'schulter_hinten']],
+    ['Schultern', 'heavy', ['schulter_vorne', 'schulter_seite', 'schulter_hinten', 'bauch']], ['Arme', 'heavy', ['bizeps', 'trizeps', 'unterarme']]],
+};
+// Booty-Plan: Po und Beine betont, im Oberkörper Rücken und hintere Schulter
+const BOOTY_WEEKLY = {
+  gesaess: [10, 12, 14, 16], beinbeuger: [6, 8, 8, 10], quadrizeps: [6, 8, 8, 10], abduktoren: [4, 6, 6, 8], adduktoren: [2, 2, 4, 4],
+  lat: [8, 8, 10, 10], schulter_hinten: [6, 6, 8, 8], schulter_seite: [4, 4, 6, 6], brust: [2, 2, 4, 4],
+  bizeps: [2, 2, 4, 4], trizeps: [2, 2, 4, 4], bauch: [4, 4, 6, 6],
+};
+const G_BOOTY_UPPER = ['lat', 'schulter_hinten', 'schulter_seite', 'brust', 'bizeps', 'trizeps'];
+const BOOTY_DAYS = {
+  2: [['Po & Beine', 'heavy', ['gesaess', 'beinbeuger', 'quadrizeps', 'abduktoren', 'adduktoren']],
+    ['Oberkörper & Po', 'heavy', ['gesaess', ...G_BOOTY_UPPER, 'bauch']]],
+  3: [['Po & Beinbeuger', 'heavy', ['gesaess', 'beinbeuger', 'abduktoren', 'bauch']],
+    ['Oberkörper (Rücken & hintere Schulter)', 'heavy', G_BOOTY_UPPER],
+    ['Po & Beine', 'heavy', ['gesaess', 'quadrizeps', 'adduktoren', 'abduktoren']]],
+  4: [['Po & Beinbeuger', 'heavy', ['gesaess', 'beinbeuger', 'abduktoren']],
+    ['Oberkörper (Rücken & hintere Schulter)', 'heavy', G_BOOTY_UPPER],
+    ['Po & Beine', 'heavy', ['gesaess', 'quadrizeps', 'adduktoren', 'bauch']],
+    ['Po & Rücken', 'light', ['gesaess', 'abduktoren', 'lat', 'schulter_hinten']]],
+};
+
+const UL = n =>['A', 'A', 'B', 'B', 'C', 'C'].slice(0, n).map((v, i) =>
   [`${i % 2 ? 'Unterkörper' : 'Oberkörper'} ${v}`, v === 'B' ? 'light' : 'heavy', i % 2 ? G_LOWER : G_UPPER]);
 const FBPP = n => ['A', 'A', 'B', 'B', 'C', 'C'].slice(0, n).map((v, i) =>
   [`Ganzkörper ${i % 2 ? 'Pull' : 'Push'} ${v}`, v === 'B' ? 'light' : 'heavy', i % 2 ? G_FB_PULL : G_FB_PUSH]);
@@ -65,6 +98,12 @@ const SPLITS = [
     ['Brust/Rücken B', 'light', G_CHEST_BACK], ['Schultern/Arme B', 'light', G_SHOULDER_ARMS], ['Beine B', 'light', G_LOWER]] },
   { id: 'ul6', tag: '2er-Split', label: 'Ober-/Unterkörper ×3', days: UL(6) },
   { id: 'fbpp6', tag: '2er-Split', label: 'Ganzkörper Push/Pull ×3', days: FBPP(6) },
+  // Klassiker mit eigenen Wochenzielen (weekly ersetzt WEEKLY_TARGET für diese Muskelgruppen)
+  // prio: vorab gewählter Schwerpunkt (wird beim Kürzen auf 25 Sätze pro Training geschont, im Assistenten änderbar)
+  ...[2, 3, 4].map(n => ({ id: 'disko' + n, tag: 'Klassiker', label: 'Diskopumper', weekly: DISKO_WEEKLY, days: DISKO_DAYS[n], prio: ['brust'],
+    note: 'Nur Oberkörper – Schwerpunkt Brust, Arme und Schultern, keine Beine' })),
+  ...[2, 3, 4].map(n => ({ id: 'booty' + n, tag: 'Klassiker', label: 'Booty-Plan', weekly: BOOTY_WEEKLY, days: BOOTY_DAYS[n], prio: ['gesaess'],
+    note: 'Großer Fokus auf Po und Beine, im Oberkörper vor allem Rücken und hintere Schulter' })),
 ];
 
 // Wochenziele (Sätze pro Woche: Intro, W2, W3, W4). Die Vorlagen teilen sie auf die Trainings der Woche auf.
@@ -82,7 +121,7 @@ const SESSION_CAP = 25;  // höchstens so viele Sätze pro Training – in jeder
 // (+ = weiter weg vom Muskelversagen) und – für Neulinge – nur einfache Aufteilungen
 const LEVELS = {
   neuling: { label: 'Neuling', icon: '🌱', desc: 'Keine oder kaum Trainingserfahrung (unter 6 Monaten)',
-    days: [2, 3], vol: 0.7, rir: 1, tags: ['Ganzkörper', '2er-Split'] },
+    days: [2, 3], vol: 0.7, rir: 1, tags: ['Ganzkörper', '2er-Split', 'Klassiker'] },
   einsteiger: { label: 'Einsteiger', icon: '🌿', desc: '6–12 Monate Trainingserfahrung', days: [3, 4], vol: 0.9, rir: 0.5 },
   fortgeschritten: { label: 'Fortgeschritten', icon: '💪', desc: '1–5 Jahre Trainingserfahrung', days: [4, 5], vol: 1, rir: 0 },
   hase: { label: 'Alter Hase', icon: '🦉', desc: 'Mehr als 5 Jahre Trainingserfahrung', days: [4, 6], vol: 1, rir: -0.5 },
@@ -192,12 +231,16 @@ const SPLIT_CATS = [
   { tag: '2er-Split', icon: '✌️', desc: 'Zwei verschiedene Trainingstage im Wechsel' },
   { tag: '3er-Split', icon: '🔺', desc: 'Drei verschiedene Trainingstage im Wechsel' },
   { tag: '3er + 2er-Split', icon: '🔀', desc: 'Kombination für 5 Trainings pro Woche' },
+  { tag: 'Klassiker', icon: '🏆', desc: 'Bekannte Pläne mit eigenem Schwerpunkt' },
   { tag: 'custom', icon: '🛠️', label: 'Eigene Aufteilung', desc: 'Trainingstage selbst zusammenstellen' },
 ];
 
 function wizStart() {
   wiz = {
-    step: 'level',
+    step: 'mode',
+    mode: null,      // 'app' = Plan mit Steigerung der App, 'own' = eigenen Plan übernehmen (ohne Progression)
+    own: [],         // eigener Plan: [{ name, exercises: [{ name, sets, reps, kg }] }] (Werte als eingetippter Text)
+    oi: 0,           // eigener Plan: gerade bearbeiteter Tag
     level: null,     // Erfahrungsstufe (LEVELS)
     sessions: null,  // gewünschte Trainings pro Woche (wählt die passenden Vorlagen aus)
     name: `Plan ${data.plans.length + 1}`,
@@ -222,10 +265,11 @@ function wizStart() {
 function templateVolume(groups) {
   const vol = {};
   const share = wizLevel().vol;  // Startvolumen je nach Erfahrung
+  const tpl = SPLITS.find(s => s.id === wiz.split);  // Klassiker bringen eigene Wochenziele mit
   for (const g of groups) {
     const freq = Math.max(1, daysWith(g));
     const adj = focusAdj(g);
-    vol[g] = (WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w * share + adj) / freq)));
+    vol[g] = ((tpl && tpl.weekly && tpl.weekly[g]) || WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w * share + adj) / freq)));
   }
   capSessions(vol);
   return vol;
@@ -328,21 +372,24 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
+const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
   volume: 3, rir: 4, auto: 5, manual: 5, preview: 5 };
+const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
-  const labels = ['Tage', 'Start', 'Fokus', 'Volumen', 'RIR', 'Übungen'];
-  const cur = STEP_PILL[wiz.step];
+  const own = wiz.mode === 'own';
+  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Start', 'Fokus', 'Volumen', 'RIR', 'Übungen'];
+  const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
   return `<div class="pills wiz-steps">${labels.map((l, i) =>
     `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
 }
 
 // Reihenfolge der Schritte bis zur Übungsauswahl (hängt von Aufteilung und Vorlage ab)
 function wizFlow() {
+  if (wiz.mode === 'own') return ['mode', 'sessions', 'ownday', 'ownname'];
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
-  const steps = ['level', 'sessions', 'split'];
+  const steps = ['mode', 'level', 'sessions', 'split'];
   if (custom) steps.push('days', 'freq');
   else {
     if (tpl && tpl.pairs) steps.push('freq');
@@ -431,11 +478,74 @@ function renderWizLevel() {
       <p class="hint wiz-q-explain">Danach richtet die App deinen Plan aus: wie viele Trainingstage sie empfiehlt, mit wie vielen Sätzen
         du startest und wie nah du ans Muskelversagen gehst. Ehrlich einschätzen lohnt sich – steigern kannst du jederzeit.</p>
       ${opts}
+    </div>${navRow(wizPrev(), null)}`;
+}
+
+// Erster Schritt: Plan mit Steigerung der App oder eigenen Plan übernehmen
+function renderWizMode() {
+  const opt = (m, icon, title, text) => `<button class="split-opt cat ${wiz.mode === m ? 'on' : ''}" data-action="wiz-mode" data-m="${m}">
+      <span class="cat-icon">${icon}</span><b>${title}</b><small>${text}</small></button>`;
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🧭</span><h2>Wie möchtest du deinen Plan erstellen?</h2></div>
+      <p class="hint wiz-q-explain">Die App kann deinen Plan zusammenstellen und dich Woche für Woche steigern – oder du übernimmst einen Plan, den du schon hast.</p>
+      ${opt('app', '📈', 'Plan mit Steigerung durch die App', 'Die App stellt deinen Plan zusammen und schlägt automatisch mehr Gewicht, Wiederholungen und Sätze vor – in Zyklen mit leichten Deload-Wochen.')}
+      ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal.')}
     </div>${navRow('cancel', null)}`;
+}
+
+// Eigener Plan: Übungen eines Tages mit Sätzen × Wdh. und optionalem Startgewicht
+function renderWizOwnDay() {
+  const d = wiz.own[wiz.oi];
+  const num = (field, e, v, mode, ph = '') => `<input class="inp own-num" type="text" inputmode="${mode}" autocomplete="off"
+    data-field="${field}" data-e="${e}" value="${esc(v)}" placeholder="${ph}">`;
+  const rows = d.exercises.map((x, e) => `<div class="own-ex">
+      <div class="ex-name-row">
+        <input class="inp" type="text" data-field="own-name" data-e="${e}" autocomplete="off" autocorrect="off" spellcheck="false"
+          value="${esc(x.name)}" placeholder="Übung eintippen, z. B. Bank…">${libInfoBtn(x.name)}
+      </div>
+      <div class="suggest" hidden></div>
+      <div class="own-nums">
+        <label>Sätze${num('own-sets', e, x.sets, 'numeric')}</label><span class="own-x">×</span>
+        <label>Wdh.${num('own-reps', e, x.reps, 'numeric')}</label>
+        <label>kg${num('own-kg', e, x.kg, 'decimal', '–')}</label>
+        <button class="icon-btn danger" data-action="own-del-ex" data-e="${e}" aria-label="Übung entfernen">✕</button>
+      </div>
+    </div>`).join('');
+  return `<div class="card wiz-q">
+      <p class="sub">Trainingstag ${wiz.oi + 1} von ${wiz.own.length}</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📝</span><h2>Deine Übungen</h2></div>
+      <p class="hint wiz-q-explain">Trag die Übungen so ein, wie du sie trainierst: Sätze × Wiederholungen und – wenn du magst – das Gewicht fürs erste Training.</p>
+      <label class="lbl">Name des Trainingstags
+        <input class="inp" type="text" data-field="own-dayname" value="${esc(d.name)}"></label>
+      ${rows}
+      <button class="btn outline" data-action="own-add-ex">+ Übung hinzufügen</button>
+    </div>
+    <div class="row"><button class="btn" data-action="own-prev">Zurück</button>
+      <button class="btn primary" data-action="own-next">Weiter</button></div>`;
+}
+
+// Eigener Plan: Name und speichern
+function renderWizOwnName() {
+  const count = d => d.exercises.filter(e => e.name.trim()).length;
+  const list = wiz.own.map(d => `<li><b>${esc(d.name || 'Trainingstag')}</b> · ${count(d)} Übung${count(d) === 1 ? '' : 'en'}</li>`).join('');
+  return wizCard('✏️', 'Wie soll dein Plan heißen?',
+    'Dein Plan läuft ohne Zyklen, ohne Deload-Woche und ohne Steigerungsvorschläge. Im Training stehen immer deine Werte vom letzten Mal – Gewicht und Wiederholungen änderst du selbst. Übungen, Sätze und Wdh. kannst du später jederzeit im Plan-Reiter anpassen.',
+    `<label class="lbl">Name des Plans
+        <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
+      <ul class="own-sum">${list}</ul>
+      <button class="btn primary" data-action="wiz-commit-own">Plan speichern</button>`, false);
 }
 
 // Schritt „Trainings pro Woche“: bestimmt, welche Vorlagen vorgeschlagen werden
 function renderWizSessions() {
+  if (wiz.mode === 'own') {
+    return `<div class="card wiz-q">
+        <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📆</span><h2>Wie viele Trainingstage hat dein Plan?</h2></div>
+        <p class="hint wiz-q-explain">Gemeint sind verschiedene Trainingstage – z. B. Push, Pull und Beine = 3.</p>
+        <div class="sessions-grid">${[1, 2, 3, 4, 5, 6].map(n => `<button class="sessions-opt ${wiz.own.length === n ? 'on' : ''}"
+          data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small></button>`).join('')}</div>
+      </div>${navRow(wizPrev(), null)}`;
+  }
   const [lo, hi] = wizLevel().days;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📆</span><h2>Wie viele Tage pro Woche möchtest du trainieren?</h2></div>
@@ -452,7 +562,7 @@ function renderWizSplit() {
   const list = splitsFor(n);
   const catOf = s => SPLIT_CATS.find(c => c.tag === s.tag) || {};
   const simpleOnly = wizLevel().tags
-    ? `<p class="hint">Für den Anfang schlägt die App nur Ganzkörper- und 2er-Splits vor – damit lernst du die Übungen am schnellsten.${list.length ? '' : ` Für ${n} Trainings pro Woche gibt es dafür keine Vorlage – wähle eine andere Zahl oder stelle deine Tage selbst zusammen.`}</p>`
+    ? `<p class="hint">Für den Anfang schlägt die App nur Ganzkörper-Pläne, 2er-Splits und die Klassiker vor – damit lernst du die Übungen am schnellsten.${list.length ? '' : ` Für ${n} Trainings pro Woche gibt es dafür keine Vorlage – wähle eine andere Zahl oder stelle deine Tage selbst zusammen.`}</p>`
     : '';
   return wizCard('🗂️', `Pläne für ${n} Training${n === 1 ? '' : 's'} pro Woche`,
     'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.',
@@ -484,7 +594,7 @@ function renderWizFreq() {
     opt(1, `Mehr Abwechslung – ${all.length} verschiedene Tage`,
       `${all.join(' · ')}<br>Jeder Tag 1× pro Woche. Die zweite Hälfte ist eine eigene Variante (leichter, eigene Übungen möglich) – ideal, wenn du gern etwas Abwechslung zwischen den Einheiten hast.`) +
     opt(2, `Unkompliziert – ${half.length} Tag${half.length === 1 ? '' : 'e'}, je 2× pro Woche`,
-      `${half.join(' · ')}<br>Dieselben Trainings wiederholen sich der Reihe nach – du trainierst deinen Plan strukturiert durch und musst dir weniger merken.`));
+      `${half.join(' · ')}<br>Dieselben Trainings wiederholen sich der Reihe nach – du trainierst deinen Plan strukturiert durch und musst dir weniger merken. Einzelne Übungen kannst du trotzdem jederzeit austauschen und alles nach Belieben anpassen.`));
 }
 
 // Schritt „Trainingstage“: Vorlage prüfen bzw. eigene Tage zusammenstellen
@@ -571,7 +681,7 @@ function renderWizFocus(kind) {
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
-  const simple = { level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
+  const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
     basics: renderWizBasics, start: renderWizStart, prog: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
@@ -702,16 +812,32 @@ const wizResetPlan = () => Object.assign(wiz, { volume: {}, volKey: {}, rir: {},
 function wizAfterSplit() {
   wiz.perWeek = wiz.volDiv = 1;
   wizResetPlan();
+  const tpl = SPLITS.find(s => s.id === wiz.split);
+  if (tpl && tpl.prio) wiz.prio = [...tpl.prio];  // Klassiker: Schwerpunkt vorab gewählt
   const f = wizFlow();
   wiz.step = f[f.indexOf('split') + 1];
   go('wizard');
 }
 
+// eigener Plan: leere Übungszeile (Standard 3 × 10)
+const ownBlank = () => ({ name: '', sets: '3', reps: '10', kg: '' });
+
+// eigener Plan: Übung aus den Vorschlägen gewählt (neu zeichnen, damit der i-Knopf erscheint)
+function wizOwnPick(input, name) {
+  wiz.own[wiz.oi].exercises[input.dataset.e].name = name;
+  render();
+}
+
 // „Zurück“ oben (und die Zurück-Taste des Handys): einen Schritt zurück wie der Zurück-Knopf unten,
 // erst bei der ersten Frage raus aus dem Assistenten
 function wizBack() {
-  if (!wiz || wiz.step === 'level') return ['plan', {}];
-  if (wiz.step === 'manual') {
+  if (!wiz || wiz.step === 'mode') return ['plan', {}];
+  if (wiz.step === 'ownday' && wiz.oi > 0) {
+    wiz.oi--;
+  } else if (wiz.step === 'ownname') {
+    wiz.step = 'ownday';
+    wiz.oi = wiz.own.length - 1;
+  } else if (wiz.step === 'manual') {
     if (wiz.gi > 0) wiz.gi--;
     else { wiz.step = wiz.fromPreview ? 'preview' : 'auto'; wiz.fromPreview = false; }
   } else if (wiz.step === 'preview') {
@@ -756,8 +882,22 @@ Object.assign(actions, {
     wiz.step = 'sessions';
     go('wizard');
   },
-  // Trainings pro Woche wählen -> passende Vorlagen
+  // App-Plan oder eigenen Plan übernehmen
+  'wiz-mode': el => {
+    wiz.mode = el.dataset.m;
+    wiz.step = wiz.mode === 'own' ? 'sessions' : 'level';
+    go('wizard');
+  },
+  // Trainings pro Woche wählen -> passende Vorlagen (eigener Plan: so viele Tage zum Ausfüllen)
   'wiz-sessions': el => {
+    if (wiz.mode === 'own') {
+      const n = Number(el.dataset.n);
+      while (wiz.own.length < n) wiz.own.push({ name: `Tag ${String.fromCharCode(65 + wiz.own.length)}`, exercises: [ownBlank()] });
+      wiz.own.length = n;
+      Object.assign(wiz, { oi: 0, step: 'ownday' });
+      go('wizard');
+      return;
+    }
     wiz.sessions = Number(el.dataset.n);
     wiz.cat = null; wiz.split = null; wiz.days = [];
     wizResetPlan();
@@ -775,6 +915,44 @@ Object.assign(actions, {
   'wiz-custom': () => {
     wiz.cat = 'custom'; wiz.split = null; wiz.days = [];
     wizAfterSplit();
+  },
+  // eigener Plan: Übungen eines Tages
+  'own-add-ex': () => {
+    wiz.own[wiz.oi].exercises.push(ownBlank());
+    render();
+    const inputs = $view.querySelectorAll('[data-field="own-name"]');
+    inputs[inputs.length - 1].focus();
+  },
+  'own-del-ex': el => { wiz.own[wiz.oi].exercises.splice(Number(el.dataset.e), 1); render(); },
+  'own-prev': () => actions.back(),
+  'own-next': () => {
+    const d = wiz.own[wiz.oi];
+    if (!d.exercises.some(e => e.name.trim())) { alert('Bitte mindestens eine Übung für diesen Tag eintragen.'); return; }
+    if (wiz.oi < wiz.own.length - 1) wiz.oi++; else wiz.step = 'ownname';
+    go('wizard');
+  },
+  // eigenen Plan speichern: Tage „Frei“ (Sätze × Wdh. pro Übung), ohne Progression, Zyklen und Deload
+  'wiz-commit-own': () => {
+    if (draft && !confirm(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den neuen Plan aktiv setzen?`)) return;
+    const int = (s, def, max) => Math.min(max, Math.max(1, Math.round(parseNum(s) || def)));
+    const days = wiz.own.map(d => ({
+      id: uid(),
+      name: d.name.trim() || 'Trainingstag',
+      intensity: '',
+      exercises: d.exercises.filter(e => e.name.trim()).map(e => {
+        const sets = int(e.sets, 3, 20);
+        return withDefaults({ id: uid(), name: e.name.trim(), sets, setsEnd: sets, reps: int(e.reps, 10, 50), startWeight: parseNum(e.kg) });
+      }),
+    }));
+    const plan = newPlan(wiz.name.trim() || 'Mein Plan', days);
+    Object.assign(plan, { own: true, progression: { volume: false, load: false } });
+    data.plans.push(plan);
+    data.activePlanId = plan.id;
+    setRound(newCycleId(), 1, 1);
+    saveData();
+    wiz = null;
+    toast(`„${plan.name}“ erstellt und aktiv ✔`);
+    go('plan');
   },
   'wiz-lib-add': el => { wizAddDay(dayLibrary()[Number(el.dataset.i)]); render(); },
   'wiz-lib-del': el => {
@@ -896,6 +1074,12 @@ Object.assign(actions, {
 Object.assign(fields, {
   'wiz-name': el => { wiz.name = el.value; },
   'wiz-dayname': el => { wiz.days[el.dataset.d].name = el.value; },
+  // eigener Plan (Werte als Text, ausgewertet beim Speichern)
+  'own-dayname': el => { wiz.own[wiz.oi].name = el.value; },
+  'own-name': el => { wiz.own[wiz.oi].exercises[el.dataset.e].name = el.value; showSuggestions(el); },
+  'own-sets': el => { wiz.own[wiz.oi].exercises[el.dataset.e].sets = el.value; },
+  'own-reps': el => { wiz.own[wiz.oi].exercises[el.dataset.e].reps = el.value; },
+  'own-kg': el => { wiz.own[wiz.oi].exercises[el.dataset.e].kg = el.value; },
   'wiz-newday-name': el => { wiz.newDay.name = el.value; },
   // Sätze pro Training (für alle Tage gleich) -> Wochenzahl anpassen
   'wiz-vol': el => {

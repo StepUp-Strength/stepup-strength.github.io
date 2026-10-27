@@ -497,6 +497,16 @@ p.wiz-q-explain { margin: 0 0 16px; font-size: 16.5px; line-height: 1.5; }
 .coach-note > span, .first-max-note > span { font-size: 26px; line-height: 1.2; }
 .coach-note p, .first-max-note p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text); }
 
+/* Eigener Plan im Assistenten: Übung mit Sätzen × Wdh. und optionalem Startgewicht */
+.own-ex { padding: 12px 0; border-top: 1px solid var(--line); }
+.own-ex .ex-name-row { margin-bottom: 8px; }
+.own-nums { display: flex; align-items: flex-end; gap: 8px; }
+.own-nums label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.own-num { width: 64px; min-height: 48px; padding: 0 8px; text-align: center; font-size: 18px; font-weight: 700; }
+.own-x { padding-bottom: 12px; font-size: 18px; font-weight: 700; color: var(--muted); }
+.own-nums .icon-btn { margin-left: auto; }
+.own-sum { margin: 4px 0 16px; padding-left: 20px; font-size: 16px; line-height: 1.6; }
+
 /* Neue Übungen vor dem ersten Training: Name + Max. bei 10 Wdh. */
 .fm-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .fm-name { display: flex; flex: 1; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; line-height: 1.3; }
