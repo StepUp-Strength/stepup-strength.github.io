@@ -92,6 +92,7 @@ function upgradeData(d) {
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
+  if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
@@ -1004,8 +1005,34 @@ function findWeekEntry(name, dayId, match, occ = 1) {
   return null;
 }
 
-// Vergleichswoche: dieselbe Woche (und derselbe Durchgang) im vorherigen Zyklus
-const comparisonEntry = (name, dayId, ci) =>
+// Verlängerung des Zyklus vor diesem (Deload „selbst bestimmen“): { from: dessen Kennung, by: Zahl der Wochen nach
+// den Aufbauwochen } – null, wenn er nicht verlängert wurde
+function prevExtension(cycleStart) {
+  const before = [...new Set(data.sessions.map(s => s.cycleStart).filter(cs => cs && cs < cycleStart))].sort().pop();
+  if (!before) return null;
+  const by = Math.max(0, ...data.sessions.filter(s => s.cycleStart === before && !s.deload).map(s => s.week)) - data.cycle.buildWeeks;
+  return by > 0 ? { from: before, by } : null;
+}
+
+// Gewählt beim ersten Training des Zyklus: Vergleich um die Verlängerung des letzten Zyklus versetzt
+// (data.cycleShift[Kennung] = { from, by }; by = 0: Woche für Woche wie gewohnt)
+const cycleShift = start => { const s = data.cycleShift[start]; return s && s.by ? s : null; };
+
+// Vergleichswoche. Mit Verschiebung: Woche + by im verlängerten Zyklus davor (fehlt sie, wie gewohnt dieselbe Woche).
+function comparisonEntry(name, dayId, ci) {
+  const sh = cycleShift(ci.cycleStart);
+  const e = sh && findWeekEntry(name, dayId, c => c.cycleStart === sh.from && c.week === ci.week + sh.by, ci.occurrence || 1);
+  return e ? { ...e, shifted: true } : sameWeekEntry(name, dayId, ci);
+}
+
+// Vergleichswoche ohne Verschiebung: dieselbe Woche (und derselbe Durchgang) im vorherigen Zyklus
+// Erklärung bei versetztem Vergleich (leer ohne Verschiebung)
+function shiftText(start, week) {
+  const sh = cycleShift(start);
+  return sh ? `Vergleich ist Woche ${week + sh.by} des letzten Zyklus (Verlängerung berücksichtigt) – das Gewicht kommt von dort, Wdh. und Tank wie in dieser Woche.` : '';
+}
+
+const sameWeekEntry = (name, dayId, ci) =>
   findWeekEntry(name, dayId, c => c.week === ci.week && c.cycleStart < ci.cycleStart, ci.occurrence || 1);
 
 // Vorwoche (derselbe Durchgang) im selben Zyklus
@@ -1099,6 +1126,18 @@ function fromRef(src, target, plusOne, i, srcRir) {
     if (up) ({ weight, reps } = up);
   }
   return { weight, reps };
+}
+
+// Vorschlag aus einer versetzten Vergleichswoche (Verlängerung berücksichtigt, z. B. Intro ↔ Woche 4): nur das Gewicht
+// kommt von dort, Wdh. und Tank wie in der aktuellen Woche. Mit der damaligen Leistung (+1 Wdh. Steigerung) wird
+// das Gewicht gesucht, mit dem die Ziel-Wdh. beim heutigen Tank-Ziel klappen: in Stufen runter, wenn es nicht reicht,
+// eine Stufe hoch, wenn die Leistung schon dafür reicht.
+function shiftedRef(src, target, i, srcRir) {
+  const goal = goalReps(target, i);
+  if (src.weight == null || src.reps == null) return { weight: src.weight, reps: goal };
+  const cap = src.reps + (src.rir != null ? src.rir : srcRir != null ? srcRir : target.rir) + 1;
+  const t = { step: 2.5, ...target };
+  return stepUp(cap, src.weight, t, 0, goal) || weightForGoal(cap, src.weight, t, 0, goal);
 }
 
 // Kommentar aus dem letzten Training dieser Übung, das einen hatte.
@@ -1206,7 +1245,8 @@ function refProposal(t, prev, cmp, i, k, v) {
     return { p: weightForGoal(cap, src.weight, { step: 2.5, ...t }, 0, goal), rule: 'brake' };
   }
   const rirOf = e => e && e.target && e.target.rir != null ? e.target.rir : null;  // damaliges Tank-Ziel
-  const a = cmpV.length ? fromRef(refAt(cmpV, k), t, true, i, rirOf(cmp)) : null;
+  const a = !cmpV.length ? null
+    : cmp.shifted ? shiftedRef(refAt(cmpV, k), t, i, rirOf(cmp)) : fromRef(refAt(cmpV, k), t, true, i, rirOf(cmp));
   const b = prevV.length ? fromRef(refAt(prevV, k), t, k === 0, i, rirOf(prev)) : null;
   if (a && b) return { p: lighterSet(b, a) ? b : a, rule: 'lower', fromCmp: lighterSet(a, b) };
   return { p: a || b, rule: null };
@@ -1554,8 +1594,11 @@ const views = {
   // Zurück: vorige Frage, bei Frage 1 die neuen Übungen (falls abgefragt), sonst Start
   check:    { title: 'Vor dem Training', tab: 'start', render: renderCheck, cancel: () => CANCEL_START,
     back: p => p.step > 1 ? ['check', { ...p, step: p.step - 1 }]
-      : p.exIds ? ['firstmax', { id: p.id, exIds: p.exIds }] : ['start', {}] },
-  firstmax: { title: 'Neue Übungen',     tab: 'start', back: 'start', render: renderFirstMax, cancel: () => CANCEL_START },
+      : p.exIds ? ['firstmax', { id: p.id, exIds: p.exIds, choice: p.choice }]
+      : p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
+  firstmax: { title: 'Neue Übungen',     tab: 'start', render: renderFirstMax, cancel: () => CANCEL_START,
+    back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
+  cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
 };
 
@@ -1650,6 +1693,8 @@ function cycleCard(ci) {
   const self = selfDeload();
   const sub = ci.deload
     ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
+    : shiftText(ci.cycleStart, ci.week) && !ci.extra
+      ? `${ci.intro ? 'Start-Sätze laut Plan. ' : ''}${shiftText(ci.cycleStart, ci.week)}`
     : ci.intro
       ? 'Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh.'
       : ci.extra
@@ -1737,7 +1782,8 @@ function renderTraining() {
     : draft.deload
     ? `<p class="deload-note">Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
     : draft.intro
-      ? '<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.</p>'
+      ? `<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
+        || 'Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.'}</p>`
       : '';
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
@@ -1810,7 +1856,9 @@ function renderTraining() {
         ${en.weekFirst.sets.map(fmtSet).join(' · ')}<br><b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></p>`;
     }
     if (en.compare) {
-      const rule = en.rule === 'brake'
+      const rule = en.compare.shifted && !en.rule
+        ? 'Verlängerung berücksichtigt: Gewicht aus dieser Woche, Wdh. und Tank wie in der aktuellen Woche'
+        : en.rule === 'brake'
         ? `Vorwoche deutlich verfehlt (mind. ${MISS_REPS} Wdh. unter Plan) → weniger Gewicht, Wdh. wie geplant`
         : en.rule === 'lower'
           ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden – Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
@@ -2461,6 +2509,24 @@ function renderSession({ id, fresh, edit, week }) {
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
 
+// Erstes Training nach einem verlängerten Zyklus: Woche für Woche vergleichen oder um die Verlängerung versetzt
+function renderCycleChoice({ id, by }) {
+  const bw = data.cycle.buildWeeks;
+  const wk = n => `${n} Woche${n === 1 ? '' : 'n'}`;
+  const pairs = Array.from({ length: bw }, (_, i) => `${i ? 'W' + (i + 1) : 'Intro'} ↔ W${i + 1 + by}`).join(' · ');
+  const opt = (shift, title, text) => `<button class="split-opt freq-opt" data-action="cycle-choice" data-shift="${shift}">
+      <b>${title}</b><small>${text}</small></button>`;
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(findDay(id).name)} · erstes Training im neuen Zyklus</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🔁</span><h2>Woran soll sich der neue Zyklus orientieren?</h2></div>
+      <p class="hint wiz-q-explain">Dein letzter Zyklus wurde um <b>${wk(by)}</b> verlängert (bis Woche ${bw + by}). Soll sich der neue Zyklus
+        Woche für Woche nach dem alten richten – oder die Verlängerung mit berücksichtigen?</p>
+      ${opt(1, 'Verlängerung berücksichtigen', `Der Vergleich verschiebt sich um ${wk(by)}: ${pairs}. Das Gewicht kommt aus der versetzten Woche, Wiederholungen und Tank bleiben so, wie sie für die jeweilige Woche vorgesehen sind.`)}
+      ${opt(0, 'Woche für Woche wie im letzten Zyklus', 'Intro ↔ Intro, W2 ↔ W2 … – jede Woche wird mit derselben Woche des letzten Zyklus verglichen, je +1 Wdh.')}
+    </div>
+    <p class="hint">Gilt für den ganzen neuen Zyklus.</p>`;
+}
+
 // Vor dem ersten Training mit neuen Übungen: „Max. bei 10 Wdh.“ eintragen oder leer lassen
 function renderFirstMax({ id, exIds }) {
   const day = findDay(id);
@@ -2541,23 +2607,37 @@ function renderData() {
 // Übungen, die zum ersten Mal drankommen: kein „Max. bei 10 Wdh.“ und noch nie trainiert
 const firstTimeExercises = day => day.exercises.filter(e => e.name.trim() && e.max10 == null && !lastEntry(e.name));
 
-// Vor dem Training: neue Übungen nach „Max. bei 10 Wdh.“ fragen, dann zwei kurze Fragen, danach startDay mit dem Abzug.
-// maxAsked: die neuen Übungen (ihre ids) wurden schon abgefragt – „Zurück“ bei Frage 1 führt wieder dorthin.
-function beginCheck(id, maxAsked = null) {
+// Vor dem Training, der Reihe nach: Woche abschließen? (askSkipRound) → erstes Training nach einem verlängerten
+// Zyklus: Vergleich versetzen? → neue Übungen: „Max. bei 10 Wdh.“ → zwei kurze Fragen → startDay mit dem Abzug.
+function beginCheck(id) {
   const day = findDay(id);
   if (!day.exercises.some(e => e.name.trim())) {
     alert('Dieser Trainingstag hat noch keine Übungen. Lege sie unter „Plan“ an.');
     return;
   }
-  if (!maxAsked) {
-    if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
-    if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
-    if (!askSkipRound(day)) return;
-    const fresh = firstTimeExercises(day);
-    if (fresh.length) { go('firstmax', { id, exIds: fresh.map(e => e.id) }); return; }
+  if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+  if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
+  if (!askSkipRound(day)) return;
+  beginAfterRound(id);
+}
+
+// choice: die Zyklus-Frage wurde gerade beantwortet ({ from, by }) – „Zurück“ führt dann wieder dorthin
+function beginAfterRound(id, choice = null) {
+  const ci = trainingRound(id);
+  const fresh = !data.sessions.some(s => s.cycleStart === ci.cycleStart);  // erstes Training dieses Zyklus
+  if (!choice && fresh && !ci.deload && data.cycleShift[ci.cycleStart] === undefined) {
+    const ext = prevExtension(ci.cycleStart);
+    if (ext) { go('cyclechoice', { id, from: ext.from, by: ext.by }); return; }
   }
+  const neu = firstTimeExercises(findDay(id));
+  if (neu.length) { go('firstmax', { id, exIds: neu.map(e => e.id), choice }); return; }
+  beginQuestions(id, null, choice);
+}
+
+// exIds: die neuen Übungen wurden schon abgefragt – „Zurück“ bei Frage 1 führt wieder dorthin
+function beginQuestions(id, exIds, choice = null) {
   if (trainingRound(id).deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
-  else go('check', { id, step: 1, exIds: maxAsked });
+  else go('check', { id, step: 1, exIds, choice });
 }
 
 // Tag, für den die laufende Woche vorzeitig abgeschlossen wird (er war in dieser Woche schon dran)
@@ -2980,7 +3060,14 @@ const actions = {
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
-  'first-max-done': () => beginCheck(current.params.id, current.params.exIds),
+  'first-max-done': () => beginQuestions(current.params.id, current.params.exIds, current.params.choice),
+  // erstes Training nach einem verlängerten Zyklus: Vergleich versetzen (1) oder Woche für Woche (0)
+  'cycle-choice': el => {
+    const { id, from, by } = current.params;
+    data.cycleShift[trainingRound(id).cycleStart] = { from, by: el.dataset.shift === '1' ? by : 0 };
+    saveData();
+    beginAfterRound(id, { from, by });
+  },
   'check-answer': el => {
     const yes = el.dataset.answer === 'yes';
     const { id, step } = current.params;
@@ -3440,7 +3527,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht und Schritte löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);
