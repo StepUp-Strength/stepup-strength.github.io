@@ -685,11 +685,30 @@ function wizAfterSplit() {
   go('wizard');
 }
 
-views.wizard = { title: 'Neuer Plan', tab: 'plan', back: 'plan', render: renderWizard };
+// „Zurück“ oben (und die Zurück-Taste des Handys): einen Schritt zurück wie der Zurück-Knopf unten,
+// erst bei der ersten Frage raus aus dem Assistenten
+function wizBack() {
+  if (!wiz || wiz.step === 'level') return ['plan', {}];
+  if (wiz.step === 'manual') {
+    if (wiz.gi > 0) wiz.gi--;
+    else { wiz.step = wiz.fromPreview ? 'preview' : 'auto'; wiz.fromPreview = false; }
+  } else if (wiz.step === 'preview') {
+    wiz.step = 'auto';
+  } else {
+    const to = wizPrev();
+    if (to === 'cancel') return ['plan', {}];
+    if (to === 'volume') syncGroups();
+    wiz.step = to;
+  }
+  return ['wizard', {}];
+}
+
+views.wizard = { title: 'Neuer Plan', tab: 'plan', back: wizBack, render: renderWizard,
+  cancel: () => wiz ? { ask: 'Plan-Erstellung abbrechen?\n\nDeine bisherigen Eingaben gehen verloren.', run: () => { wiz = null; go('plan'); } } : null };
 
 Object.assign(actions, {
   'wiz-start': () => wizStart(),
-  'wiz-cancel': () => { wiz = null; go('plan'); },
+  'wiz-cancel': () => actions.cancel(),
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
   // Die Sätze pro Woche bleiben immer gleich (volDiv = perWeek).

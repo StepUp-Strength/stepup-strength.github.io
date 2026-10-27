@@ -148,6 +148,7 @@ function saveDraft() {
 const $view = document.getElementById('view');
 const $title = document.getElementById('title');
 const $back = document.getElementById('back');
+const $cancel = document.getElementById('cancel');
 const $toast = document.getElementById('toast');
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1493,13 +1494,19 @@ function platesPerSide(total) {
 
 /* ---------- Bildschirme ---------- */
 
+// „Abbrechen“ vor dem Training (neue Übungen, Fragen): zurück zum Start, es beginnt kein Training
+const CANCEL_START = {
+  ask: 'Trainingsstart abbrechen?\n\nDas Training wird nicht begonnen.',
+  run: () => { skipRoundFor = null; go('start'); },
+};
+
 const views = {
   start:    { title: 'Training',      tab: 'start',   render: renderStart },
   training: { title: () => draft ? draft.dayName : 'Training', tab: 'start', back: 'start', render: renderTraining, after: startTrainingTimer },
   plan:     { title: 'Trainingsplan', tab: 'plan',    render: renderPlan },
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
-  exercise: { title: p => p.name,     tab: 'history', back: 'history', render: renderExercise },
+  exercise: { title: p => p.name,     tab: 'history', back: p => [p.from || 'history', p.fromParams || {}], render: renderExercise },
   week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
   library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
   // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
@@ -1507,9 +1514,14 @@ const views = {
   // aus der Wochenansicht geöffnet: params.week = roundKey dieser Woche
   session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
     back: p => p.edit ? ['session', { id: p.id, week: p.week }] : p.week ? ['week', { key: p.week }] : ['history', {}],
+    cancel: p => p.edit ? { ask: 'Bearbeitung abbrechen?\n\nDeine Änderungen an diesem Training werden nicht gespeichert.',
+      run: () => { sessionEdit = null; go('session', { id: p.id, week: p.week }); } } : null,
     render: renderSession },
-  check:    { title: 'Vor dem Training', tab: 'start', back: 'start', render: renderCheck },
-  firstmax: { title: 'Neue Übungen',     tab: 'start', back: 'start', render: renderFirstMax },
+  // Zurück: vorige Frage, bei Frage 1 die neuen Übungen (falls abgefragt), sonst Start
+  check:    { title: 'Vor dem Training', tab: 'start', render: renderCheck, cancel: () => CANCEL_START,
+    back: p => p.step > 1 ? ['check', { ...p, step: p.step - 1 }]
+      : p.exIds ? ['firstmax', { id: p.id, exIds: p.exIds }] : ['start', {}] },
+  firstmax: { title: 'Neue Übungen',     tab: 'start', back: 'start', render: renderFirstMax, cancel: () => CANCEL_START },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData },
 };
 
@@ -1523,13 +1535,40 @@ function render() {
   const v = views[current.view];
   $title.textContent = typeof v.title === 'function' ? v.title(current.params) : v.title;
   $back.hidden = !v.back;
+  $cancel.hidden = !viewCancel();
   const tab = typeof v.tab === 'function' ? v.tab(current.params) : v.tab;
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
   $view.innerHTML = v.render(current.params);
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
+  syncBackKey();
 }
+
+// „Abbrechen“ oben rechts bei mehrstufigen Vorgängen: views[…].cancel = { ask, run } (oder Funktion der params,
+// die das liefert bzw. null). ask = Rückfrage, run = was danach passiert.
+function viewCancel() {
+  const c = views[current.view].cancel;
+  return typeof c === 'function' ? c(current.params) : c || null;
+}
+
+// Zurück-Taste bzw. -Geste des Handys (und des Browsers) wie „Zurück“ oben: Auf Unterseiten liegt ein zusätzlicher
+// Eintrag im Browser-Verlauf, den die Taste verbraucht, statt die App zu schließen. Auf den Hauptseiten wird er
+// wieder entfernt, damit die Taste die App dort wie gewohnt schließt.
+let skipPop = false;  // Eintrag wird gerade selbst entfernt -> dieses popstate nicht als „Zurück“ werten
+
+function syncBackKey() {
+  if (skipPop) return;
+  const armed = !!(history.state && history.state.sub);
+  const sub = !!views[current.view].back;
+  if (sub && !armed) history.pushState({ sub: true }, '');
+  else if (!sub && armed) { skipPop = true; history.back(); }
+}
+
+window.addEventListener('popstate', () => {
+  if (skipPop) { skipPop = false; syncBackKey(); return; }
+  if (views[current.view].back) actions.back(); else syncBackKey();
+});
 
 // action = Wochen antippbar: 'week-open' (Trainings der Woche ansehen) oder
 // 'cycle-jump' (Plan-Reiter: diese Woche als die gewählte Zykluswoche zählen)
@@ -2328,7 +2367,7 @@ function renderFirstMax({ id, exIds }) {
     <div class="first-max-note"><span aria-hidden="true">💡</span><p><b>Du weißt es nicht genau?</b> Dann lass das Feld einfach leer
       und trag im Training ganz normal ein, was du im Satz geschafft hast – Gewicht, Wiederholungen und wie viele noch im Tank
       gewesen wären. Die App berechnet das Max. bei 10 Wdh. danach selbst. Bei Übungen ohne Gewicht (z. B. Klimmzüge) ebenfalls leer lassen.</p></div>
-    <div class="row"><button class="btn" data-action="back">Abbrechen</button>
+    <div class="row"><button class="btn" data-action="cancel">Abbrechen</button>
       <button class="btn primary" data-action="first-max-done">Weiter</button></div>`;
 }
 
@@ -2390,8 +2429,9 @@ function renderData() {
 // Übungen, die zum ersten Mal drankommen: kein „Max. bei 10 Wdh.“ und noch nie trainiert
 const firstTimeExercises = day => day.exercises.filter(e => e.name.trim() && e.max10 == null && !lastEntry(e.name));
 
-// Vor dem Training: neue Übungen nach „Max. bei 10 Wdh.“ fragen, dann zwei kurze Fragen, danach startDay mit dem Abzug
-function beginCheck(id, maxAsked = false) {
+// Vor dem Training: neue Übungen nach „Max. bei 10 Wdh.“ fragen, dann zwei kurze Fragen, danach startDay mit dem Abzug.
+// maxAsked: die neuen Übungen (ihre ids) wurden schon abgefragt – „Zurück“ bei Frage 1 führt wieder dorthin.
+function beginCheck(id, maxAsked = null) {
   const day = findDay(id);
   if (!day.exercises.some(e => e.name.trim())) {
     alert('Dieser Trainingstag hat noch keine Übungen. Lege sie unter „Plan“ an.');
@@ -2404,7 +2444,7 @@ function beginCheck(id, maxAsked = false) {
     if (fresh.length) { go('firstmax', { id, exIds: fresh.map(e => e.id) }); return; }
   }
   if (trainingRound(id).deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
-  else go('check', { id, step: 1 });
+  else go('check', { id, step: 1, exIds: maxAsked });
 }
 
 // Tag, für den die laufende Woche vorzeitig abgeschlossen wird (er war in dieser Woche schon dran)
@@ -2785,6 +2825,10 @@ function moveExercise(day, i, dir) {
 const actions = {
   tab: el => go(el.dataset.tab),
   // back: Name der Ansicht oder Funktion (params) => [Ansicht, params]
+  cancel: () => {
+    const c = viewCancel();
+    if (c && confirm(c.ask)) c.run();
+  },
   back: () => {
     const b = views[current.view].back;
     const [view, params] = typeof b === 'function' ? b(current.params) : [b, {}];
@@ -2811,12 +2855,12 @@ const actions = {
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
-  'first-max-done': () => beginCheck(current.params.id, true),
+  'first-max-done': () => beginCheck(current.params.id, current.params.exIds),
   'check-answer': el => {
     const yes = el.dataset.answer === 'yes';
     const { id, step } = current.params;
-    if (step === 1) go('check', { id, step: 2, sleptWell: yes });
-    else if (currentComplaints() == null) go('check', { id, step: 3, sleptWell: current.params.sleptWell, stress: yes, areas: [] });
+    if (step === 1) go('check', { ...current.params, step: 2, sleptWell: yes });
+    else if (currentComplaints() == null) go('check', { ...current.params, step: 3, stress: yes, areas: [] });
     else startDay(id, { sleptWell: current.params.sleptWell, stress: yes });
   },
   'check-area': el => {
@@ -3134,7 +3178,8 @@ const actions = {
     saveData(); render();
   },
 
-  'open-exercise': el => go('exercise', { name: el.dataset.name }),
+  // aus dem Verlauf oder z. B. aus der Bibliothek: „Zurück“ führt wieder dorthin
+  'open-exercise': el => go('exercise', { name: el.dataset.name, from: current.view, fromParams: current.params }),
   'open-session': el => go('session', { id: el.dataset.id, week: el.dataset.week }),
   'del-session': el => {
     if (!confirm('Dieses Training endgültig löschen?')) return;
