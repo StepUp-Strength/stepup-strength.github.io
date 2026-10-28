@@ -1314,3 +1314,31 @@ button.pill:active { transform: scale(.95); }
 .nut-check.off { box-shadow: inset 0 0 0 2px var(--warn), var(--shadow); }
 .nut-actions { margin: 0 0 12px; }
 .nut-disclaimer { margin: 0 4px 6px; }
+.nut-protein { margin: 12px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); font-size: 15px; line-height: 1.45; }
+.nut-protein.low { background: var(--warn-soft); }
+.nut-relax { margin: 10px 0 0; font-size: 15px; line-height: 1.45; color: var(--muted); }
+.nut-relax b { color: var(--text); }
+.nut-macro-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.nut-macro-btns .btn { flex: 1 1 40%; margin: 0; min-height: 48px; font-size: 16px; }
+.nut-macro-btns .hint { flex: 1 1 100%; font-size: 15px; }
+.nut-pct { margin-top: 12px; }
+.nut-pct-row { margin-top: 8px; }
+.nut-pct-row span { flex: 1; font-weight: 650; }
+.nut-pct-row .inp.kg { width: 76px; margin-left: 0; }
+.nut-pct-row em { font-style: normal; color: var(--muted); }
+.nut-pct-row b { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+.nut-pct-row.p span { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+.nut-pct-row.f span { box-shadow: inset 3px 0 0 var(--warn); padding-left: 8px; }
+.nut-pct-row.c span { box-shadow: inset 3px 0 0 var(--success); padding-left: 8px; }
+.nut-pct-sum { margin: 10px 0 0; font-weight: 650; color: var(--success); }
+.nut-pct-sum.off { color: var(--warn-text); }
+/* Makros untereinander (passt auch mit „Kohlenhydrate“ in die schmale Breite) */
+.nut-macros { grid-template-columns: 1fr; gap: 6px; }
+.nut-macro { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; }
+.nut-macro span { flex: 1; font-size: 15.5px; color: var(--text); }
+.nut-macro b { font-size: 19px; }
+.nut-macro small { width: 112px; text-align: right; white-space: nowrap; }
+.nut-pct-row { display: grid; grid-template-columns: 1fr 72px 18px 74px; gap: 6px; }
+.nut-pct-row .inp.kg { width: 100%; }
+.nut-pct-row b { width: auto; white-space: nowrap; }
+.nut-pct-row span { min-width: 0; font-size: 16px; }

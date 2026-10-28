@@ -91,7 +91,13 @@ const NUT_ACT = {
 };
 
 // Eiweiß in g pro kg (Bezugsgewicht, siehe nutProteinKg)
-const NUT_PROTEIN = { bulk: 1.8, recomp: 2.0, diet: 2.0, minicut: 2.2 };
+// lo–hi = empfohlene Spanne, def = damit rechnet die App
+const NUT_PROTEIN = {
+  bulk: { lo: 1.6, hi: 2.0, def: 1.8 },
+  recomp: { lo: 1.8, hi: 2.2, def: 2.0 },
+  diet: { lo: 1.8, hi: 2.4, def: 2.0 },
+  minicut: { lo: 2.0, hi: 2.5, def: 2.2 },
+};
 const NUT_KCAL_KG = 7700;  // grob: 1 kg Körpergewicht ≈ 7.700 kcal
 
 let nutDraft = null;  // Eingaben während der Einrichtung (Phase → Angaben → Ziel & Tempo)
@@ -142,12 +148,22 @@ function nutCalc(n, kg) {
   kcal = Math.round(kcal / 10) * 10;
 
   const ref = nutProteinKg(n, kg, lbm);
-  const protein = Math.round(NUT_PROTEIN[n.phase] * ref / 5) * 5;
-  const fatShare = n.phase === 'minicut' ? 0.2 : 0.25;
-  const fatMin = (n.phase === 'minicut' ? 0.6 : 0.8) * ref;
-  const fat = Math.round(Math.max(fatMin, kcal * fatShare / 9) / 5) * 5;
-  const carbs = Math.max(0, Math.round((kcal - protein * 4 - fat * 9) / 4 / 5) * 5);
-  return { age, lbm, bmr, tdee, delta, planned, kcal, note, protein, fat, carbs, ref };
+  const pr = NUT_PROTEIN[n.phase];
+  const pLo = Math.round(pr.lo * ref / 5) * 5, pHi = Math.round(pr.hi * ref / 5) * 5;
+  let protein, fat, carbs;
+  if (n.macroPct) {
+    // eigene Aufteilung in % der Kalorien
+    protein = Math.round(kcal * n.macroPct.p / 100 / 4);
+    fat = Math.round(kcal * n.macroPct.f / 100 / 9);
+    carbs = Math.round(kcal * n.macroPct.c / 100 / 4);
+  } else {
+    protein = Math.round(pr.def * ref / 5) * 5;
+    const fatShare = n.phase === 'minicut' ? 0.2 : 0.25;
+    const fatMin = (n.phase === 'minicut' ? 0.6 : 0.8) * ref;
+    fat = Math.round(Math.max(fatMin, kcal * fatShare / 9) / 5) * 5;
+    carbs = Math.max(0, Math.round((kcal - protein * 4 - fat * 9) / 4 / 5) * 5);
+  }
+  return { age, lbm, bmr, tdee, delta, planned, kcal, note, protein, fat, carbs, ref, pLo, pHi };
 }
 
 // Trend der letzten 3 Wochen in kg pro Woche (lineare Regression) – frühestens ab Tag 8 der Phase
@@ -341,23 +357,98 @@ function renderNutGoal() {
 
 /* ---------- Übersicht ---------- */
 
-function nutTargetCard(n, c) {
+let nutMacroEdit = null;  // eigene Aufteilung wird gerade eingetippt: { p, f, c } als Text, kcal
+
+const NUT_MACROS = [['p', 'Eiweiß', 4], ['f', 'Fett', 9], ['c', 'Kohlenhydrate', 4]];
+
+// Aktuelle Aufteilung in ganzen Prozent (Summe 100)
+function nutPctOf(c) {
+  const p = Math.round(c.protein * 4 / c.kcal * 100), f = Math.round(c.fat * 9 / c.kcal * 100);
+  return { p, f, c: 100 - p - f };
+}
+
+// Eiweiß-Spanne mit Erklärung; persönlicher Hinweis, wenn eher der obere Rand passt
+function nutProteinNote(n, c) {
+  const pr = NUT_PROTEIN[n.phase];
+  const why = [nutAge(n) >= 50 ? 'du über 50 bist' : null,
+    n.bodyFat != null && n.bodyFat < (n.sex === 'm' ? 15 : 23) ? 'du wenig Körperfett hast' : null].filter(Boolean);
+  const low = c.protein < c.pLo - 2;
+  return `<p class="nut-protein ${low ? 'low' : ''}"><b>Eiweiß-Empfehlung: ${c.pLo}–${c.pHi} g am Tag</b>
+      (${fmtNum(pr.lo)}–${fmtNum(pr.hi)} g pro kg${Math.abs(c.ref - (n.kg || nutWeight())) > 1 ? ` bezogen auf ${fmtNum(Math.round(c.ref))} kg` : ''}).
+      ${low ? 'Dein Eiweiß liegt gerade darunter. ' : ''}Orientiere dich eher am oberen Rand, wenn du relativ wenig Körperfett hast,
+      älter bist (ab ca. 50) oder dich vegan ernährst – pflanzliches Eiweiß verwertet der Körper etwas schlechter.
+      ${why.length ? `<b>Bei dir passt eher der obere Rand, weil ${why.join(' und ')}.</b>` : ''}</p>`;
+}
+
+// Eingabe der eigenen Aufteilung (Gramm und Summe werden beim Tippen aktualisiert, siehe nutPctUpdate)
+function nutPctEditor() {
+  const e = nutMacroEdit;
+  return `<div class="nut-pct">
+      <p class="hint nut-small">Teile deine ${nutKcal(e.kcal)} kcal selbst auf – zusammen 100 %.</p>
+      ${NUT_MACROS.map(([k, l]) => `<label class="row nut-pct-row ${k}"><span>${l}</span>
+        <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="nut-pct" data-k="${k}" value="${esc(e[k])}">
+        <em>%</em><b id="nut-pct-${k}"></b></label>`).join('')}
+      <p class="nut-pct-sum" id="nut-pct-sum"></p>
+      <div class="row"><button class="btn" data-action="nut-pct-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="nut-pct-save">Übernehmen</button></div>
+    </div>`;
+}
+
+function nutPctUpdate() {
+  const e = nutMacroEdit;
+  if (!e) return;
+  let sum = 0;
+  for (const [k, , f] of NUT_MACROS) {
+    const v = parseNum(e[k]) || 0;
+    sum += v;
+    const el = document.getElementById('nut-pct-' + k);
+    if (el) el.textContent = `= ${Math.round(e.kcal * v / 100 / f)} g`;
+  }
+  const s = document.getElementById('nut-pct-sum');
+  if (!s) return;
+  sum = round1(sum);
+  s.textContent = sum === 100 ? 'Summe: 100 % ✔' : `Summe: ${fmtNum(sum)} % – ${sum < 100 ? `es fehlen noch ${fmtNum(round1(100 - sum))}` : `${fmtNum(round1(sum - 100))} zu viel`} %`;
+  s.classList.toggle('off', sum !== 100);
+}
+
+// editable: in der Übersicht lassen sich die Makros in % selbst festlegen (nicht in der Vorschau beim Einrichten)
+function nutTargetCard(n, c, editable = false) {
   const notes = {
     cap: `Das Defizit ist auf ${n.phase === 'minicut' ? '35' : '25'} % deines Bedarfs begrenzt – mehr kostet zu viel Muskulatur.`,
     floor: `Weniger als ${deNum(n.sex === 'm' ? 1500 : 1200)} kcal empfiehlt die App nicht – sonst fehlen schnell Nährstoffe.`,
   };
   const adj = n.adjust ? ` · inkl. ${nutSigned(n.adjust, 'kcal')} aus deinem Gewichtsverlauf` : '';
+  const pct = nutPctOf(c);
+  const kg = n.kg || nutWeight();
+  const fatLow = kg && c.fat < 0.6 * kg;
+  let macros;
+  if (editable && nutMacroEdit) macros = nutPctEditor();
+  else {
+    macros = `<div class="nut-macros">
+        ${NUT_MACROS.map(([k, l, f]) => {
+          const g = { p: c.protein, f: c.fat, c: c.carbs }[k];
+          return `<div class="nut-macro ${k}"><span>${l}</span><b>${g} g</b><small>${pct[k]} % · ${nutKcal(g * f)} kcal</small></div>`;
+        }).join('')}
+      </div>
+      <div class="nut-bar" aria-hidden="true">${[['p', c.protein * 4], ['f', c.fat * 9], ['c', c.carbs * 4]].map(([k, v]) =>
+        `<div class="${k}" style="flex:${v}"></div>`).join('')}</div>
+      ${fatLow ? `<p class="nut-warn">Sehr wenig Fett: Auf Dauer sollten es mindestens ca. ${Math.round(0.6 * kg / 5) * 5} g am Tag sein (u. a. für die Hormone).</p>` : ''}
+      ${editable ? `<div class="nut-macro-btns">${n.macroPct
+        ? `<span class="hint">Eigene Aufteilung ${n.macroPct.p} / ${n.macroPct.f} / ${n.macroPct.c} %</span>
+           <button class="btn" data-action="nut-pct-edit">Ändern</button>
+           <button class="btn" data-action="nut-pct-reset">App-Empfehlung</button>`
+        : '<button class="btn" data-action="nut-pct-edit">Makros selbst festlegen (in %)</button>'}</div>` : ''}`;
+  }
   return `<div class="card nut-target">
       <span class="lbl">Dein Tagesziel</span>
       <b class="nut-kcal">${nutKcal(c.kcal)} kcal</b>
       <small>Erhaltungsbedarf ca. ${nutKcal(c.tdee)} kcal · ${nutSigned(c.delta, 'kcal')}${adj}</small>
       ${c.note ? `<p class="nut-warn">${notes[c.note]}</p>` : ''}
-      <div class="nut-macros">
-        ${[['Eiweiß', c.protein, 4, 'p'], ['Fett', c.fat, 9, 'f'], ['Kohlenhydrate', c.carbs, 4, 'c']].map(([l, g, f, k]) => `
-          <div class="nut-macro ${k}"><span>${l}</span><b>${g} g</b><small>${nutKcal(g * f)} kcal</small></div>`).join('')}
-      </div>
-      <div class="nut-bar" aria-hidden="true">${[['p', c.protein * 4], ['f', c.fat * 9], ['c', c.carbs * 4]].map(([k, v]) =>
-        `<div class="${k}" style="flex:${v}"></div>`).join('')}</div>
+      ${macros}
+      ${nutProteinNote(n, c)}
+      <p class="nut-relax">😌 <b>Kein Stress:</b> Du musst diese Werte nicht aufs Gramm genau treffen. Entscheidend ist, dass Kalorien
+        und Eiweiß über die Woche gesehen ungefähr passen – ±10 % sind völlig in Ordnung. Ein Tag mit mehr Kohlenhydraten oder
+        weniger Fett macht nichts kaputt; wichtig ist, was du an den meisten Tagen isst.</p>
     </div>`;
 }
 
@@ -432,9 +523,12 @@ function nutExplain(n, c, kg) {
       <p><b>Erhaltungsbedarf ${nutKcal(c.tdee)} kcal:</b> Grundumsatz × ${fmtNum(NUT_ACT[n.activity].f)} für „${NUT_ACT[n.activity].label}“.</p>
       <p><b>Tagesziel:</b> ${pace.pct != null ? `${fmtNum(pace.pct)} % von ${fmtNum(kg)} kg pro Woche ≈ ${nutSigned(c.delta, 'kcal')} am Tag`
         : `${nutSigned(c.delta, 'kcal')} für „${pace.label}“`}${n.adjust ? `, dazu ${nutSigned(n.adjust, 'kcal')} aus deinem Gewichtsverlauf` : ''}.</p>
-      <p><b>Eiweiß:</b> ${fmtNum(NUT_PROTEIN[n.phase])} g pro kg${Math.abs(c.ref - kg) > 1 ? ` (bezogen auf ${fmtNum(Math.round(c.ref))} kg statt deines vollen Gewichts, weil viel Körperfett kein Eiweiß braucht)` : ''}.
+      ${n.macroPct
+        ? `<p><b>Makros:</b> deine eigene Aufteilung – ${n.macroPct.p} % Eiweiß, ${n.macroPct.f} % Fett und ${n.macroPct.c} % Kohlenhydrate
+          von ${nutKcal(c.kcal)} kcal (1 g Eiweiß oder Kohlenhydrate = 4 kcal, 1 g Fett = 9 kcal).</p>`
+        : `<p><b>Eiweiß:</b> ${fmtNum(NUT_PROTEIN[n.phase].def)} g pro kg (Mitte der Spanne ${fmtNum(NUT_PROTEIN[n.phase].lo)}–${fmtNum(NUT_PROTEIN[n.phase].hi)} g)${Math.abs(c.ref - kg) > 1 ? `, bezogen auf ${fmtNum(Math.round(c.ref))} kg statt deines vollen Gewichts, weil viel Körperfett kein Eiweiß braucht` : ''}.
         <b>Fett:</b> ${n.phase === 'minicut' ? '20' : '25'} % der Kalorien, mindestens ${fmtNum(n.phase === 'minicut' ? 0.6 : 0.8)} g pro kg.
-        <b>Kohlenhydrate:</b> der Rest.</p>
+        <b>Kohlenhydrate:</b> der Rest.</p>`}
       <p>1 kg Körpergewicht entspricht grob ${deNum(NUT_KCAL_KG)} kcal. Rechne immer nur mit Schätzwerten (±10 %): Entscheidend ist,
         wie sich dein Gewicht über 2–3 Wochen entwickelt – dafür gibt es den Tempo-Check.</p>
       ${n.adjust ? `<button class="btn" data-action="nut-adjust-reset">Anpassung aus dem Gewichtsverlauf zurücksetzen</button>` : ''}
@@ -462,7 +556,7 @@ function renderNutrition() {
     h += `<div class="nut-phase-head"><span class="wiz-q-icon" aria-hidden="true">${ph.icon}</span>
         <div><b>${ph.label}</b><small>seit ${fmtDate(n.since + 'T12:00:00')} · ${weekText} · ${nutPace(n).label}</small></div></div>
       ${nutPhaseHint(n)}
-      ${nutTargetCard(n, c)}
+      ${nutTargetCard(n, c, true)}
       ${nutGoalCard(n, c, kg)}
       ${nutTrendCard(n, c)}
       <div class="row nut-actions"><button class="btn" data-action="nut-edit">Angaben ändern</button>
@@ -495,15 +589,15 @@ function nutBeginPhase(n, phase, kg) {
   return { ...n, phase, since: todayISO(), startKg: kg, adjust: 0, adjustAt: null, history };
 }
 
-views.nutrition = { title: 'Ernährung', tab: 'nutrition', render: renderNutrition, after: drawChart };
+views.nutrition = { title: 'Ernährung', tab: 'nutrition', render: renderNutrition, after: () => { drawChart(); nutPctUpdate(); } };
 views.nutphase = { title: 'Phase wählen', tab: 'nutrition', back: 'nutrition', cancel: () => NUT_CANCEL, render: renderNutPhase };
 views.nutbody = { title: 'Deine Angaben', tab: 'nutrition', cancel: () => NUT_CANCEL, render: renderNutBody,
   back: () => [nutDraft && nutDraft.flow === 'nutphase' ? 'nutphase' : 'nutrition', {}] };
 views.nutgoal = { title: 'Ziel & Tempo', tab: 'nutrition', back: 'nutbody', cancel: () => NUT_CANCEL, render: renderNutGoal };
 
 Object.assign(actions, {
-  'nut-setup': () => { nutInit('nutphase'); go('nutphase'); },
-  'nut-edit': () => { nutInit('nutbody'); go('nutbody'); },
+  'nut-setup': () => { nutMacroEdit = null; nutInit('nutphase'); go('nutphase'); },
+  'nut-edit': () => { nutMacroEdit = null; nutInit('nutbody'); go('nutbody'); },
   'nut-phase': el => {
     const p = el.dataset.p;
     if (nutDraft.phase !== p) {
@@ -543,6 +637,7 @@ Object.assign(actions, {
     const n = {
       sex: d.sex, age: d.age, ageYear: new Date().getFullYear(), height: d.height, bodyFat: d.bodyFat, activity: d.activity,
       phase: d.phase, pace: d.pace, goalKg: d.phase === 'recomp' ? null : d.goalKg, weeks: d.weeks || 4,
+      macroPct: d.macroPct || null,  // eigene Makro-Aufteilung bleibt auch beim Phasenwechsel
     };
     const prev = data.nutrition;
     data.nutrition = prev && prev.phase === d.phase
@@ -573,6 +668,33 @@ Object.assign(actions, {
     toast('Weiter mit Aufbau 💪');
     render();
   },
+  'nut-pct-edit': () => {
+    const c = nutCalc(data.nutrition, nutWeight());
+    const pct = nutPctOf(c);
+    nutMacroEdit = { p: String(pct.p), f: String(pct.f), c: String(pct.c), kcal: c.kcal };
+    render();
+    nutPctUpdate();
+  },
+  'nut-pct-cancel': () => { nutMacroEdit = null; render(); },
+  'nut-pct-save': () => {
+    const e = nutMacroEdit;
+    const v = Object.fromEntries(NUT_MACROS.map(([k]) => [k, parseNum(e[k])]));
+    if (Object.values(v).some(x => x == null || x < 0 || x > 100)) { alert('Bitte für alle drei Werte eine Zahl zwischen 0 und 100 eintragen.'); return; }
+    const sum = round1(v.p + v.f + v.c);
+    if (sum !== 100) { alert(`Zusammen müssen es 100 % sein – gerade sind es ${fmtNum(sum)} %.`); return; }
+    data.nutrition.macroPct = v;
+    nutMacroEdit = null;
+    saveData();
+    toast('Eigene Aufteilung gespeichert ✔');
+    render();
+  },
+  'nut-pct-reset': () => {
+    data.nutrition.macroPct = null;
+    saveData();
+    toast('Wieder die Empfehlung der App');
+    render();
+  },
 });
 
 fields['nut-in'] = el => { nutDraft[el.dataset.k] = el.value; };
+fields['nut-pct'] = el => { nutMacroEdit[el.dataset.k] = el.value; nutPctUpdate(); };
