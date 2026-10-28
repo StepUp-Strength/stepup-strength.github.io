@@ -5,12 +5,14 @@
 const DAY = 86400000;
 const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1J', 365], ['Alle', 0]];
 
-// mode: 'ex' = Übung, 'bw' = Körpergewicht, 'ton' = Tonnage, 'awards' = Erfolge
+// mode: 'ex' = Übung, 'ton' = Tonnage, 'steps' = Schritte, 'awards' = Erfolge ('bw' = Körpergewicht: Ernährungs-Reiter)
 // metric: 'weight' = schwerster Satz, 'max10' = geschätztes Max.; tonBy: 'session' | 'week'
 // end = rechter Rand des Zeitfensters (null = heute); sel = Zeitpunkt des angetippten Punkts
 // withDeload: Übungen – Trainings aus Deload-Wochen mitzeigen (sonst verzerren sie den Verlauf)
 const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', withDeload: false, tonBy: 'session', range: 91, end: null, sel: null };
 let chartGeo = null;  // Geometrie der zuletzt gezeichneten Grafik (für Antippen und Ziehen)
+// Das Körpergewicht wird im Ernährungs-Reiter gezeichnet, alles andere unter „Diagramme“
+const chartMode = () => current.view === 'nutrition' ? 'bw' : chartState.mode;
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE');  // JJJJ-MM-TT
 const round1 = x => Math.round(x * 10) / 10;
@@ -329,12 +331,12 @@ function showChartFor(name) {
 
 // Datenpunkte der gewählten Reihe, zeitlich aufsteigend
 function chartPoints() {
-  if (chartState.mode === 'steps') {
+  if (chartMode() === 'steps') {
     return [...data.steps]
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(s => ({ t: Date.parse(s.date + 'T12:00:00'), v: s.steps, unit: 'Schritte' }));
   }
-  if (chartState.mode === 'ton') {
+  if (chartMode() === 'ton') {
     const sessions = [...data.sessions].sort((a, b) => a.date.localeCompare(b.date));
     if (chartState.tonBy === 'week') {
       const weeks = new Map();
@@ -352,7 +354,7 @@ function chartPoints() {
       t: Date.parse(s.date), v: round1(sessionTonnage(s) / 1000), unit: 't', deload: !!s.deload, note: s.dayName,
     }));
   }
-  if (chartState.mode === 'bw') {
+  if (chartMode() === 'bw') {
     return data.bodyweight
       .map(b => ({ t: Date.parse(b.date), v: b.kg, unit: 'kg' }))
       .sort((a, b) => a.t - b.t);
@@ -429,10 +431,10 @@ function drawChart() {
   const pts = chartPoints();
   if (!pts.length) {
     chartGeo = null;
-    area.innerHTML = `<p class="hint chart-empty">${chartState.mode === 'bw'
+    area.innerHTML = `<p class="hint chart-empty">${chartMode() === 'bw'
       ? 'Noch kein Körpergewicht eingetragen.'
-      : chartState.mode === 'ton' ? 'Noch keine Trainings gespeichert.'
-      : chartState.mode === 'steps' ? 'Noch keine Schritte eingetragen.'
+      : chartMode() === 'ton' ? 'Noch keine Trainings gespeichert.'
+      : chartMode() === 'steps' ? 'Noch keine Schritte eingetragen.'
       : 'Für diese Übung gibt es noch keine Trainings mit Werten.'}</p>`;
     extra.innerHTML = '';
     updateRangeControls(null);
@@ -447,13 +449,18 @@ function drawChart() {
   // Maße
   const W = area.clientWidth, H = 250, L = 46, R = 14, T = 18, B = 30;
   const pw = W - L - R, ph = H - T - B;
-  const ticks = niceTicks(...(vals => [Math.min(...vals), Math.max(...vals)])((vis.length ? vis : pts).map(p => p.v)));
+  // Körpergewicht: Zielgewicht und Beginn der Ernährungsphasen (Zielgewicht nur, wenn es nah an den Werten liegt)
+  const marks = chartMode() === 'bw' ? nutMarks() : null;
+  const vals = (vis.length ? vis : pts).map(p => p.v);
+  const goal = marks && marks.goal != null && marks.goal >= Math.min(...vals) - 4 && marks.goal <= Math.max(...vals) + 4 ? marks.goal : null;
+  if (goal != null) vals.push(goal);
+  const ticks = niceTicks(Math.min(...vals), Math.max(...vals));
   const lo = ticks[0], hi = ticks[ticks.length - 1];
   const X = t => L + (t - x0) / (x1 - x0) * pw;
   const Y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
 
   let svg = `<svg class="chart-svg" width="${W}" height="${H}" role="img"
-    aria-label="Verlauf ${esc(chartState.mode === 'bw' ? 'Körpergewicht' : chartState.name)}">
+    aria-label="Verlauf ${esc(chartMode() === 'bw' ? 'Körpergewicht' : chartState.name)}">
     <defs><clipPath id="plot-clip"><rect x="${L - 6}" y="0" width="${pw + 12}" height="${H}"/></clipPath></defs>`;
 
   // Raster und y-Achse
@@ -473,6 +480,15 @@ function drawChart() {
   // Fläche, Linie, Punkte (alle Punkte zeichnen, das Fenster schneidet ab -> Linie läuft durch)
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
   svg += `<g clip-path="url(#plot-clip)">`;
+  if (goal != null) {
+    svg += `<line class="c-goal" x1="${L}" x2="${L + pw}" y1="${Y(goal)}" y2="${Y(goal)}"/>
+      <text class="c-mark" x="${L + pw - 4}" y="${Y(goal) - 5}" text-anchor="end">Ziel ${fmtNum(goal)} kg</text>`;
+  }
+  for (const m of marks ? marks.phases : []) {
+    if (m.t < x0 || m.t > x1) continue;
+    svg += `<line class="c-phase" x1="${X(m.t)}" x2="${X(m.t)}" y1="${T}" y2="${T + ph}"/>
+      <text class="c-mark" x="${X(m.t) + 4}" y="${T + 11}">${esc(m.label)}</text>`;
+  }
   if (pts.length > 1) {
     svg += `<path class="c-area" d="${line}L${X(pts[pts.length - 1].t).toFixed(1)},${T + ph}L${X(pts[0].t).toFixed(1)},${T + ph}Z"/>
       <path class="c-line" d="${line}"/>`;
@@ -502,7 +518,7 @@ function tooltip(p, unit, x, y, W, H) {
   tip.className = 'tip';
   const value = document.createElement('strong');
   value.textContent = `${unit === 'Schritte' ? deNum(p.v) : fmtNum(p.v)} ${unit}` +
-    (chartState.mode === 'ex' && chartState.metric === 'max10' ? ' (Max. bei 10)' : '');
+    (chartMode() === 'ex' && chartState.metric === 'max10' ? ' (Max. bei 10)' : '');
   tip.appendChild(value);
   const date = document.createElement('div');
   date.className = 'muted';
@@ -565,8 +581,8 @@ function stepsStats() {
 }
 
 function chartStats(vis, unit) {
-  if (chartState.mode === 'ton') return tonnageStats();
-  if (chartState.mode === 'steps') return stepsStats();
+  if (chartMode() === 'ton') return tonnageStats();
+  if (chartMode() === 'steps') return stepsStats();
   // Deload-Trainings sind bewusst leichter und zählen für Aktuell/Veränderung/Bestwert nicht
   if (vis.some(p => !p.deload)) vis = vis.filter(p => !p.deload);
   if (!vis.length) return '';
@@ -574,7 +590,7 @@ function chartStats(vis, unit) {
   const diff = round1(last - first);
   const pct = first ? Math.round(diff / first * 100) : 0;
   const sign = diff > 0 ? '+' : diff < 0 ? '−' : '±';
-  const best = chartState.mode === 'bw'
+  const best = chartMode() === 'bw'
     ? `<div class="stat"><span>Spanne</span><b>${fmtNum(Math.min(...vis.map(p => p.v)))}–${fmtNum(Math.max(...vis.map(p => p.v)))}</b></div>`
     : `<div class="stat"><span>Bestwert</span><b>${fmtNum(Math.max(...vis.map(p => p.v)))} ${unit}</b></div>`;
   let h = `<div class="stats">
@@ -582,7 +598,7 @@ function chartStats(vis, unit) {
     <div class="stat"><span>Veränderung</span><b>${sign}${fmtNum(Math.abs(diff))}</b><small>${sign}${Math.abs(pct)} %</small></div>
     ${best}
   </div>`;
-  if (chartState.mode === 'ex') {
+  if (chartMode() === 'ex') {
     h += `<button class="btn center" data-action="open-exercise" data-name="${esc(chartState.name)}">Alle Einträge als Liste</button>`;
   }
   return h;
@@ -721,11 +737,21 @@ function applyHealthText(text) {
   toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}`);
 }
 
+// Körpergewicht eintragen (Ernährungs-Reiter)
+function bwCard() {
+  return `<div class="card">
+      <label class="row"><span>Körpergewicht</span>
+        <input class="inp kg" id="bw-kg" type="text" inputmode="decimal" autocomplete="off" placeholder="kg"></label>
+      <label class="row"><span>Datum</span>
+        <input class="inp date" id="bw-date" type="date" value="${todayISO()}" max="${todayISO()}"></label>
+      <div class="row"><button class="btn primary" data-action="bw-save">Speichern</button></div>
+    </div>`;
+}
+
 function renderCharts() {
   const s = chartState;
-  let h = `<div class="seg grid">
+  let h = `<div class="seg grid two">
     <button class="${s.mode === 'ex' ? 'on' : ''}" data-action="chart-mode" data-mode="ex">Übungen</button>
-    <button class="${s.mode === 'bw' ? 'on' : ''}" data-action="chart-mode" data-mode="bw">Körpergewicht</button>
     <button class="${s.mode === 'ton' ? 'on' : ''}" data-action="chart-mode" data-mode="ton">Tonnage</button>
     <button class="${s.mode === 'steps' ? 'on' : ''}" data-action="chart-mode" data-mode="steps">Schritte</button>
     <button class="${s.mode === 'awards' ? 'on' : ''}" data-action="chart-mode" data-mode="awards">🏆 Erfolge</button>
@@ -778,19 +804,10 @@ function renderCharts() {
     }
     h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
       ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
-  } else {
-    h += healthCard() + `<div class="card">
-      <label class="row"><span>Körpergewicht</span>
-        <input class="inp kg" id="bw-kg" type="text" inputmode="decimal" autocomplete="off" placeholder="kg"></label>
-      <label class="row"><span>Datum</span>
-        <input class="inp date" id="bw-date" type="date" value="${todayISO()}" max="${todayISO()}"></label>
-      <div class="row"><button class="btn primary" data-action="bw-save">Speichern</button></div>
-    </div>`;
   }
 
   h += rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
-  if (s.mode === 'bw') h += bwList();
-  else if (s.mode === 'ton') h += '<p class="hint">Tonnage = Gewicht × Wiederholungen aller Sätze. Sätze ohne Gewicht zählen nicht mit.</p>';
+  if (s.mode === 'ton') h += '<p class="hint">Tonnage = Gewicht × Wiederholungen aller Sätze. Sätze ohne Gewicht zählen nicht mit.</p>';
   else h += `<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
     ? 'Hohle Punkte = Deload-Woche.' : 'Deload-Wochen sind ausgeblendet.'}</p>`;
   return h;
@@ -904,4 +921,4 @@ function selectNearest(clientX) {
   drawChart();
 }
 
-window.addEventListener('resize', () => { if (current.view === 'charts') queueDraw(); });
+window.addEventListener('resize', () => { if (current.view === 'charts' || current.view === 'nutrition') queueDraw(); });

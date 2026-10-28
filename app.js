@@ -93,6 +93,7 @@ function upgradeData(d) {
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
+  if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
@@ -3046,7 +3047,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -3131,7 +3132,8 @@ function moveExercise(day, i, dir) {
 }
 
 const actions = {
-  tab: el => go(el.dataset.tab),
+  // Reiterwechsel: Zeitfenster und Auswahl im Diagramm zurücksetzen (Diagramme und Ernährung teilen sie sich)
+  tab: el => { Object.assign(chartState, { end: null, sel: null }); go(el.dataset.tab); },
   // back: Name der Ansicht oder Funktion (params) => [Ansicht, params]
   cancel: () => {
     const c = viewCancel();

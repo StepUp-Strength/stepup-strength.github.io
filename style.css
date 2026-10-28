@@ -153,7 +153,7 @@ nav button {
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -558,7 +558,7 @@ p.wiz-q-explain { margin: 0 0 16px; font-size: 16.5px; line-height: 1.5; }
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
 }
 .split-opt.cat { position: relative; min-height: 78px; padding: 14px 44px 14px 76px; border: 0; background: var(--card); box-shadow: var(--shadow); }
@@ -860,6 +860,7 @@ span.setno { display: flex; flex-direction: column; justify-content: center; }
 /* ---------- Tonnage & Erfolge ---------- */
 .seg.grid { flex-wrap: wrap; }
 .seg.grid button { flex: 1 1 30%; font-size: 15.5px; }
+.seg.grid.two button { flex-basis: 40%; }
 .card.health .btn { margin-bottom: 4px; }
 .card.health .hint { margin: 8px 0 0; font-size: 15px; }
 .card.health textarea { margin-top: 10px; }
@@ -1212,7 +1213,7 @@ button.pill:active { transform: scale(.95); }
   display: flex;
   justify-content: space-between;
   margin-bottom: 2px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .02em;
   text-transform: uppercase;
@@ -1265,3 +1266,51 @@ button.pill:active { transform: scale(.95); }
   font-weight: 600;
   text-align: center;
 }
+
+/* ---------- Ernährung ---------- */
+.c-goal { stroke: var(--success); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.c-phase { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.c-mark { fill: var(--muted); font-size: 11.5px; font-weight: 650; }
+.nut-small { margin: 6px 0 0; font-size: 15px; line-height: 1.45; }
+.nut-more { margin: -2px 0 12px; padding: 0 4px; font-size: 16px; line-height: 1.5; }
+.nut-more summary { min-height: 40px; display: flex; align-items: center; font-size: 15.5px; font-weight: 650; color: var(--accent-text); cursor: pointer; }
+.nut-more p { margin: 6px 0; }
+.nut-more .btn { margin-top: 6px; }
+.nut-help { font-size: 16px; line-height: 1.5; }
+.nut-help summary { min-height: 40px; display: flex; align-items: center; font-weight: 650; color: var(--accent-text); cursor: pointer; }
+.nut-help ul { margin: 8px 0; padding-left: 20px; }
+.nut-help li { margin: 4px 0; }
+.nut-help p { margin: 8px 0; }
+.split-opt .nut-pace-info { display: block; margin: 2px 0; font-size: 14.5px; font-weight: 650; color: var(--text); }
+.split-opt.on .nut-pace-info { color: var(--accent-text); }
+.nut-navy .row span { flex: 1; font-size: 16px; }
+.nut-phase-head { display: flex; align-items: center; gap: 12px; margin: 0 4px 14px; }
+.nut-phase-head b { display: block; font-size: 22px; font-weight: 750; letter-spacing: -.02em; }
+.nut-phase-head small { display: block; font-size: 15px; color: var(--muted); }
+.nut-target .lbl { margin: 0; }
+.nut-kcal { display: block; margin: 2px 0; font-size: 38px; font-weight: 800; letter-spacing: -.03em; color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.nut-target > small { display: block; font-size: 15px; color: var(--muted); }
+.nut-warn { margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--warn-soft); color: var(--warn-text); font-size: 15px; line-height: 1.4; }
+.nut-macros { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.nut-macro { min-width: 0; padding: 10px 12px; border-radius: 14px; background: var(--fill); }
+.nut-macro span { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 700; color: var(--muted); }
+.nut-macro b { display: block; font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.nut-macro small { font-size: 13.5px; color: var(--muted); }
+.nut-macro.p { box-shadow: inset 3px 0 0 var(--accent); }
+.nut-macro.f { box-shadow: inset 3px 0 0 var(--warn); }
+.nut-macro.c { box-shadow: inset 3px 0 0 var(--success); }
+.nut-bar { display: flex; gap: 3px; height: 8px; margin-top: 10px; border-radius: 999px; overflow: hidden; }
+.nut-bar .p { background: var(--accent); }
+.nut-bar .f { background: var(--warn); }
+.nut-bar .c { background: var(--success); }
+.nut-goal-row { display: flex; justify-content: space-between; gap: 8px; }
+.nut-goal-row span { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.nut-goal-row span:nth-child(2) { text-align: center; }
+.nut-goal-row span:last-child { text-align: right; }
+.nut-goal-row b { display: block; font-size: 19px; color: var(--text); text-transform: none; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.nut-check p:first-child { margin: 0; font-size: 17px; }
+.nut-check .btn { margin-top: 12px; }
+.nut-check.ok { box-shadow: inset 0 0 0 2px var(--success), var(--shadow); }
+.nut-check.off { box-shadow: inset 0 0 0 2px var(--warn), var(--shadow); }
+.nut-actions { margin: 0 0 12px; }
+.nut-disclaimer { margin: 0 4px 6px; }
