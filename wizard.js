@@ -355,7 +355,45 @@ function syncGroups() {
 
 // Trainingstage aus dem Entwurf: Übungen der Muskelgruppen des Tages, sortiert Grund → Normal → Assistenz
 // wiz.swaps[Tag] = { ursprüngliche Übung (nameKey) -> Ersatz }: in der Vorschau nur an diesem Tag ausgetauscht
+// Schwer/leicht im fertigen Plan (Frage am Ende, wiz.intMode): 'alt' = abwechselnd, 'heavy' / 'light' = alle Tage gleich.
+// Abwechselnd: Vorlagen mit schweren und leichten Tagen behalten ihre Einteilung; sonst wechseln sich Tage mit
+// gemeinsamen Muskelgruppen ab (schwer, leicht, schwer …).
+function wizAltIntensities() {
+  const tpl = wiz.cat !== 'custom' ? wiz.days.map(d => d.intensity) : null;
+  if (tpl && tpl.includes('heavy') && tpl.includes('light')) return tpl;
+  const res = [];
+  wiz.days.forEach((d, i) => {
+    let prev = -1;
+    for (let j = i - 1; j >= 0 && prev < 0; j--) if (wiz.days[j].groups.some(g => d.groups.includes(g))) prev = j;
+    res.push(prev >= 0 && res[prev] === 'heavy' ? 'light' : 'heavy');
+  });
+  return res;
+}
+// Abwechseln geht nur, wenn mindestens eine Muskelgruppe an mehreren Tagen dran ist
+const wizAltPossible = () => { const a = wizAltIntensities(); return a.includes('heavy') && a.includes('light'); };
+const wizIntMode = () => wiz.intMode && (wiz.intMode !== 'alt' || wizAltPossible()) ? wiz.intMode : wizAltPossible() ? 'alt' : 'heavy';
+const wizDayIntensities = () => wizIntMode() === 'alt' ? wizAltIntensities() : wiz.days.map(() => wizIntMode());
+
+// Tagesnamen passend dazu: „schwer“/„leicht“ im Namen anpassen; alle gleich -> Wort weglassen, doppelte Namen A, B …
+function wizDayNames() {
+  const ints = wizDayIntensities();
+  const same = wizIntMode() !== 'alt';
+  const names = wiz.days.map((d, i) => {
+    const n = d.name.trim() || 'Trainingstag';
+    return same ? n.replace(/\s*\b(schwer|leicht)\b/i, '').trim() || n : n.replace(/\b(schwer|leicht)\b/i, ints[i] === 'heavy' ? 'schwer' : 'leicht');
+  });
+  if (!same) return names;
+  const count = {}, seen = {};
+  names.forEach(n => { count[nameKey(n)] = (count[nameKey(n)] || 0) + 1; });
+  return names.map(n => {
+    if (count[nameKey(n)] < 2) return n;
+    seen[nameKey(n)] = (seen[nameKey(n)] || 0) + 1;
+    return `${n} ${String.fromCharCode(64 + seen[nameKey(n)])}`;
+  });
+}
+
 function buildPlanDays() {
+  const ints = wizDayIntensities(), names = wizDayNames();
   return wiz.days.map((d, di) => {
     const list = [];
     const swaps = (wiz.swaps || {})[di] || {};
@@ -369,8 +407,8 @@ function buildPlanDays() {
     list.sort((a, b) => KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
     return {
       id: uid(),
-      name: d.name.trim() || 'Trainingstag',
-      intensity: d.intensity,
+      name: names[di],
+      intensity: ints[di],
       groups: [...d.groups],
       exercises: list.map(([name, g]) => withDefaults({ id: uid(), name, group: g, max10: knownMax10(name) })),
     };
@@ -380,7 +418,7 @@ function buildPlanDays() {
 /* --- Darstellung --- */
 
 const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
-  volume: 3, rir: 4, manual: 5, preview: 5, deloadq: 6, progq: 6 };
+  volume: 3, rir: 4, manual: 5, preview: 5, intq: 6, deloadq: 6, progq: 6 };
 const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
@@ -448,8 +486,6 @@ function dayCard(d, di, removable) {
   return `<div class="card wiz-day">
     <div class="ex-head"><input class="inp" type="text" data-field="wiz-dayname" data-d="${di}" value="${esc(d.name)}">
       ${removable ? `<button class="icon-btn danger" data-action="wiz-day-del" data-d="${di}" aria-label="Tag entfernen">✕</button>` : ''}</div>
-    <div class="variants">${[['heavy', 'Schwer'], ['light', 'Leicht']].map(([k, l]) =>
-      `<button class="vchip ${d.intensity === k ? 'on' : ''}" data-action="wiz-dayint" data-d="${di}" data-k="${k}">${l}</button>`).join('')}</div>
     <div class="group-chips">${PLAN_GROUPS.map(g =>
       `<button class="gchip ${d.groups.includes(g) ? 'on' : ''}" data-action="wiz-daygroup" data-d="${di}" data-g="${g}">${MUSCLES[g]}</button>`).join('')}</div>
   </div>`;
@@ -607,8 +643,6 @@ function renderWizDays() {
     const nd = wiz.newDay;
     body += `<div class="new-day"><p class="lbl chips-title">Neuen Trainingstag erstellen</p>
       <input class="inp" type="text" data-field="wiz-newday-name" placeholder="Name, z. B. Rücken/Bizeps" value="${esc(nd.name)}">
-      <div class="variants">${[['heavy', 'Schwer'], ['light', 'Leicht']].map(([k, l]) =>
-        `<button class="vchip ${nd.intensity === k ? 'on' : ''}" data-action="wiz-newday-int" data-k="${k}">${l}</button>`).join('')}</div>
       <div class="group-chips">${PLAN_GROUPS.map(g =>
         `<button class="gchip ${nd.groups.includes(g) ? 'on' : ''}" data-action="wiz-newday-group" data-g="${g}">${MUSCLES[g]}</button>`).join('')}</div>
       <div class="row"><button class="btn primary" data-action="wiz-newday-save">Trainingstag speichern und hinzufügen</button></div>
@@ -620,8 +654,8 @@ function renderWizDays() {
   const freq = wiz.perWeek > 1 ? ' Jeder Tag wird 2× pro Woche trainiert.' : '';
   return wizCard('📋', custom ? 'Deine Trainingstage' : 'Passen die Trainingstage?',
     (custom
-      ? 'Tippe vorhandene Tage an oder erstelle neue. Für jeden Tag legst du fest, ob er schwer oder leicht ist und welche Muskelgruppen trainiert werden.'
-      : 'So sieht dein Plan aus. Du kannst Namen, „Schwer/Leicht“ und die Muskelgruppen jedes Tages ändern – oder einfach weiter.') + freq,
+      ? 'Tippe vorhandene Tage an oder erstelle neue. Für jeden Tag legst du fest, welche Muskelgruppen trainiert werden. Ob die Tage schwer oder leicht sind, fragt die App am Ende, wenn dein Plan fertig ist.'
+      : 'So sieht dein Plan aus. Du kannst Namen und Muskelgruppen jedes Tages ändern – oder einfach weiter. Ob die Tage schwer oder leicht sind, fragt die App am Ende, wenn dein Plan fertig ist.') + freq,
     body, true, days);
 }
 
@@ -636,6 +670,55 @@ function renderWizBasics() {
           `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
       <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr. Wie der Deload abläuft, legst du am Ende fest,
         wenn dein Plan fertig ist.</p>`);
+}
+
+// Am Ende (Plan ist fertig): schwere und leichte Tage abwechseln oder alle Tage gleich?
+function renderWizInt() {
+  const mode = wizIntMode();
+  const alt = wizAltPossible();
+  const r = (int, kind) => REP_RANGES[int][kind].join('–');
+  const reps = int => `Grundübungen ${r(int, 'compound')}, normale Übungen ${r(int, 'normal')}, Assistenzübungen ${r(int, 'assist')} Wdh.`;
+  const list = items => `<ul class="int-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>`;
+  const opt = (m, title, body, disabled = false) => `<button class="split-opt freq-opt int-opt ${mode === m ? 'on' : ''}" data-action="wiz-int" data-m="${m}" ${disabled ? 'disabled' : ''}>
+      <b>${title}</b><small>${body}</small></button>`;
+  const altDays = wizAltIntensities();
+  const pattern = wiz.days.map((d, i) => `${esc(d.name.replace(/\s*\b(schwer|leicht)\b/i, '') || 'Tag ' + (i + 1))}: <b>${altDays[i] === 'heavy' ? 'schwer' : 'leicht'}</b>`).join(' · ');
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">⚖️</span><h2>Schwere und leichte Tage abwechseln?</h2></div>
+      <p class="hint wiz-q-explain">Dein Plan ist fertig – jetzt geht es darum, in welchem <b>Wiederholungsbereich</b> du trainierst.
+        An <b>schweren</b> Tagen nimmst du mehr Gewicht für weniger Wiederholungen (${reps('heavy')}), an <b>leichten</b> Tagen
+        weniger Gewicht für mehr Wiederholungen (${reps('light')}). Sätze und Wiederholungen im Tank sind an beiden Tagen gleich –
+        es ändert sich nur, wie schwer und wie lang ein Satz ist. Beides baut Muskeln auf, solange du nah genug ans Muskelversagen gehst.</p>
+      ${opt('alt', `Abwechselnd schwer und leicht${alt ? ' (empfohlen)' : ''}`, alt
+        ? `Muskelgruppen, die mehrmals pro Woche dran sind, bekommen einmal einen schweren und einmal einen leichten Tag.
+          <span class="int-days">${pattern}</span>
+          <b>Vorteile:</b>${list(['zwei verschiedene Reize: schwere Tage für Kraft, leichte für Muskelaufbau und Ausdauer – zusammen meist der beste Mix',
+            'Gelenke, Sehnen und Nervensystem erholen sich besser, weil nicht jedes Training mit schweren Gewichten läuft',
+            'weniger Verletzungsrisiko durch geringere Dauerbelastung',
+            'mehr Abwechslung – die schweren Tage fühlen sich frischer an'])}
+          <b>Nachteile:</b>${list(['du arbeitest pro Übung mit zwei verschiedenen Gewichten (die App rechnet sie dir aus)',
+            'leichte Tage sind auf andere Art anstrengend: mehr Brennen im Muskel, mehr Puste, Sätze dauern länger',
+            'wirkt nur bei Muskelgruppen, die mindestens 2× pro Woche trainiert werden'])}`
+        : 'Geht bei deinem Plan nicht: Jede Muskelgruppe ist nur an einem Tag pro Woche dran. Abwechseln lohnt sich erst, wenn eine Muskelgruppe mehrmals pro Woche trainiert wird.', !alt)}
+      ${opt('heavy', 'Alle Tage schwer', `${reps('heavy')}
+        <b>Vorteile:</b>${list(['größter Fokus auf Kraft – besonders bei den Grundübungen',
+          'kürzere Sätze, weniger Brennen und Puste',
+          'ein einziger Gewichtsbereich pro Übung – einfach zu merken'])}
+        <b>Nachteile:</b>${list(['höhere Belastung für Gelenke, Sehnen und Nervensystem – Ermüdung sammelt sich schneller, der Deload wird wichtiger',
+          'höheres Verletzungsrisiko bei unsauberer Technik',
+          'für Neulinge, Wiedereinsteiger und Ältere eher weniger geeignet',
+          'weniger Abwechslung'])}`)}
+      ${opt('light', 'Alle Tage leicht', `${reps('light')}
+        <b>Vorteile:</b>${list(['gelenk- und sehnenschonend, weil weniger Gewicht bewegt wird',
+          'ideal, um die Technik zu lernen – gut für Neulinge, Ältere und nach Verletzungen',
+          'Muskelaufbau klappt genauso gut, solange du nah ans Muskelversagen gehst'])}
+        <b>Nachteile:</b>${list(['die Maximalkraft steigt langsamer',
+          'Sätze dauern länger, mehr Brennen und Puste – das Training ist etwas zeitaufwendiger',
+          'bei sehr vielen Wiederholungen ist schwerer einzuschätzen, wie viele noch im Tank sind'])}`)}
+      <p class="hint">Lässt sich später für jeden Trainingstag einzeln im Plan-Reiter ändern (Intensität: Schwer / Leicht).</p>
+    </div>
+    <div class="row"><button class="btn" data-action="wiz-step" data-to="preview">Zurück</button>
+      <button class="btn primary" data-action="wiz-step" data-to="deloadq">Weiter</button></div>`;
 }
 
 // Am Ende (Plan ist fertig): Deload automatisch oder selbst bestimmen
@@ -656,7 +739,7 @@ function renderWizDeload() {
         oder die Motivation fehlt. Beim nächsten Zyklus fragt die App, ob die Verlängerung beim Vergleich berücksichtigt werden
         soll. Für Erfahrene, die ihren Körper gut einschätzen können.`)}
     </div>
-    <div class="row"><button class="btn" data-action="wiz-step" data-to="preview">Zurück</button>
+    <div class="row"><button class="btn" data-action="wiz-step" data-to="intq">Zurück</button>
       <button class="btn primary" data-action="wiz-step" data-to="progq">Weiter</button></div>`;
 }
 
@@ -705,7 +788,7 @@ function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
   const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
-    basics: renderWizBasics, deloadq: renderWizDeload, progq: renderWizProg };
+    basics: renderWizBasics, intq: renderWizInt, deloadq: renderWizDeload, progq: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
   const groups = wizGroups();
@@ -828,7 +911,7 @@ function renderWizard() {
     const weeks = [1, 2, 3, 4].map(w => autoSetsForDay(day, w, false, wiz.volume));
     const dl = autoSetsForDay(day, 0, true, wiz.volume);
     const open = e => wiz.swapOpen && wiz.swapOpen.d === di && nameKey(wiz.swapOpen.n) === nameKey(e.name);
-    h += `<div class="card"><h2>${esc(day.name)} <small class="hint">· ${day.intensity === 'heavy' ? 'schwer' : 'leicht'}</small></h2>
+    h += `<div class="card"><h2>${esc(day.name)}</h2>
       <p class="hint">Sätze: Intro · W2 · W3 · W4 · Deload</p>
       <ul class="list reorder">${day.exercises.map(e => `<li class="wiz-ex"><div><b>${esc(e.name)}</b><br>
         <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
@@ -849,8 +932,8 @@ function renderWizard() {
   }
   return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>
-    <button class="btn primary" data-action="wiz-step" data-to="deloadq">Weiter</button></div>
-    <p class="hint">Zum Schluss noch zwei kurze Fragen: Deload und Steigerung.</p>`;
+    <button class="btn primary" data-action="wiz-step" data-to="intq">Weiter</button></div>
+    <p class="hint">Zum Schluss noch drei kurze Fragen: schwere/leichte Tage, Deload und Steigerung.</p>`;
 }
 
 /* --- Aktionen & Felder --- */
@@ -945,8 +1028,10 @@ function wizBack() {
     else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
   } else if (wiz.step === 'preview') {
     wiz.step = 'rir';
-  } else if (wiz.step === 'deloadq') {
+  } else if (wiz.step === 'intq') {
     wiz.step = 'preview';
+  } else if (wiz.step === 'deloadq') {
+    wiz.step = 'intq';
   } else if (wiz.step === 'progq') {
     wiz.step = 'deloadq';
   } else {
@@ -977,6 +1062,7 @@ Object.assign(actions, {
   'wiz-swap-ok': () => wizSwap($view.querySelector('[data-field="wiz-swap-name"]').value),
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-deload': el => { wiz.deload = el.dataset.m; render(); },
+  'wiz-int': el => { wiz.intMode = el.dataset.m; render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
   // Die Sätze pro Woche bleiben immer gleich (volDiv = perWeek).
   'wiz-freq': el => {
