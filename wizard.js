@@ -379,13 +379,13 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, prog: 1, prio: 2, low: 2, auto: 2,
-  volume: 3, rir: 4, manual: 5, preview: 5 };
+const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
+  volume: 3, rir: 4, manual: 5, preview: 5, deloadq: 6, progq: 6 };
 const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
   const own = wiz.mode === 'own';
-  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Basis', 'Fokus', 'Volumen', 'RIR', 'Übungen'];
+  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Basis', 'Fokus', 'Volumen', 'RIR', 'Übungen', 'Ende'];
   const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
   return `<div class="pills wiz-steps">${labels.map((l, i) =>
     `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
@@ -403,8 +403,9 @@ function wizFlow() {
     steps.push('days');
   }
   // Einstiegswoche wird erst beim ersten Training gefragt (plan.askEntry); nach dem Fokus kommt die Frage
-  // „automatisch erstellen?“, danach Volumen und RIR (erst nur zum Ansehen, mit „Bearbeiten“)
-  return [...steps, 'basics', 'prog', 'prio', 'low', 'auto', 'volume', 'rir'];
+  // „automatisch erstellen?“, danach Volumen und RIR (erst nur zum Ansehen, mit „Bearbeiten“); Deload und Steigerung
+  // werden erst ganz am Ende gefragt (Schritte deloadq/progq nach der Vorschau)
+  return [...steps, 'basics', 'prio', 'low', 'auto', 'volume', 'rir'];
 }
 
 // Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
@@ -630,23 +631,55 @@ function renderWizBasics() {
     'Ein Zyklus besteht aus der Intro-Woche zum Einsteigen, den Aufbauwochen, in denen es Woche für Woche etwas schwerer wird, und einer leichten Deload-Woche zum Erholen. Danach beginnt der nächste Zyklus. Eine Woche ist dabei ein Durchlauf: geschafft, sobald jeder Trainingstag dran war – egal, ob du dafür 6, 7 oder 9 Tage brauchst.',
     `<label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
-      <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro${wiz.deload === 'self' ? '' : ', danach 1 Woche Deload'}</small></span>
+      <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro, ohne Deload</small></span>
         <div class="stepper">${[4, 5].map(n =>
           `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
-      <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr${wiz.deload === 'self' ? '' : ' vor dem Deload'}.</p>
-      <p class="lbl chips-title">Deload</p>
-      <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
-        `<button class="vchip ${wiz.deload === m ? 'on' : ''}" data-action="wiz-deload" data-m="${m}">${l}</button>`).join('')}</div>
-      <p class="hint">${wiz.deload === 'self'
-        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter – Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter. Die Deload-Woche legst du selbst ein, wann du sie brauchst (Knopf auf dem Startbildschirm).'
-        : 'Nach den Trainingswochen folgt automatisch eine leichte Deload-Woche. Empfohlen, wenn du dich nicht selbst darum kümmern möchtest.'}</p>`);
+      <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr. Wie der Deload abläuft, legst du am Ende fest,
+        wenn dein Plan fertig ist.</p>`);
 }
 
-// Schritt „Progression“
+// Am Ende (Plan ist fertig): Deload automatisch oder selbst bestimmen
+function renderWizDeload() {
+  const opt = (m, title, text) => `<button class="split-opt freq-opt ${wiz.deload === m ? 'on' : ''}" data-action="wiz-deload" data-m="${m}">
+      <b>${title}</b><small>${text}</small></button>`;
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">😮‍💨</span><h2>Wie soll dein Deload ablaufen?</h2></div>
+      <p class="hint wiz-q-explain"><b>Was ist ein Deload?</b> Eine bewusst leichte Trainingswoche: halb so viele Sätze, etwa 20 %
+        weniger Gewicht und mindestens ${DELOAD_RIR} Wiederholungen im Tank. Über die Aufbauwochen sammelt sich Ermüdung an – in
+        Muskeln, Sehnen, Gelenken und im Nervensystem. Im Deload baut sie sich ab, ohne dass du Muskeln oder Kraft verlierst.
+        Danach bist du meist stärker als vorher, und der nächste Zyklus beginnt mit der Intro-Woche.</p>
+      ${opt('auto', 'Automatisch (empfohlen)', `Nach deinen ${wiz.weeks} Trainingswochen folgt immer automatisch die Deload-Woche – du
+        musst an nichts denken. Ideal für Neulinge und Einsteiger und für alle, die einen festen Rhythmus mögen.`)}
+      ${opt('self', 'Selbst bestimmen', `Nach der letzten Aufbauwoche geht es Woche für Woche weiter („Verlängerung“): Sätze und
+        Tank bleiben wie in der letzten Aufbauwoche, Gewicht und Wiederholungen steigen weiter. Den Deload legst du per Knopf auf
+        dem Startbildschirm ein, sobald du ihn brauchst – z. B. wenn Gelenke zwicken, die Kraft stagniert, du schlecht schläfst
+        oder die Motivation fehlt. Beim nächsten Zyklus fragt die App, ob die Verlängerung beim Vergleich berücksichtigt werden
+        soll. Für Erfahrene, die ihren Körper gut einschätzen können.`)}
+    </div>
+    <div class="row"><button class="btn" data-action="wiz-step" data-to="preview">Zurück</button>
+      <button class="btn primary" data-action="wiz-step" data-to="progq">Weiter</button></div>`;
+}
+
+// Ganz am Ende: Wie soll sich der Plan steigern?
 function renderWizProg() {
-  return wizCard('📈', 'Wie soll sich dein Plan steigern?',
-    'Normalerweise bleibt beides an. <b>Volumen</b> = mehr Sätze von Woche zu Woche. <b>Gewicht & Wdh.</b> = Steigerung von Training zu Training. Ausgeschaltet bleibt der jeweilige Stand, wie er ist. Lässt sich später jederzeit ändern – für den ganzen Zyklus, einzelne Wochen oder ein einzelnes Training.',
-    `<div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>`);
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📈</span><h2>Wie soll sich dein Plan steigern?</h2></div>
+      <p class="hint wiz-q-explain">Normalerweise bleibt <b>beides an</b> – so wird dein Training Woche für Woche ein bisschen
+        fordernder, und genau das bringt Fortschritt.</p>
+      <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>
+      <div class="prog-explain">
+        <p><b>Volumen:</b> Von Woche zu Woche kommen Sätze dazu – so wie du es vorhin in der Volumen-Tabelle gesehen hast
+          (Intro → Woche ${wiz.weeks}). <b>Aus:</b> Die Sätze bleiben den ganzen Zyklus auf dem Stand der Intro-Woche. Sinnvoll,
+          wenn du gerade wenig Zeit hast oder dich schlecht erholst.</p>
+        <p><b>Gewicht & Wdh.:</b> Die App schlägt dir von Training zu Training etwas mehr Gewicht oder mehr Wiederholungen vor –
+          passend zu deinem Ziel im Tank. <b>Aus:</b> Im Training stehen immer deine Werte vom letzten Mal; das Tank-Ziel läuft
+          trotzdem weiter. Sinnvoll, wenn du z. B. erst die Technik lernen willst oder nach einer Verletzung vorsichtig bist.</p>
+        <p>Lässt sich später jederzeit ändern – für den ganzen Zyklus, einzelne Wochen oder ein einzelnes Training.</p>
+      </div>
+    </div>
+    <div class="row"><button class="btn" data-action="wiz-step" data-to="deloadq">Zurück</button>
+      <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
+    <p class="hint">Der Plan wird zusätzlich zu deinen bisherigen Plänen gespeichert und aktiv gesetzt.</p>`;
 }
 
 // Schwerpunkt-Fragen: wie die Beschwerde-Abfrage, höchstens 2 Muskelgruppen
@@ -665,14 +698,14 @@ function renderWizFocus(kind) {
       <button class="btn primary" data-action="wiz-step" data-to="${prio ? 'low' : 'auto'}">Weiter</button>
     </div>
   </div>
-  <div class="row"><button class="btn" data-action="wiz-step" data-to="${prio ? 'prog' : 'prio'}">Zurück</button></div>`;
+  <div class="row"><button class="btn" data-action="wiz-step" data-to="${prio ? 'basics' : 'prio'}">Zurück</button></div>`;
 }
 
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
   const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
-    basics: renderWizBasics, prog: renderWizProg };
+    basics: renderWizBasics, deloadq: renderWizDeload, progq: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
   const groups = wizGroups();
@@ -816,8 +849,8 @@ function renderWizard() {
   }
   return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>
-    <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
-    <p class="hint">Der Plan wird zusätzlich zu deinen bisherigen Plänen gespeichert und aktiv gesetzt.</p>`;
+    <button class="btn primary" data-action="wiz-step" data-to="deloadq">Weiter</button></div>
+    <p class="hint">Zum Schluss noch zwei kurze Fragen: Deload und Steigerung.</p>`;
 }
 
 /* --- Aktionen & Felder --- */
@@ -912,6 +945,10 @@ function wizBack() {
     else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
   } else if (wiz.step === 'preview') {
     wiz.step = 'rir';
+  } else if (wiz.step === 'deloadq') {
+    wiz.step = 'preview';
+  } else if (wiz.step === 'progq') {
+    wiz.step = 'deloadq';
   } else {
     const to = wizPrev();
     if (to === 'cancel') return ['plan', {}];

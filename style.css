@@ -1350,3 +1350,7 @@ button.pill:active { transform: scale(.95); }
 .nut-train p:first-child { margin: 0; font-size: 17px; }
 .nut-train .btn { margin-top: 12px; }
 table.vol.view td { font-weight: 650; }
+.prog-explain { margin-top: 14px; font-size: 15.5px; line-height: 1.5; }
+.prog-explain p { margin: 0 0 10px; }
+.wiz-steps { gap: 3px; }
+.wiz-steps .pill { flex: 1 1 auto; padding: 7px 4px; font-size: 11.5px; text-overflow: clip; }
