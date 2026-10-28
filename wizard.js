@@ -257,6 +257,7 @@ function wizStart() {
     weekWanted: {},                    // eingetippte Sätze pro Woche (Muskelgruppe -> [Intro…W4]), werden beim Speichern genau verteilt
     prio: [], low: [],
     volume: {}, volKey: {}, rir: {}, picks: {}, gi: 0,
+    swaps: {}, swapOpen: null,         // Vorschau: an einzelnen Tagen ersetzte Übungen, offenes Ersetzen-Feld
   };
   go('wizard');
 }
@@ -354,11 +355,17 @@ function syncGroups() {
 }
 
 // Trainingstage aus dem Entwurf: Übungen der Muskelgruppen des Tages, sortiert Grund → Normal → Assistenz
+// wiz.swaps[Tag] = { ursprüngliche Übung (nameKey) -> Ersatz }: in der Vorschau nur an diesem Tag ausgetauscht
 function buildPlanDays() {
-  return wiz.days.map(d => {
+  return wiz.days.map((d, di) => {
     const list = [];
+    const swaps = (wiz.swaps || {})[di] || {};
     for (const g of PLAN_GROUPS.filter(x => d.groups.includes(x))) {
-      for (const name of wiz.picks[g] || []) list.push([name, g]);
+      for (const pick of wiz.picks[g] || []) {
+        const name = swaps[nameKey(pick)] || pick;
+        const ng = groupOf({ name });  // Ersatz aus einer anderen Muskelgruppe zählt dort
+        list.push([name, name !== pick && PLAN_GROUPS.includes(ng) ? ng : g]);
+      }
     }
     list.sort((a, b) => KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
     return {
@@ -769,14 +776,17 @@ function renderWizard() {
     h += `<p class="hint">${wiz.prio.length ? `⭐ Priorität: ${wiz.prio.map(g => MUSCLES[g]).join(', ')}` : ''}
       ${wiz.prio.length && wiz.low.length ? ' · ' : ''}${wiz.low.length ? `😌 Low: ${wiz.low.map(g => MUSCLES[g]).join(', ')}` : ''}</p>`;
   }
-  for (const day of buildPlanDays()) {
+  for (const [di, day] of buildPlanDays().entries()) {
     const weeks = [1, 2, 3, 4].map(w => autoSetsForDay(day, w, false, wiz.volume));
     const dl = autoSetsForDay(day, 0, true, wiz.volume);
+    const open = e => wiz.swapOpen && wiz.swapOpen.d === di && nameKey(wiz.swapOpen.n) === nameKey(e.name);
     h += `<div class="card"><h2>${esc(day.name)} <small class="hint">· ${day.intensity === 'heavy' ? 'schwer' : 'leicht'}</small></h2>
       <p class="hint">Sätze: Intro · W2 · W3 · W4 · Deload</p>
       <ul class="list reorder">${day.exercises.map(e => `<li class="wiz-ex"><div><b>${esc(e.name)}</b><br>
         <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
-        ${libInfoBtn(e.name)}</li>`).join('') ||
+        ${libInfoBtn(e.name)}
+        <button class="icon-btn swap" data-action="wiz-swap-open" data-d="${di}" data-n="${esc(e.name)}" aria-label="${esc(e.name)} ersetzen">⇄<small>Ersetzen</small></button></li>
+        ${open(e) ? `<li class="wiz-swap">${wizSwapPanel(e.name, day)}</li>` : ''}`).join('') ||
         '<li class="hint">Keine Übungen</li>'}</ul>
       <p class="hint">Summe pro Training: ${weeks.map(m => [...m.values()].reduce((a, b) => a + b, 0)).join(' · ')}</p>
     </div>`;
@@ -816,7 +826,7 @@ function wizAddDay(t) {
 
 // Vorlagen können vorgeben, wie oft jeder Tag pro Woche läuft (Sätze pro Training dann passend aufgeteilt)
 // Neue Tage/Häufigkeit -> Volumen, RIR, Übungen und Schwerpunkte werden neu vorgeschlagen
-const wizResetPlan = () => Object.assign(wiz, { volume: {}, volKey: {}, rir: {}, picks: {}, prio: [], low: [], weekWanted: {} });
+const wizResetPlan = () => Object.assign(wiz, { volume: {}, volKey: {}, rir: {}, picks: {}, prio: [], low: [], weekWanted: {}, swaps: {} });
 
 // Nach Aufteilung bzw. Vorlage zum nächsten Schritt (Häufigkeit nur bei Vorlagen mit Paaren)
 function wizAfterSplit() {
@@ -827,6 +837,41 @@ function wizAfterSplit() {
   const f = wizFlow();
   wiz.step = f[f.indexOf('split') + 1];
   go('wizard');
+}
+
+// Vorschau: Übung an einem Tag ersetzen – Schnellauswahl verwandter Übungen (ein Tipp tauscht) oder suchen
+function wizSwapPanel(name, day) {
+  const quick = relatedExercises(name, 6, day.exercises.map(e => e.name));
+  return `<div class="replace">
+    <p class="lbl">„${esc(name)}“ ersetzen – nur an diesem Tag</p>
+    ${quick.length ? `<p class="hint quick-title">Schnellauswahl – ähnliche Übungen:</p>
+      <div class="quick-picks">${quick.map(q => `<button class="vchip" data-action="wiz-swap-pick" data-name="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+      <p class="hint quick-title">… oder selbst suchen:</p>` : ''}
+    <input class="inp" type="text" data-field="wiz-swap-name" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
+    <div class="suggest" hidden></div>
+    <div class="row">
+      <button class="btn" data-action="wiz-swap-cancel">Abbrechen</button>
+      <button class="btn primary" data-action="wiz-swap-ok">Ersetzen</button>
+    </div>
+  </div>`;
+}
+
+// Übung (wiz.swapOpen = { d: Tag, n: angezeigter Name }) an diesem Tag gegen name tauschen
+function wizSwap(name) {
+  const { d, n } = wiz.swapOpen;
+  name = name.trim();
+  if (!name) { alert('Bitte eine Übung eingeben oder antippen.'); return; }
+  const day = buildPlanDays()[d];
+  if (nameKey(name) !== nameKey(n) && day.exercises.some(e => nameKey(e.name) === nameKey(name))) {
+    alert(`„${name}“ ist an diesem Tag schon dabei.`); return;
+  }
+  const map = (wiz.swaps[d] = wiz.swaps[d] || {});
+  // schon einmal ersetzt? Dann gilt der Tausch für die ursprüngliche Übung
+  const orig = Object.keys(map).find(k => nameKey(map[k]) === nameKey(n)) || nameKey(n);
+  if (orig === nameKey(name)) delete map[orig]; else map[orig] = name;
+  wiz.swapOpen = null;
+  render();
+  toast(`Ersetzt durch ${name}`);
 }
 
 // eigener Plan: leere Übungszeile (Standard 3 × 10)
@@ -867,6 +912,17 @@ views.wizard = { title: 'Neuer Plan', tab: 'plan', back: wizBack, render: render
 Object.assign(actions, {
   'wiz-start': () => wizStart(),
   'wiz-cancel': () => actions.cancel(),
+  // Vorschau: Übung an einem Tag ersetzen
+  'wiz-swap-open': el => {
+    const same = wiz.swapOpen && wiz.swapOpen.d === +el.dataset.d && wiz.swapOpen.n === el.dataset.n;
+    wiz.swapOpen = same ? null : { d: +el.dataset.d, n: el.dataset.n };
+    render();
+    const panel = $view.querySelector('.wiz-swap');
+    if (panel) panel.scrollIntoView({ block: 'nearest' });
+  },
+  'wiz-swap-cancel': () => { wiz.swapOpen = null; render(); },
+  'wiz-swap-pick': el => wizSwap(el.dataset.name),
+  'wiz-swap-ok': () => wizSwap($view.querySelector('[data-field="wiz-swap-name"]').value),
   'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
   'wiz-deload': el => { wiz.deload = el.dataset.m; render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
@@ -1087,6 +1143,7 @@ Object.assign(actions, {
 
 Object.assign(fields, {
   'wiz-name': el => { wiz.name = el.value; },
+  'wiz-swap-name': el => showSuggestions(el),
   'wiz-dayname': el => { wiz.days[el.dataset.d].name = el.value; },
   // eigener Plan (Werte als Text, ausgewertet beim Speichern)
   'own-dayname': el => { wiz.own[wiz.oi].name = el.value; },

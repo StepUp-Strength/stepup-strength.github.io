@@ -22,7 +22,7 @@ function figJoints(pose, front) {
     if (q[k + 'l2'] == null) q[k + 'l2'] = q[k + 'l'];
   }
   const j = { hip: [0, 0] };
-  j.sh = figAdd(figVec(q.torso, FIG.torso), [0, -(q.lift || 0)]);
+  j.sh = figAdd(figVec(q.torso, FIG.torso * (q.tl || 1)), [0, -(q.lift || 0)]);  // tl: Rumpf verkürzt (vorgebeugt, von vorn)
   j.head = figAdd(j.sh, figVec(q.torso + (q.nk || 0), FIG.neck));
   const so = front ? FIG.shW : 0, ho = front ? FIG.hipW : 0;
   j.s1 = figAdd(j.sh, [-so, 0]); j.s2 = figAdd(j.sh, [so, 0]);
@@ -31,6 +31,7 @@ function figJoints(pose, front) {
   j.ha = figAdd(j.el, figVec(q.fa, FIG.fa * (q.fal || 1)));
   j.el2 = figAdd(j.s2, figVec(q.ua2, FIG.ua * (q.ual2 || 1)));
   j.ha2 = figAdd(j.el2, figVec(q.fa2, FIG.fa * (q.fal2 || 1)));
+  j.hm = [(j.ha[0] + j.ha2[0]) / 2, (j.ha[1] + j.ha2[1]) / 2];  // Mitte zwischen den Händen (z. B. Mitte der Stange)
   j.kn = figAdd(j.h1, figVec(q.th, FIG.th * (q.thl || 1)));
   j.ft = figAdd(j.kn, figVec(q.sn, FIG.sn * (q.snl || 1)));
   j.kn2 = figAdd(j.h2, figVec(q.th2, FIG.th * (q.thl2 || 1)));
@@ -56,6 +57,16 @@ function figGear(g, J, cls) {
     case 'line': {
       const v = figVec(g.ang || 0, (g.len || 24) / 2);
       return [{ tag: 'line', cls: 'fg-line ' + cls, a: { x1: p[0] - v[0], y1: p[1] - v[1], x2: p[0] + v[0], y2: p[1] + v[1] } }];
+    }
+    // Stange, die am Boden verankert ist (T-Bar, Landmine): durchgezogene Linie vom Ankerpunkt, Scheibe am Ende
+    case 'pole': return [
+      { tag: 'line', cls: 'fg-line ' + cls, a: { x1: g.from[0], y1: g.from[1], x2: p[0], y2: p[1] } },
+      { tag: 'circle', cls: 'fg-plate ' + cls, a: { cx: p[0], cy: p[1], r: g.r || 7 } },
+    ];
+    // Griff zwischen zwei Gelenken (z. B. Latzugstange zwischen beiden Händen in der Vorderansicht)
+    case 'span': {
+      const q = J[g.to];
+      return [{ tag: 'line', cls: 'fg-line ' + cls, a: { x1: at[0], y1: at[1], x2: q[0], y2: q[1] } }];
     }
     case 'cable': return [
       { tag: 'line', cls: 'fg-cable ' + cls, a: { x1: g.from[0], y1: g.from[1], x2: p[0], y2: p[1] } },
@@ -181,11 +192,26 @@ const FIG_PATTERNS = {
     props: BENCH, gear: [{ at: 'ha', type: 'db', from: [40, 146] }],
     poses: [{ ...LYING, ua: 95, ual: .8, fa: 100, fal: .8 }, { ...LYING, ua: -85, fa: -72 }],
   },
+  // Kabelzug-Fliegende von vorn: von oben (crossover), auf Schulterhöhe (crossoverMid), von unten (crossoverLow)
   crossover: {
     front: true, gear: [{ at: 'ha', type: 'cable', from: [12, 6] }, { at: 'ha2', type: 'cable', from: [188, 6] }],
     poses: [
       { ...FRONT, ua: 205, fa: 215 },
       { ...FRONT, ua: 70, ual: .8, fa: 80, fal: .8 },
+    ],
+  },
+  crossoverMid: {
+    front: true, gear: [{ at: 'ha', type: 'cable', from: [12, 40] }, { at: 'ha2', type: 'cable', from: [188, 40] }],
+    poses: [
+      { ...FRONT, ua: 183, fa: 188 },
+      { ...FRONT, ua: 20, ual: .45, fa: 60, fal: .6 },
+    ],
+  },
+  crossoverLow: {
+    front: true, gear: [{ at: 'ha', type: 'cable', from: [12, 146] }, { at: 'ha2', type: 'cable', from: [188, 146] }],
+    poses: [
+      { ...FRONT, ua: 150, fa: 140 },
+      { ...FRONT, ua: -5, ual: .4, fa: -70, fal: .55 },
     ],
   },
   dips: {
@@ -285,6 +311,11 @@ const FIG_PATTERNS = {
   lateral: {
     front: true, gear: [{ at: 'ha', type: 'db', from: [178, 146] }, { at: 'ha2', type: 'db', from: [22, 146] }], thumb: 1,
     poses: [{ ...FRONT, ua: 100, fa: 95 }, { ...FRONT, ua: 172, fa: 165 }],
+  },
+  // Einarmig am Kabel: eine Hand hält den Kabelturm, die andere zieht das Kabel von unten vor dem Körper seitlich hoch
+  lateralOne: {
+    front: true, props: [['l', 160, 18, 160, 148, 5]], gear: [{ at: 'ha', type: 'cable', from: [157, 140] }], thumb: 1,
+    poses: [{ ...FRONT, ua: 100, fa: 95, ua2: 15, fa2: 5 }, { ...FRONT, ua: 172, fa: 165, ua2: 15, fa2: 5 }],
   },
   frontraise: {
     gear: [{ at: 'ha', type: 'db', from: [70, 146] }], thumb: 1,
@@ -664,6 +695,19 @@ const FIG_TEXT = {
       'Mit leicht gebeugten Armen in einem Bogen vor dem Körper zusammenführen.', 'Kurz halten, dann kontrolliert zurück.'],
     tips: ['Oberkörper ruhig und leicht nach vorn geneigt.', 'Zugrichtung bestimmt den Schwerpunkt: von oben = untere Brust, von unten = obere Brust.'],
   },
+  crossoverMid: {
+    also: 'vordere Schulter',
+    steps: ['Zwischen zwei Kabelzügen stehen, Rollen etwa auf Schulterhöhe, Griffe fassen, einen kleinen Schritt nach vorn.',
+      'Mit leicht gebeugten Armen in einem waagerechten Bogen vor der Brust zusammenführen.', 'Kurz halten, dann kontrolliert öffnen, bis die Brust gedehnt ist.'],
+    tips: ['Ellbogenwinkel bleibt während der ganzen Bewegung gleich.', 'Schultern unten lassen, Brust raus.'],
+  },
+  crossoverLow: {
+    also: 'vordere Schulter',
+    steps: ['Rollen ganz unten einstellen, Griffe fassen und mittig zwischen die Kabelzüge stellen.',
+      'Arme leicht gebeugt seitlich unten – in einem Bogen nach vorn oben führen.',
+      'Die Hände treffen sich vor dem Körper etwa auf Schulter- bzw. Kinnhöhe, dann langsam zurück.'],
+    tips: ['Betont die obere Brust.', 'Nicht ins Hohlkreuz gehen, Oberkörper aufrecht.'],
+  },
   dips: {
     also: 'Trizeps, vordere Schulter',
     steps: ['Am Barren stützen, Arme gestreckt, Schultern nach unten.', 'Kontrolliert absenken, bis die Oberarme etwa waagerecht sind.',
@@ -766,6 +810,13 @@ const FIG_TEXT = {
     steps: ['Aufrecht stehen, Gewichte seitlich am Körper, Arme leicht gebeugt.', 'Arme seitlich bis etwa Schulterhöhe heben.',
       'Langsam absenken.'],
     tips: ['Nicht höher als Schulterhöhe, Schultern unten lassen.', 'Kleine Gewichte, kein Schwung.'],
+  },
+  lateralOne: {
+    also: 'Trapez',
+    steps: ['Seitlich neben den Kabelzug stellen, Rolle ganz unten. Mit der Hand auf der Seite des Kabelzugs festhalten.',
+      'Mit der anderen Hand den Griff fassen – das Kabel läuft vor dem Körper.',
+      'Arm leicht gebeugt seitlich bis etwa Schulterhöhe heben, langsam absenken. Danach Seite wechseln.'],
+    tips: ['Nicht höher als Schulterhöhe, Schultern unten lassen.', 'Oberkörper ruhig – nicht vom Kabelzug wegkippen.'],
   },
   frontraise: {
     also: 'Brust (oben)',
@@ -1044,13 +1095,13 @@ const LIB_EX = {
   'Brustpresse Maschine Negativ': ['chestpress', 'Drückt schräg nach unten – betont die untere Brust.'],
   'Brustpresse Kabelzug stehend': ['crossover', 'Im Stand nach vorn drücken – Rumpf muss mitstabilisieren.'],
   'Butterfly Maschine': ['fly', 'Geführt – die Brust arbeitet ohne Trizeps.'],
-  'Butterfly Kabelzug': ['crossover', 'Zwischen zwei Kabelzügen auf Schulterhöhe – die Spannung bleibt über die ganze Bewegung gleich.'],
+  'Butterfly Kabelzug': ['crossoverMid','Zwischen zwei Kabelzügen auf Schulterhöhe – die Spannung bleibt über die ganze Bewegung gleich.'],
   'Fliegende Flachbank (Kurzhantel)': ['flyLying', 'Auf der Flachbank – ganze Brust.'],
   'Fliegende Schrägbank (Kurzhantel)': ['flyLying', 'Auf der Schrägbank (ca. 30°) – obere Brust.'],
   'Fliegende Negativbank (Kurzhantel)': ['flyLying', 'Auf der Negativbank – untere Brust.'],
-  'Kabelzug Crossover': ['crossover', 'Zug von Schulterhöhe – ganze Brust.'],
+  'Kabelzug Crossover': ['crossoverMid','Zug von Schulterhöhe – ganze Brust.'],
   'Kabelzug Crossover von oben': ['crossover', 'Zug von oben nach unten – betont die untere Brust.'],
-  'Kabelzug Crossover von unten': ['crossover', 'Zug von unten nach oben – betont die obere Brust.'],
+  'Kabelzug Crossover von unten': ['crossoverLow','Zug von unten nach oben – betont die obere Brust.'],
   'Kabelzug Fliegende Schrägbank': ['flyLying', 'Auf der Schrägbank zwischen zwei Kabelzügen – obere Brust, gleichmäßige Spannung.'],
   'Dips (Brust)': ['dips', 'Oberkörper deutlich nach vorn neigen, Ellbogen etwas nach außen.'],
   'Dips assistiert (Maschine)': ['dips', 'Die Maschine nimmt einen Teil des Körpergewichts ab – mehr Gewicht = leichter.'],
@@ -1135,7 +1186,7 @@ const LIB_EX = {
   'Seitheben Kurzhantel sitzend': ['lateral', 'Sitzend – weniger Schwung möglich.'],
   'Seitheben liegend (Schrägbank)': ['lateral', 'Seitlich auf der Schrägbank liegend, ein Arm – Spannung schon ganz unten.'],
   'Seitheben Kabelzug': ['lateral', 'Kabel von unten auf der Gegenseite – gleichmäßige Spannung.'],
-  'Seitheben Kabelzug einarmig': ['lateral', 'Einarmig am Kabel – mit der freien Hand festhalten.', 'cable'],
+  'Seitheben Kabelzug einarmig': ['lateralOne', 'Einarmig seitlich neben dem Kabelzug – mit der freien Hand festhalten.'],
   'Seitheben Maschine': ['lateral', 'Geführt – Polster außen an den Oberarmen.'],
   'Y-Raises': ['lateral', 'Arme schräg nach vorn-oben in Y-Form heben, oft vorgebeugt oder auf der Schrägbank.'],
   'Frontheben Kurzhantel': ['frontraise', 'Abwechselnd oder beidarmig.'],
@@ -1279,9 +1330,318 @@ const LIB_EX = {
   'Seilspringen': ['jumprope', 'Koordination und Ausdauer.'],
 };
 
+/* ---------- Abwandlungen für einzelne Übungen ---------- */
+// Damit Varianten derselben Bewegung unterschiedlich aussehen (Bankneigung, einarmig, Gerät, Ansicht …).
+const RAIL = x => ['l', x, 6, x, 148, 2.5];  // Führungsschiene der Multipresse (hinter der Figur)
+const INCLINE_BENCH = [['r', 96, 103, 36, 7], ['l', 100, 106, 56, 85, 7], ['l', 106, 110, 106, 148, 4],
+  ['l', 126, 110, 126, 148, 4], ['l', 80, 96, 80, 148, 4]];
+const DECLINE_BENCH = [['r', 96, 103, 36, 7], ['l', 100, 106, 58, 123, 7], ['l', 106, 110, 106, 148, 4],
+  ['l', 128, 110, 128, 148, 4], ['l', 66, 125, 66, 148, 4]];
+const INCLINE = { props: INCLINE_BENCH, pose: { torso: 206 }, each: [{}, { ua: -100, fa: -102 }] };
+const DECLINE = { props: DECLINE_BENCH, pose: { torso: 158 }, each: [{}, { ua: -78, fa: -80 }] };
+const FLY_INCLINE = { props: INCLINE_BENCH, pose: { torso: 206 }, each: [{ ua: 110, fa: 115 }, { ua: -100, fa: -88 }] };
+const FLY_DECLINE = { props: DECLINE_BENCH, pose: { torso: 158 }, each: [{ ua: 80, fa: 85 }, { ua: -78, fa: -65 }] };
+const withRail = (m, x) => ({ ...m, addProps: [...(m.addProps || []), RAIL(x)] });
+// Ausfallschritte mit der Langhantel auf den Schultern
+const BARBELL_LUNGE = {
+  gear: [{ at: 'sh', type: 'plate', off: [-4, -3], r: 11, fixed: true }], pose: { ua: 150, fa: -30, ua2: 150, fa2: -30 },
+};
+// Crunches/Sit-ups auf der Negativbank: Kopf tiefer, Füße oben eingehakt
+const DECLINE_SIT = {
+  props: [['l', 36, 146, 172, 108, 7], ['c', 164, 118, 5]],
+  pose: { root: 'hip', at: [104, 122], th: -15, sn: 20 },
+};
+// Hackenschmidt/Pendulum: an das schräge Rückenpolster gelehnt, Füße vorn auf der Plattform, Schulterpolster
+const HACK = {
+  props: [['l', 112, 147, 146, 134, 5]],
+  gear: [{ at: 'sh', type: 'line', ang: -125, len: 40, off: [9, 21], fixed: true }, { at: 'sh', type: 'pad', off: [3, -5], r: 5, fixed: true }],
+  poses: [
+    { root: 'ft', at: [126, 140], fo: -20, torso: -125, th: 58, sn: 58, ua: 60, fa: -40 },
+    { root: 'ft', at: [126, 140], fo: -20, torso: -125, th: -8, sn: 98, ua: 60, fa: -40 },
+  ],
+};
+
+const LIB_MOD = {
+  // ----- Brust -----
+  'Bankdrücken Flachbank (Multipresse)': withRail({}, 74),
+  'Bankdrücken Schrägbank (Langhantel)': INCLINE,
+  'Bankdrücken Schrägbank (Multipresse)': withRail(INCLINE, 62),
+  'Bankdrücken Negativbank (Langhantel)': DECLINE,
+  'Bankdrücken Schrägbank (Kurzhantel)': INCLINE,
+  'Bankdrücken Negativbank (Kurzhantel)': DECLINE,
+  'Fliegende Schrägbank (Kurzhantel)': FLY_INCLINE,
+  'Fliegende Negativbank (Kurzhantel)': FLY_DECLINE,
+  'Bankdrücken enger Griff': { each: [{ ua: 55, ual: .65, fa: -82 }, {}] },
+  'Bankdrücken Floor Press': {
+    props: [], poses: [
+      { root: 'hip', at: [112, 140], torso: 180, th: -55, sn: 62, ua: 90, ual: .15, fa: -86 },
+      { root: 'hip', at: [112, 140], torso: 180, th: -55, sn: 62, ua: -85, fa: -88 },
+    ],
+  },
+  // ----- Rücken: Rudern -----
+  'Rudern Langhantel Pendlay': { pose: { torso: -2, th: 48 }, each: [{ ua: 92, fa: 92 }, { ua: 205, fa: 92 }] },
+  'Rudern Langhantel Untergriff': { pose: { torso: -34, th: 66 }, each: [{}, { ua: 195, fa: 85 }] },
+  'Rudern T-Bar': { gear: [{ at: 'ha', type: 'pole', from: [14, 146], r: 9, fixed: true }] },
+  'Rudern T-Bar eng': { gear: [{ at: 'ha', type: 'pole', from: [14, 146], r: 9, fixed: true }] },
+  'Rudern T-Bar breit': { gear: [{ at: 'ha', type: 'pole', from: [14, 146], r: 9, fixed: true }] },
+  'Rudern T-Bar brustgestützt': {
+    props: [['l', 84, 83, 108, 63, 8], ['l', 92, 80, 92, 148, 4]],
+    gear: [{ at: 'ha', type: 'pole', from: [186, 146], r: 9, fixed: true }],
+    pose: { at: [84, 145], torso: -40, th: 72, sn: 92 }, each: [{ ua: 88, fa: 88 }, { ua: 205, fa: 88 }],
+  },
+  'Meadows Row': {
+    gear: [{ at: 'ha', type: 'pole', from: [190, 146], r: 9, fixed: true }],
+    pose: { torso: -12, th: 55, ua2: 70, fa2: 45 }, each: [{ ua: 95, fa: 95 }, { ua: 205, fa: 95 }],
+  },
+  'Rudern Multipresse': { addProps: [RAIL(118)] },
+  'Rudern Kurzhantel einarmig': {
+    props: [['r', 122, 100, 60, 7], ['l', 130, 107, 130, 148, 4], ['l', 174, 107, 174, 148, 4]],
+    pose: { at: [84, 145], torso: -6, th: 62, sn: 98, ua2: 80, fa2: 88 }, each: [{ ua: 90, fa: 90 }, { ua: 205, fa: 90 }],
+  },
+  'Rudern Kurzhantel brustgestützt (Schrägbank)': {
+    props: [['l', 86, 112, 136, 80, 8], ['l', 104, 104, 104, 148, 4], ['r', 80, 112, 24, 6]],
+    poses: [
+      { root: 'hip', at: [92, 104], torso: -36, th: 125, sn: 95, fo: 0, ua: 90, fa: 90 },
+      { root: 'hip', at: [92, 104], torso: -36, th: 125, sn: 95, fo: 0, ua: 205, fa: 88 },
+    ],
+  },
+  'Rudern Maschine brustgestützt': { addProps: [['l', 104, 56, 108, 92, 7]], pose: { torso: -88 } },
+  'Rudern Maschine einarmig': { pose: { ua2: 75, fa2: -5 } },
+  'Rudern Kabelzug einarmig': { pose: { ua2: 75, fa2: -5 } },
+  'Low Row Maschine': { each: [{ torso: -60, ua: 25, fa: 25 }, { torso: -98, ua: 165, fa: 10 }] },
+  'Bankdrücken Schrägmaschine': { pose: { torso: -112 }, each: [{ ua: 160, fa: -35 }, { ua: -42, fa: -42 }] },
+  'Brustpresse Maschine Negativ': { each: [{ ua: 165, fa: 22 }, { ua: 25, fa: 25 }] },
+  'Brustpresse Maschine einarmig': { pose: { ua2: 78, fa2: 8 } },
+  'Brustpresse Kabelzug stehend': {
+    pattern: 'chestpress', set: { front: false }, props: [['l', 6, 30, 6, 148, 4]], gear: [{ at: 'ha', type: 'cable', from: [8, 52] }],
+    poses: [
+      { ...STAND, at: [104, 145], sn: 96, th: 84, torso: -88, ua: 165, fa: -5 },
+      { ...STAND, at: [104, 145], sn: 96, th: 84, torso: -84, ua: -2, fa: -2 },
+    ],
+  },
+  'Kabelzug Crossover': { each: [{}, { ua: 38, ual: .5, fa: 75, fal: .7 }] },
+  'Dips (Brust)': { each: [{ torso: -68 }, { torso: -52 }] },
+  'Dips (Trizeps)': { pose: { torso: -86 } },
+  'Dips assistiert (Maschine)': {
+    addProps: [['l', 132, 30, 132, 148, 4]], gear: [{ at: 'kn', type: 'pad', r: 6, off: [0, 6], fixed: true }],
+    pose: { th: 100, sn: 175 },
+  },
+  'Dips Maschine': {
+    props: [...SEAT, ...BACKREST], gear: [{ at: 'ha', type: 'bar', fixed: true }],
+    poses: [{ ...SEATED, ua: 118, fa: 55 }, { ...SEATED, ua: 96, fa: 94 }],
+  },
+  'Liegestütze erhöht': {
+    props: [['r', 40, 117, 34, 31, 3]],
+    poses: [
+      { root: 'ha', at: [58, 117], ua: 90, fa: 90, torso: 197, th: 17, sn: 17, fo: 110 },
+      { root: 'ha', at: [58, 117], ua: -15, fa: 120, torso: 184, th: 4, sn: 4, fo: 100 },
+    ],
+  },
+  'Liegestütze eng': { each: [{}, { ua: 5, fa: 118 }] },
+  // ----- Arme: Trizeps -----
+  'Trizepsdrücken Kabelzug einarmig': { pose: { ua2: 92, fa2: 92 } },
+  // ----- Arme: Bizeps -----
+  'Drag Curls': { each: [{}, { ua: 128, fa: -62 }] },
+  'Bizepscurls Kabelzug einarmig': { pose: { ua2: 88, fa2: 88 } },
+  'Bizepscurls Kabelzug hinter dem Körper (Bayesian)': {
+    props: [['l', 8, 30, 8, 148, 4]], gear: [{ at: 'ha', type: 'cable', from: [10, 132] }],
+    each: [{ ua: 118, fa: 118 }, { ua: 118, fa: -40 }],
+  },
+  'Bizepscurls Kurzhantel Schrägbank': {
+    props: [['r', 64, 113, 42, 6], ['l', 86, 119, 86, 148, 4], ['l', 68, 114, 44, 66, 6]],
+    poses: [{ ...SEATED, torso: -118, ua: 100, fa: 100 }, { ...SEATED, torso: -118, ua: 100, fa: -40 }],
+  },
+  'Konzentrationscurls': {
+    props: SEAT,
+    poses: [{ ...SEATED, at: [78, 111], torso: -52, ua: 86, fa: 88 }, { ...SEATED, at: [78, 111], torso: -52, ua: 86, fa: -62 }],
+  },
+  'Spider Curls': {
+    props: [['l', 82, 118, 128, 84, 8], ['l', 104, 104, 104, 148, 4]],
+    poses: [
+      { root: 'hip', at: [88, 110], torso: -38, th: 122, sn: 95, fo: 0, ua: 90, fa: 90 },
+      { root: 'hip', at: [88, 110], torso: -38, th: 122, sn: 95, fo: 0, ua: 90, fa: -38 },
+    ],
+  },
+  // ----- Schultern -----
+  'Landmine Press': { gear: [{ at: 'ha', type: 'pole', from: [12, 146], r: 7, fixed: true }], each: [{}, { ua: -48, fa: -48 }] },
+  'Schulterdrücken Multipresse': { addProps: [RAIL(90)] },
+  'Arnold Press': {
+    poses: [{ ...SEATED, ua: 22, fa: -88 }, { ...SEATED, ua: 76, fa: -82 }, { ...SEATED, ua: -85, fa: -88 }],
+  },
+  'Seitheben Kurzhantel sitzend': {
+    set: { noFeet: true }, props: [['r', 66, 100, 68, 8], ['l', 100, 108, 100, 148, 4]],
+    pose: { root: 'hip', at: [100, 100], th: 95, thl: .4, sn: 90 },
+  },
+  'Y-Raises': { each: [{}, { ua: -128, fa: -128 }] },
+  'Frontheben Hantelscheibe': { gear: [{ at: 'ha', type: 'plate', r: 13, fixed: true }], each: [{}, { ua: -22, fa: -22 }] },
+  // ----- Beine: Einbeinig, Ausfallschritte, Waden -----
+  'Beinstrecker einbeinig': { pose: { th2: 0, sn2: 95 } },
+  'Beinbeuger stehend einbeinig': {
+    props: [['r', 118, 62, 8, 46, 3], ['l', 122, 108, 122, 148, 4]],
+    gear: [{ at: 'ft', type: 'pad', r: 5.5, off: [4, 0], fixed: true }],
+    poses: [
+      { root: 'ft2', at: [98, 145], torso: -80, th: 95, sn: 95, th2: 90, sn2: 90, fo2: 0, ua: 30, fa: -20 },
+      { root: 'ft2', at: [98, 145], torso: -80, th: 100, sn: 205, th2: 90, sn2: 90, fo2: 0, ua: 30, fa: -20 },
+    ],
+  },
+  'Bulgarian Split Squats': {
+    props: [['r', 56, 113, 44, 7], ['l', 62, 120, 62, 148, 4], ['l', 94, 120, 94, 148, 4]],
+    poses: [
+      { root: 'ft', at: [128, 145], fo: 0, sn: 95, th: 85, th2: 120, sn2: 175, fo2: 170, ua: 90, fa: 90, ua2: 90, fa2: 90 },
+      { root: 'ft', at: [128, 145], fo: 0, sn: 100, th: 15, th2: 110, sn2: 246, fo2: 200, torso: -80, ua: 90, fa: 90, ua2: 90, fa2: 90 },
+    ],
+  },
+  'Ausfallschritte rückwärts': {
+    poses: [
+      { root: 'hip', at: [95, 80], th: 90, sn: 90, fo: 0, th2: 92, sn2: 90, fo2: 0, ua2: 90, fa2: 90 },
+      { root: 'hip', at: [95, 110], th: 5, sn: 105, fo: 0, th2: 120, sn2: 173, fo2: 100, ua2: 90, fa2: 90 },
+    ],
+  },
+  'Ausfallschritte Langhantel': BARBELL_LUNGE,
+  'Ausfallschritte Multipresse': withRail(BARBELL_LUNGE, 94),
+  'Stepper': {
+    set: { vb: [0, 0, 200, 160] },
+    props: [['l', 66, 146, 136, 146, 6], ['l', 136, 56, 136, 146, 4], ['l', 112, 58, 140, 58, 4]],
+    poses: [
+      { root: 'hip', at: [98, 82], torso: -86, th: 72, sn: 110, fo: 0, th2: 100, sn2: 84, fo2: 0, ua: 40, fa: -5 },
+      { root: 'hip', at: [98, 82], torso: -86, th: 100, sn: 84, fo: 0, th2: 72, sn2: 110, fo2: 0, ua: 40, fa: -5 },
+    ],
+  },
+  'Wadenheben einbeinig': { pose: { th2: 95, sn2: 150, fo2: 60 } },
+  'Wadenheben Hackenschmidt': { gear: [{ at: 'sh', type: 'pad', off: [2, -5], r: 5, fixed: true }], pose: { ua: 60, fa: -50 } },
+  'Wadenheben an der Beinpresse': {
+    pattern: 'legpress', gear: [{ at: 'toe', type: 'line', ang: 45, len: 30, fixed: true }],
+    poses: [
+      { root: 'hip', at: [74, 116], torso: 225, th: -40, sn: -42, fo: 212, ua: 60, fa: 20 },
+      { root: 'hip', at: [74, 116], torso: 225, th: -40, sn: -42, fo: 250, ua: 60, fa: 20 },
+    ],
+  },
+  'Hip Thrust Multipresse': { addProps: [RAIL(96)] },
+  // ----- Rücken unten -----
+  'Hyperextensions mit Gewicht': { gear: [{ at: 'sh', type: 'plate', r: 7, off: [0, 3], fixed: true }] },
+  'Reverse Hyperextensions': {
+    props: [['r', 64, 88, 62, 7], ['l', 96, 95, 96, 148, 4]],
+    poses: [
+      { root: 'hip', at: [74, 85], torso: 0, th: 95, sn: 95, ua: 90, fa: 90 },
+      { root: 'hip', at: [74, 85], torso: 0, th: 176, sn: 178, ua: 90, fa: 90 },
+    ],
+  },
+  'Good Mornings': {
+    gear: [{ at: 'sh', type: 'plate', off: [-4, -3], r: 11, fixed: true }], pose: { ua: 150, fa: -30 },
+  },
+  'Kreuzheben gestreckte Beine': { each: [{}, { th: 88, sn: 90, torso: 0 }] },
+  // ----- Bauch -----
+  'Crunches Schrägbank': { ...DECLINE_SIT, each: [{ torso: 162, ua: -18, fa: 162 }, { torso: 196, ua: 12, fa: 192 }] },
+  'Sit-ups Schrägbank': { ...DECLINE_SIT, each: [{ torso: 162, ua: -18, fa: 162 }, { torso: 248, ua: 52, fa: 232 }] },
+  'Knieheben Dipstation': {
+    set: { noGround: false, vb: [0, 0, 200, 160] },
+    props: [['l', 90, 36, 90, 118, 6], ['r', 90, 62, 42, 6]],
+    poses: [
+      { root: 'el', at: [100, 60], torso: -90, ua: 90, fa: 0, th: 92, sn: 90 },
+      { root: 'el', at: [100, 60], torso: -90, ua: 90, fa: 0, th: -15, sn: 80 },
+    ],
+  },
+  // ----- Rücken: Klimmzüge und Latziehen (breit/eng von vorn) -----
+  'Klimmzüge breit': {
+    set: { front: true }, poses: [
+      { root: 'ha', at: [62, 30], ua: -121, fa: -121, th: 92, sn: 95 },
+      { root: 'ha', at: [62, 30], ua: 165, fa: -72, th: 92, sn: 95 },
+    ],
+  },
+  'Klimmzüge enger Griff': {
+    set: { front: true }, poses: [
+      { root: 'ha', at: [88, 30], ua: -97, fa: -97, th: 92, sn: 95 },
+      { root: 'ha', at: [88, 30], ua: 118, fa: -82, th: 92, sn: 95 },
+    ],
+  },
+  'Klimmzüge Untergriff (Chin-ups)': { each: [{}, { ua: 75, fa: -95 }] },
+  'Klimmzüge mit Zusatzgewicht': { gear: [{ at: 'hip', type: 'plate', off: [0, 15], r: 8, fixed: true }] },
+  'Latziehen breit': {
+    set: { front: true, noFeet: true },
+    props: [['r', 66, 102, 68, 8], ['l', 100, 110, 100, 148, 4]],
+    gear: [{ at: 'hm', type: 'cable', from: [100, 0], fixed: true }, { at: 'ha', type: 'span', to: 'ha2', fixed: true }],
+    poses: [
+      { root: 'hip', at: [100, 100], th: 95, thl: .4, sn: 90, ua: -121, fa: -121 },
+      { root: 'hip', at: [100, 100], th: 95, thl: .4, sn: 90, ua: 165, fa: -72 },
+    ],
+  },
+  'Latziehen eng (V-Griff)': { pose: { torso: -110 }, each: [{}, { ua: 100, fa: -50 }] },
+  'Latziehen Untergriff': { each: [{}, { ua: 80, fa: -82 }] },
+  'Latziehen einarmig': { pose: { ua2: 75, fa2: -5 } },
+  'Latziehen Maschine einarmig': { pose: { ua2: 75, fa2: -5 } },
+  'High Row Maschine': { pose: { torso: -95 }, each: [{ ua: -38, fa: -38 }, { ua: 140, fa: -30 }] },
+  // ----- Beine: Kniebeugen-Varianten, Beinpresse, Kreuzheben -----
+  'Kniebeugen Box': { addProps: [['r', 56, 114, 30, 34, 3]] },
+  'Hackenschmidt-Kniebeugen (Hack Squat)': HACK,
+  'Pendulum Squat': HACK,
+  'Hackenschmidt rückwärts (Reverse Hack)': {
+    gear: [{ at: 'sh', type: 'pad', off: [5, -5], r: 5, fixed: true }],
+    each: [{ torso: -72, ua: 20, fa: -30 }, { torso: -46, ua: 40, fa: -10 }],
+  },
+  'Belt Squat': {
+    props: [['r', 72, 140, 56, 8]], gear: [{ at: 'hip', type: 'plate', off: [0, 18], r: 9, fixed: true }],
+    each: [{ at: [100, 140], torso: -84, ua: 40, fa: 5 }, { at: [100, 140], torso: -74, ua: 30, fa: -5 }],
+  },
+  'Kniebeugen Multipresse': { addProps: [RAIL(92)] },
+  'Kniebeugen Safety Bar': { pose: { ua: 35, fa: -45 } },
+  'Beinpresse horizontal': {
+    props: [['r', 50, 112, 34, 6], ['l', 56, 114, 44, 68, 6], ['l', 66, 118, 66, 148, 4], ['l', 90, 132, 180, 132, 3]],
+    gear: [{ at: 'ft', type: 'line', ang: 90, len: 30, fixed: true }],
+    poses: [
+      { root: 'hip', at: [68, 110], torso: -108, th: -28, sn: 62, fo: 90, ua: 70, fa: 15 },
+      { root: 'hip', at: [68, 110], torso: -108, th: 4, sn: 6, fo: 90, ua: 70, fa: 15 },
+    ],
+  },
+  'Beinpresse vertikal': {
+    vb: [0, -10, 200, 170],
+    props: [['r', 40, 130, 76, 7], ['l', 60, 137, 60, 148, 4], ['l', 100, 137, 100, 148, 4]],
+    gear: [{ at: 'ft', type: 'line', ang: 0, len: 30, fixed: true }],
+    poses: [
+      { root: 'hip', at: [108, 126], torso: 180, th: -128, sn: -40, fo: 0, ua: 150, fa: 170 },
+      { root: 'hip', at: [108, 126], torso: 180, th: -92, sn: -90, fo: 0, ua: 150, fa: 170 },
+    ],
+  },
+  'Beinpresse einbeinig': { pose: { th2: -95, sn2: 10 } },
+  'Kreuzheben Sumo': {
+    set: { front: true },
+    gear: [{ at: 'ha', type: 'span', to: 'ha2', fixed: true }, { at: 'ha', type: 'plate', off: [-9, 0], r: 11, fixed: true },
+      { at: 'ha2', type: 'plate', off: [9, 0], r: 11, fixed: true }],
+    poses: [
+      { root: 'ft', at: [64, 145], th: 150, sn: 98, tl: .5, ua: 96, fa: 92 },
+      { root: 'ft', at: [64, 145], th: 112, sn: 100, ua: 94, fa: 90 },
+    ],
+  },
+  'Kreuzheben Defizit': { addProps: [['r', 76, 140, 48, 8]], pose: { at: [96, 140] }, each: [{ th: 30, sn: 104, torso: -16 }, {}] },
+  'Rack Pulls': {
+    addProps: [['l', 140, 50, 140, 148, 4], ['l', 112, 104, 146, 104, 4]],
+    each: [{ sn: 96, th: 72, torso: -48, ua: 100, fa: 100 }, {}],
+  },
+  'Rudern Kabelzug stehend': {
+    props: [['l', 194, 30, 194, 148, 4]], gear: [{ at: 'ha', type: 'cable', from: [192, 70] }],
+    poses: [
+      { ...STAND, at: [84, 145], sn: 96, th: 84, torso: -84, ua: -2, fa: -2 },
+      { ...STAND, at: [84, 145], sn: 96, th: 84, torso: -92, ua: 165, fa: 2 },
+    ],
+  },
+};
+
 /* ---------- Nachschlagen ---------- */
-const LIB_INDEX = new Map(Object.entries(LIB_EX).map(([name, [pattern, note, gear]]) =>
-  [name.trim().toLowerCase(), { name, pattern, note: note || '', gear: gear || null }]));
+// Eintrag: [Muster, Hinweis, Gerät, Abwandlung]. Abwandlung (LIB_MOD) passt das Muster an die Übung an.
+const LIB_INDEX = new Map(Object.entries(LIB_EX).map(([name, [pattern, note, gear, mod]]) =>
+  [name.trim().toLowerCase(), { name, pattern, note: note || '', gear: gear || null, mod: mod || LIB_MOD[name] || null }]));
+
+// Muster einer Übung mit ihrer Abwandlung: poses ersetzt die Posen, pose wird in jede Pose übernommen,
+// each[i] nur in Pose i; props ersetzt, addProps ergänzt die festen Teile; gear ersetzt die Geräte;
+// set überschreibt weitere Angaben des Musters (z. B. front, vb, thumb); pattern nimmt ein anderes Grundmuster.
+function libPattern(e) {
+  const m = e.mod, base = FIG_PATTERNS[(m && m.pattern) || e.pattern];
+  if (!base || !m) return base;
+  const poses = (m.poses || base.poses).map((p, i) => ({ ...p, ...(m.pose || {}), ...((m.each || [])[i] || {}) }));
+  return {
+    ...base, ...(m.set || {}), poses, gear: m.gear || base.gear,
+    props: m.props ? m.props : [...(base.props || []), ...(m.addProps || [])],
+  };
+}
 
 const libEntry = name => LIB_INDEX.get(String(name).trim().toLowerCase()) || null;
 
@@ -1305,5 +1665,5 @@ function libFigure(name, animate = true) {
   const e = libEntry(name);
   if (!e) return '';
   const reduce = animate && window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return figSvg(FIG_PATTERNS[e.pattern], e.gear || libGear(e.name), animate && !reduce, e.name);
+  return figSvg(libPattern(e), e.gear || libGear(e.name), animate && !reduce, e.name);
 }

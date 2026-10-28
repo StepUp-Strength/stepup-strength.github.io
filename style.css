@@ -422,11 +422,6 @@ table.rir .missing-cell { color: var(--warn-text); font-style: italic; }
   color: var(--muted);
 }
 .timer-bar b { font-size: 28px; font-weight: 750; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-button.timer-bar { width: 100%; border: 0; font: inherit; font-size: 15px; color: var(--muted); text-align: left; }
-.timer-bar .pin { display: block; font-size: 12.5px; font-weight: 600; }
-/* Timer auf dem Startbildschirm (Karte „Laufendes Training“) */
-.home-timer { display: inline-flex; align-items: baseline; gap: 6px; margin: 0 0 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 18px; }
-.home-timer b { font-size: 30px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 /* Health: Anleitung für den Kurzbefehl (aufklappbar) */
 .health-guide { margin-top: 10px; font-size: 16px; line-height: 1.5; }
 .health-guide summary { min-height: 44px; display: flex; align-items: center; font-weight: 650; color: var(--accent-text); cursor: pointer; }
@@ -1093,6 +1088,12 @@ button.pill:active { transform: scale(.95); }
 .ex-name-row .inp { flex: 1; min-width: 0; }
 .wiz-ex { display: flex; align-items: center; gap: 10px; }
 .wiz-ex > div { flex: 1; min-width: 0; }
+.wiz-ex .icon-btn.swap { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 64px; min-height: 52px; padding: 4px 8px; border-radius: 14px; background: var(--accent-soft); color: var(--accent-text);
+  font-size: 19px; line-height: 1.1; }
+.wiz-ex .icon-btn.swap small { font-size: 11.5px; font-weight: 700; }
+/* Ersetzen-Feld unter einer Übung in der Vorschau */
+.list li.wiz-swap { display: block; padding: 0 0 10px; }
 .lib-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; letter-spacing: inherit; }
 .info-dot {
   display: inline-grid;

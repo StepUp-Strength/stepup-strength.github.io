@@ -1595,7 +1595,7 @@ const CANCEL_START = {
 };
 
 const views = {
-  start:    { title: 'Training',      tab: 'start',   render: renderStart, after: startTrainingTimer },
+  start:    { title: 'Training',      tab: 'start',   render: renderStart },
   training: { title: () => draft ? draft.dayName : 'Training', tab: 'start', back: 'start', render: renderTraining, after: startTrainingTimer },
   plan:     { title: 'Trainingsplan', tab: 'plan',    render: renderPlan },
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
@@ -1779,7 +1779,6 @@ function renderStart() {
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
-      ${data.timerHome ? '<button class="home-timer" data-action="timer-home" aria-label="Timer auf der Startseite ausblenden">⏱ <b id="tr-timer">0:00</b></button>' : ''}
       <p class="sub">begonnen ${fmtDate(draft.date)}</p>
       <button class="btn primary" data-action="resume">Fortsetzen</button>
     </div>`;
@@ -1831,10 +1830,8 @@ function renderTraining() {
         || 'Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.'}</p>`
       : '';
   const lastDur = lastDuration(draft.dayId);
-  // Antippen: Timer auch auf dem Startbildschirm anzeigen (ein/aus)
-  h = `<button class="timer-bar" data-action="timer-home" aria-label="Timer auch auf dem Startbildschirm anzeigen">
-    <span>⏱ <b id="tr-timer">0:00</b>${data.timerHome ? '<small class="pin">📌 auch auf der Startseite</small>' : ''}</span>
-    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></button>` + h;
+  h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
+    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>${draft.own
     ? 'Trag nach jedem Satz ein, was du geschafft hast und wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt.'
     : 'Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.'}</p>`;
@@ -1982,10 +1979,11 @@ function progressionCard() {
 
 // Schnellauswahl beim Ersetzen: verwandte Übungen derselben Muskelgruppe – zuerst gleiche Bewegung (Figur in der
 // Bibliothek) und gleiche Übungsfamilie (erstes Wort, z. B. „Rudern“), dann gleiche Übungsart, schon trainierte vorn
-function relatedExercises(name, n = 6) {
+// skip: Übungen, die nicht vorgeschlagen werden (Standard: die des laufenden Trainings)
+function relatedExercises(name, n = 6, skip = draft ? draft.entries.map(e => e.name) : []) {
   const g = groupOf({ name }), kind = kindOf({ name });
   const lib = libEntry(name), word = n2 => norm(n2).split(/[\s(]/)[0];
-  const taken = new Set([nameKey(name), ...draft.entries.map(e => nameKey(e.name))]);
+  const taken = new Set([nameKey(name), ...skip.map(nameKey)]);
   const trained = new Set(data.sessions.flatMap(s => s.entries.map(e => nameKey(e.name))));
   const pool = [...new Map([...EXERCISE_LIST.map(([x]) => x), ...ownExerciseNames()].map(x => [nameKey(x), x])).values()];
   const score = c => (lib && libEntry(c) && libEntry(c).pattern === lib.pattern ? 4 : 0) + (word(c) === word(name) ? 3 : 0)
@@ -3048,7 +3046,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, timerHome: d.timerHome, welcomeSeen: d.welcomeSeen,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -3243,15 +3241,6 @@ const actions = {
     saveDraft(); render();
   },
   'tr-save': () => saveTraining(),
-  // Trainings-Timer auch auf dem Startbildschirm anzeigen – jederzeit wieder ausschaltbar
-  'timer-home': () => {
-    const on = !!data.timerHome;
-    if (!confirm(on ? 'Timer nicht mehr auf dem Startbildschirm anzeigen?'
-      : 'Timer auch auf dem Startbildschirm anzeigen?\n\nSo siehst du die Trainingszeit auch, wenn du zwischendurch zur Startseite wechselst. Lässt sich jederzeit wieder ausschalten (Timer antippen).')) return;
-    if (on) delete data.timerHome; else data.timerHome = true;
-    saveData(); render();
-    toast(on ? 'Timer nur noch im Training' : 'Timer auch auf der Startseite 📌');
-  },
   'tr-cancel': () => {
     if (!confirm('Training wirklich verwerfen? Die Eingaben gehen verloren.')) return;
     draft = null; saveDraft(); go('start');
@@ -3303,6 +3292,8 @@ const actions = {
       wizAddPick(el.dataset.name);
     } else if (input.dataset.field === 'own-name') {
       wizOwnPick(input, el.dataset.name);
+    } else if (input.dataset.field === 'wiz-swap-name') {
+      // Plan-Assistent, Ersetzen in der Vorschau: Name steht im Feld, bestätigt wird mit „Ersetzen“
     } else {
       fillReplaceMax(input);
     }
