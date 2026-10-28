@@ -249,7 +249,6 @@ function wizStart() {
     split: null,   // gewählte Vorlage
     days: [],
     newDay: { name: '', intensity: 'heavy', groups: [] },
-    entry: 1,                         // Einstieg mit Zykluswoche 1 (Intro) … Trainingswochen, oder 'deload'
     deload: 'auto',                   // Deload automatisch nach den Trainingswochen oder 'self' = selbst bestimmen
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
@@ -380,13 +379,13 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, start: 1, prog: 1, prio: 2, low: 2,
-  volume: 3, rir: 4, auto: 5, manual: 5, preview: 5 };
+const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, prog: 1, prio: 2, low: 2, auto: 2,
+  volume: 3, rir: 4, manual: 5, preview: 5 };
 const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
   const own = wiz.mode === 'own';
-  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Start', 'Fokus', 'Volumen', 'RIR', 'Übungen'];
+  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Basis', 'Fokus', 'Volumen', 'RIR', 'Übungen'];
   const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
   return `<div class="pills wiz-steps">${labels.map((l, i) =>
     `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
@@ -403,7 +402,9 @@ function wizFlow() {
     if (tpl && tpl.pairs) steps.push('freq');
     steps.push('days');
   }
-  return [...steps, 'basics', 'start', 'prog', 'prio', 'low', 'volume', 'rir', 'auto'];
+  // Einstiegswoche wird erst beim ersten Training gefragt (plan.askEntry); nach dem Fokus kommt die Frage
+  // „automatisch erstellen?“, danach Volumen und RIR (erst nur zum Ansehen, mit „Bearbeiten“)
+  return [...steps, 'basics', 'prog', 'prio', 'low', 'auto', 'volume', 'rir'];
 }
 
 // Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
@@ -451,27 +452,6 @@ function dayCard(d, di, removable) {
     <div class="group-chips">${PLAN_GROUPS.map(g =>
       `<button class="gchip ${d.groups.includes(g) ? 'on' : ''}" data-action="wiz-daygroup" data-d="${di}" data-g="${g}">${MUSCLES[g]}</button>`).join('')}</div>
   </div>`;
-}
-
-// Einstiegswoche als Zahl: 1 = Intro … wiz.weeks, Deload = wiz.weeks + 1
-const wizEntry = () => wiz.entry === 'deload' ? wiz.weeks + 1 : Math.min(wiz.entry, wiz.weeks);
-
-// Einstieg: mit welcher Zykluswoche der Plan beginnt (er startet mit dem nächsten Training)
-function startWeekRow() {
-  const entry = wizEntry();
-  const left = wiz.weeks - entry;
-  const after = entry > wiz.weeks
-    ? 'Danach beginnt der neue Zyklus mit der Intro-Woche.'
-    : wiz.deload === 'self'
-      ? `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'}, dann ` : ''}geht es Woche für Woche weiter, bis du den Deload einlegst.`
-      : `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'} und ` : ''}die Deload-Woche.`;
-  return `<p class="lbl chips-title">Einstieg mit</p>
-    <div class="pills">${Array.from({ length: wiz.weeks + 1 }, (_, i) => i + 1).map(w => {
-      const deload = w > wiz.weeks;
-      return `<button class="pill ${deload ? 'dl' : w === 1 ? 'intro' : ''} ${w === entry ? 'now' : ''}"
-        data-action="wiz-entry" data-w="${deload ? 'deload' : w}">${deload ? 'Deload' : w === 1 ? 'Intro' : w}</button>`;
-    }).join('')}</div>
-    <p class="hint">Dein nächstes Training gehört zur <b>${cycleWeekLabel(entry, wiz.weeks)}</b>. ${after}</p>`;
 }
 
 // Hinweis für Neulinge und Einsteiger: Übungen zeigen lassen, Figuren nur grobe Info
@@ -662,13 +642,6 @@ function renderWizBasics() {
         : 'Nach den Trainingswochen folgt automatisch eine leichte Deload-Woche. Empfohlen, wenn du dich nicht selbst darum kümmern möchtest.'}</p>`);
 }
 
-// Schritt „Start“
-function renderWizStart() {
-  return wizCard('📅', 'Mit welcher Woche startest du?',
-    'Normalerweise beginnst du mit der Intro-Woche. Nach Krankheit oder einer längeren Pause kannst du z. B. direkt mit der leichten Deload-Woche einsteigen.',
-    startWeekRow());
-}
-
 // Schritt „Progression“
 function renderWizProg() {
   return wizCard('📈', 'Wie soll sich dein Plan steigern?',
@@ -688,8 +661,8 @@ function renderWizFocus(kind) {
     <div class="area-grid">${wizGroups().map(g => `<button class="vchip ${sel.includes(g) ? 'on' : ''}"
       data-action="wiz-focus" data-kind="${kind}" data-g="${g}" ${other.includes(g) ? 'disabled' : ''}>${MUSCLES[g]}</button>`).join('')}</div>
     <div class="row">
-      <button class="btn" data-action="wiz-focus-none" data-kind="${kind}" data-to="${prio ? 'low' : 'volume'}">Keine</button>
-      <button class="btn primary" data-action="wiz-step" data-to="${prio ? 'low' : 'volume'}">Weiter</button>
+      <button class="btn" data-action="wiz-focus-none" data-kind="${kind}" data-to="${prio ? 'low' : 'auto'}">Keine</button>
+      <button class="btn primary" data-action="wiz-step" data-to="${prio ? 'low' : 'auto'}">Weiter</button>
     </div>
   </div>
   <div class="row"><button class="btn" data-action="wiz-step" data-to="${prio ? 'prog' : 'prio'}">Zurück</button></div>`;
@@ -699,15 +672,35 @@ function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
   const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
-    basics: renderWizBasics, start: renderWizStart, prog: renderWizProg };
+    basics: renderWizBasics, prog: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
   const groups = wizGroups();
 
+  // Volumen: erst nur ansehen (mit Erklärung), „Bearbeiten“ schaltet auf die Eingabetabelle um (wiz.volEdit)
   if (wiz.step === 'volume') {
+    const next = '<button class="btn primary" data-action="wiz-step" data-to="rir">Weiter</button>';
+    if (!wiz.volEdit) {
+      h += `<div class="card wiz-q">
+        <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📊</span><h2>Dein Volumen</h2></div>
+        <p class="hint wiz-q-explain">Volumen = wie viele <b>Arbeitssätze</b> (ohne Aufwärmen) jede Muskelgruppe bekommt.
+          Die Tabelle zeigt die Sätze <b>pro Woche</b> für jede Woche des Zyklus – von der Intro-Woche bis Woche 4. Von Woche zu
+          Woche kommen Sätze dazu, damit der Trainingsreiz wächst; in der Deload-Woche wird halbiert, damit du dich erholst.
+          Darunter steht, auf wie viele Trainings pro Woche sich die Sätze verteilen. Die Werte hat die App aus deiner Erfahrung,
+          deinen Trainingstagen und dem Fokus berechnet (⭐ Priorität = +2 Sätze pro Woche, 😌 Low = −2).</p>
+        <table class="rir vol view">${weekHead()}`;
+      for (const g of groups) {
+        h += `<tr class="vol-g"><td colspan="5"><b>${MUSCLES[g]}</b>${focusBadge(g)}</td></tr>
+          <tr><td>pro Woche</td>${[0, 1, 2, 3].map(w => `<td>${wizWeekly(g, w)}</td>`).join('')}</tr>
+          <tr class="vol-week"><td colspan="5">${wizWeekText(g)}</td></tr>`;
+      }
+      return h + `</table>
+        <button class="btn outline" data-action="wiz-edit" data-k="volEdit">✏️ Volumen bearbeiten</button></div>
+        <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>${next}</div>`;
+    }
     const inp = (field, g, w, v, cls) =>
       `<td><input class="vol-inp ${cls}" type="text" inputmode="numeric" pattern="[0-9]*" data-field="${field}" data-g="${g}" data-w="${w}" value="${v}"></td>`;
-    h += `<div class="card"><h2>Volumen</h2>
+    h += `<div class="card"><h2>Volumen bearbeiten</h2>
       <p class="hint">Am einfachsten die Sätze <b>pro Woche</b> eintragen – die App verteilt sie auf die Trainings. Oder direkt die Sätze <b>pro Training</b> ändern.</p>
       <table class="rir vol">${weekHead()}`;
     for (const g of groups) {
@@ -716,11 +709,29 @@ function renderWizard() {
         <tr class="vol-per"><td>pro Training</td>${wiz.volume[g].map((v, w) => inp('wiz-vol', g, w, v, 'per')).join('')}</tr>
         <tr class="vol-week"><td colspan="5"><span data-wizweek="${g}">${wizWeekText(g)}</span></td></tr>`;
     }
-    return h + '</table></div>' + navRow('low', 'rir');
+    return h + `</table><button class="btn outline" data-action="wiz-edit" data-k="volEdit">✔ Fertig bearbeitet</button></div>
+      <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>${next}</div>`;
   }
 
+  // RIR: erst nur ansehen (mit Erklärung), „Bearbeiten“ schaltet auf die Eingabetabelle um (wiz.rirEdit)
   if (wiz.step === 'rir') {
-    h += `<div class="card"><h2>Reps in Reserve</h2>
+    const next = `<button class="btn primary" data-action="wiz-after-rir">Weiter</button>`;
+    if (!wiz.rirEdit) {
+      h += `<div class="card wiz-q">
+        <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🔋</span><h2>Wiederholungen im Tank (RIR)</h2></div>
+        <p class="hint wiz-q-explain"><b>RIR</b> („Reps in Reserve“) = wie viele Wiederholungen du am Ende eines Satzes
+          <b>noch geschafft hättest</b>. 2 im Tank heißt: Du hörst 2 Wiederholungen vor dem Muskelversagen auf. Die Tabelle zeigt
+          dein Ziel je Muskelgruppe und Woche: Von Woche zu Woche wird der Tank kleiner – du trainierst näher am Versagen, der Zyklus
+          wird intensiver. Die Werte gelten für <b>normale</b> Übungen; bei Grundübungen (z. B. Kniebeugen, Bankdrücken) bleibt
+          1 Wdh. mehr im Tank, bei Assistenzübungen (z. B. Curls, Seitheben) 1 weniger – nie unter 0. In der Deload-Woche
+          immer mindestens ${DELOAD_RIR}.</p>
+        <table class="rir vol view">${weekHead()}`;
+      for (const g of groups) h += `<tr><td>${MUSCLES[g]}</td>${wiz.rir[g].map(v => `<td>${fmtNum(v)}</td>`).join('')}</tr>`;
+      return h + `</table>
+        <button class="btn outline" data-action="wiz-edit" data-k="rirEdit">✏️ RIR bearbeiten</button></div>
+        <div class="row"><button class="btn" data-action="wiz-step" data-to="volume">Zurück</button>${next}</div>`;
+    }
+    h += `<div class="card"><h2>RIR bearbeiten</h2>
       <p class="hint">Ziel im Tank je Muskelgruppe und Woche für <b>normale</b> Übungen. Grundübungen bekommen +1, Assistenzübungen −1 (nie unter 0). Deload immer mind. ${DELOAD_RIR}.</p>
       <table class="rir vol">${weekHead()}
       <tr class="all-row"><td><b>Alle</b></td>${[0, 1, 2, 3].map(w =>
@@ -729,9 +740,12 @@ function renderWizard() {
       h += `<tr><td>${MUSCLES[g]}</td>` + wiz.rir[g].map((v, w) =>
         `<td><input class="vol-inp" type="text" inputmode="decimal" data-field="wiz-rir" data-g="${g}" data-w="${w}" value="${fmtNum(v)}"></td>`).join('') + '</tr>';
     }
-    return h + '</table><p class="hint">„Alle“: eine Zahl eintragen setzt die ganze Spalte auf einmal.</p></div>' + navRow('volume', 'auto');
+    return h + `</table><p class="hint">„Alle“: eine Zahl eintragen setzt die ganze Spalte auf einmal.</p>
+      <button class="btn outline" data-action="wiz-edit" data-k="rirEdit">✔ Fertig bearbeitet</button></div>
+      <div class="row"><button class="btn" data-action="wiz-step" data-to="volume">Zurück</button>${next}</div>`;
   }
 
+  // Direkt nach dem Fokus: Übungen automatisch wählen lassen? (Antwort gilt nach Volumen und RIR, siehe wiz-after-rir)
   if (wiz.step === 'auto') {
     return h + `<div class="card check">
       <div class="check-emoji" aria-hidden="true">🤖</div>
@@ -741,8 +755,9 @@ function renderWizard() {
         <button class="btn primary" data-action="wiz-auto">Nein</button>
       </div>
       <p class="hint">Ja: Die App wählt die Übungen (bevorzugt aus deinem aktiven Plan, wenig Volumen = komplexe Übungen zuerst).
-        Nein: Du wählst die Übungen pro Muskelgruppe selbst aus.</p>
-    </div>` + navRow('rir', null);
+        Nein: Du wählst die Übungen pro Muskelgruppe selbst aus. Als Nächstes siehst du in beiden Fällen dein Volumen und
+        deine RIR-Ziele.</p>
+    </div>` + navRow('low', null);
   }
 
   if (wiz.step === 'manual') {
@@ -800,7 +815,7 @@ function renderWizard() {
       `${MUSCLES[g]} (${Math.max(...wiz.volume[g])} Sätze → mind. ${Math.ceil(Math.max(...wiz.volume[g]) / MAX_SETS_PER_EX)} Übungen)`).join(', ')}. Überzählige Sätze fallen weg.</p>`;
   }
   return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
-    <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>
+    <div class="row"><button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>
     <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
     <p class="hint">Der Plan wird zusätzlich zu deinen bisherigen Plänen gespeichert und aktiv gesetzt.</p>`;
 }
@@ -894,9 +909,9 @@ function wizBack() {
     wiz.oi = wiz.own.length - 1;
   } else if (wiz.step === 'manual') {
     if (wiz.gi > 0) wiz.gi--;
-    else { wiz.step = wiz.fromPreview ? 'preview' : 'auto'; wiz.fromPreview = false; }
+    else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
   } else if (wiz.step === 'preview') {
-    wiz.step = 'auto';
+    wiz.step = 'rir';
   } else {
     const to = wizPrev();
     if (to === 'cancel') return ['plan', {}];
@@ -937,7 +952,6 @@ Object.assign(actions, {
     render();
   },
   'wiz-prog': el => { wiz.progression[el.dataset.key] = !wiz.progression[el.dataset.key]; render(); },
-  'wiz-entry': el => { wiz.entry = el.dataset.w === 'deload' ? 'deload' : Number(el.dataset.w); render(); },
   // Aufteilung wählen (leer = zurück zur Vorauswahl); gibt es nur eine Vorlage, wird sie direkt gewählt
   // Erfahrung wählen: ändert Empfehlungen, Vorlagen, Volumen und Tank -> Plan wird neu vorgeschlagen
   'wiz-level': el => {
@@ -1078,12 +1092,24 @@ Object.assign(actions, {
       wiz.low = wiz.low.filter(g => wizGroups().includes(g));
     }
     if (to === 'volume') syncGroups();
+    wiz.volEdit = wiz.rirEdit = false;  // Volumen/RIR erst wieder nur zum Ansehen
     wiz.step = to;
     go('wizard');
   },
+  // Antwort merken, dann erst Volumen und RIR zeigen (Übungen werden danach gewählt, siehe wiz-after-rir)
   'wiz-auto': el => {
+    wiz.autoYes = !!el.dataset.yes;
+    syncGroups();
+    wiz.volEdit = wiz.rirEdit = false;
+    wiz.step = 'volume';
+    go('wizard');
+  },
+  // Volumen/RIR: zwischen Ansehen und Bearbeiten umschalten (data-k = volEdit | rirEdit)
+  'wiz-edit': el => { wiz[el.dataset.k] = !wiz[el.dataset.k]; render(); },
+  'wiz-after-rir': () => {
     wiz.fromPreview = false;
-    if (el.dataset.yes) {
+    wiz.volEdit = wiz.rirEdit = false;
+    if (wiz.autoYes) {
       for (const g of wizGroups()) wiz.picks[g] = autoPicks(g);
       wiz.step = 'preview';
     } else {
@@ -1096,7 +1122,7 @@ Object.assign(actions, {
   'wiz-adjust': () => { wiz.gi = 0; wiz.step = 'manual'; wiz.fromPreview = true; go('wizard'); },
   'wiz-gprev': () => {
     if (wiz.gi > 0) wiz.gi--;
-    else { wiz.step = wiz.fromPreview ? 'preview' : 'auto'; wiz.fromPreview = false; }
+    else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
     go('wizard');
   },
   'wiz-gnext': () => {
@@ -1130,10 +1156,9 @@ Object.assign(actions, {
     }
     data.cycle.buildWeeks = wiz.weeks;
     if (wiz.deload === 'self') plan.deload = 'self';
-    // neuer Zyklus 1, beginnend mit der gewählten Einstiegswoche beim nächsten Training
-    // (Deload „selbst bestimmen“ + Einstieg mit Deload: die erste Woche ist der Deload)
-    if (wiz.deload === 'self' && wiz.entry === 'deload') { setRound(newCycleId(), 1, 1); data.cycle.deloadAt = 1; }
-    else setRound(newCycleId(), wizEntry(), 1);
+    // neuer Zyklus 1 – mit welcher Woche er beginnt, fragt die App beim ersten Training (siehe entryweek in app.js)
+    setRound(newCycleId(), 1, 1);
+    plan.askEntry = true;
     saveData();
     wiz = null;
     toast(`„${plan.name}“ erstellt und aktiv ✔`);

@@ -940,8 +940,15 @@ function addSets(exs, sets, count, state) {
 
 // Sätze pro Übung eines Trainingstags (nur bei Tag-Typ und Muskelgruppen aus der Volumen-Tabelle)
 // vol: Volumen-Tabelle (Standard: data.volume; der Plan-Assistent rechnet mit seinem Entwurf)
-function autoSetsForDay(day, week, deload, vol = data.volume) {
+// half: Anstieg ab der Intro-Woche halbiert (Training an Diät/Minicut angepasst, siehe nutTrainAdapt)
+function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
   const res = new Map();
+  const vw = (g, w) => {
+    const v = dayVolume(day, g, w, vol);
+    if (!half) return v;
+    const intro = dayVolume(day, g, 1, vol);
+    return intro + Math.floor((v - intro) / 2);  // halber Satz -> abrunden
+  };
   if (!dayIntensity(day)) return res;
   const byGroup = {};
   for (const e of day.exercises) {
@@ -956,7 +963,7 @@ function autoSetsForDay(day, week, deload, vol = data.volume) {
     } else {
       sets = distributeStart(exs, dayVolume(day, g, 1, vol));
       const state = { k: 0 };
-      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, dayVolume(day, g, w, vol) - dayVolume(day, g, w - 1, vol)), state);
+      for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, vw(g, w) - vw(g, w - 1)), state);
     }
     sets.forEach((v, id) => res.set(id, v));
   }
@@ -968,8 +975,10 @@ function autoSetsForDay(day, week, deload, vol = data.volume) {
 const deloadSets = sets => Math.max(1, Math.round(sets / 2));
 // Sätze pro Woche: Start in der Intro-Woche, Steigerung erst am Zyklusende –
 // bei +1 nur in der letzten Woche, bei +2 in den letzten beiden Wochen je +1 usw.
-function setsForWeek(ex, week, buildWeeks) {
-  const diff = Math.max(0, ex.setsEnd - ex.sets);
+// half: Anstieg halbiert (Training an Diät/Minicut angepasst)
+function setsForWeek(ex, week, buildWeeks, half = false) {
+  const full = Math.max(0, ex.setsEnd - ex.sets);
+  const diff = half ? Math.floor(full / 2) : full;
   return ex.sets + Math.max(0, diff - (buildWeeks - week));
 }
 
@@ -1620,6 +1629,7 @@ const views = {
   firstmax: { title: 'Neue Übungen',     tab: 'start', render: renderFirstMax, cancel: () => CANCEL_START,
     back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
   cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
+  entryweek: { title: 'Neuer Plan',      tab: 'start', back: 'start', render: renderEntryWeek, cancel: () => CANCEL_START },
   data:     { title: 'Sicherung',     tab: 'data',    render: renderData, after: showAppVersion },
 };
 
@@ -1797,6 +1807,7 @@ function renderStart() {
     return h + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
       <button class="btn primary" data-action="tab" data-tab="plan">Trainingsplan anlegen</button>`;
   }
+  h += nutStartLine();  // Ernährungsphase kurz anzeigen (nutrition.js)
   h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
   const sessions = sessionsNewestFirst();
   // als Nächstes dran: der nächste noch offene Tag des Durchlaufs, gezählt ab dem zuletzt trainierten Tag
@@ -2591,6 +2602,35 @@ function renderSession({ id, fresh, edit, week }) {
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
 
+// Erstes Training eines neuen Plans: mit welcher Zykluswoche geht es los? (w = 1 … buildWeeks oder 'deload')
+function renderEntryWeek({ id, w }) {
+  const bw = data.cycle.buildWeeks;
+  const self = selfDeload();
+  const entry = w === 'deload' ? bw + 1 : Number(w);
+  const left = bw - entry;
+  const after = entry > bw
+    ? 'Danach beginnt der Zyklus mit der Intro-Woche.'
+    : self
+      ? `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'}, dann ` : ''}geht es Woche für Woche weiter, bis du den Deload einlegst.`
+      : `Danach ${left ? `noch ${left} Aufbauwoche${left === 1 ? '' : 'n'} und ` : ''}die Deload-Woche.`;
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(findDay(id).name)} · erstes Training mit „${esc(activePlan().name)}“</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📅</span><h2>Mit welcher Woche startest du?</h2></div>
+      <p class="hint wiz-q-explain">Normalerweise beginnst du mit der Intro-Woche. Nach Krankheit oder einer längeren Pause
+        kannst du z. B. direkt mit der leichten Deload-Woche einsteigen – oder, wenn du schon gut im Training bist, mit einer
+        späteren Woche.</p>
+      <p class="lbl chips-title">Einstieg mit</p>
+      <div class="pills">${Array.from({ length: bw + 1 }, (_, i) => i + 1).map(n => {
+        const dl = n > bw;
+        return `<button class="pill ${dl ? 'dl' : n === 1 ? 'intro' : ''} ${n === entry ? 'now' : ''}"
+          data-action="entry-week" data-w="${dl ? 'deload' : n}">${dl ? 'Deload' : n === 1 ? 'Intro' : n}</button>`;
+      }).join('')}</div>
+      <p class="hint">Dieses Training gehört dann zur <b>${cycleWeekLabel(entry, bw)}</b>. ${after}</p>
+    </div>
+    <div class="row"><button class="btn" data-action="cancel">Abbrechen</button>
+      <button class="btn primary" data-action="entry-ok">Weiter</button></div>`;
+}
+
 // Erstes Training nach einem verlängerten Zyklus: Woche für Woche vergleichen oder um die Verlängerung versetzt
 function renderCycleChoice({ id, by }) {
   const bw = data.cycle.buildWeeks;
@@ -2711,6 +2751,8 @@ function beginCheck(id) {
   }
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
   if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
+  // neuer Plan aus dem Assistenten: erst fragen, mit welcher Zykluswoche er beginnt
+  if (activePlan().askEntry) { go('entryweek', { id, w: 1 }); return; }
   if (!askSkipRound(day)) return;
   beginAfterRound(id);
 }
@@ -2803,17 +2845,22 @@ function draftEntries(day) {
   // (Wochen nach der letzten Aufbauwoche, Deload „selbst bestimmen“: Sätze wie in der letzten Aufbauwoche)
   const setsWeek = draft.deload ? draft.week
     : Math.min(bw, volumeWeek({ week: draft.week, cycleStart: draft.cycleStart }, prog.volume));
-  const auto = autoSetsForDay(day, setsWeek, draft.deload);
+  // Ernährungsphase Diät/Minicut mit angepasstem Training: halber Volumenanstieg, 1 Wdh. weniger im Tank
+  // (nicht im Deload und nicht bei eigenen Plänen)
+  const adapt = !draft.deload && !draft.own && nutTrainAdapt();
+  draft.nutAdapt = adapt;
+  const auto = autoSetsForDay(day, setsWeek, draft.deload, data.volume, adapt);
   return day.exercises.filter(e => e.name.trim()).map(ex => {
     const en = { name: ex.name.trim() };
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
     const week = draft.deload ? bw : draft.week;
-    const rir = rirFor(kindOf(ex), week, bw, groupOf(ex));
-    const rirText = rirLabel(kindOf(ex), week, bw, groupOf(ex));
+    const [lo, hi] = rirRange(kindOf(ex), week, bw, groupOf(ex)).map(x => Math.max(0, x - (adapt ? 1 : 0)));
+    const rir = (lo + hi) / 2;
+    const rirText = lo === hi ? fmtNum(lo) : `${fmtNum(lo)}–${fmtNum(hi)}`;
     // Sätze: automatisch aus dem Muskelgruppen-Volumen, sonst laut Wochenplan der Übung
     // (Deload: Sätze der letzten Woche, werden dort halbiert)
     const fixedSets = auto.has(ex.id);
-    const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw);
+    const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw, adapt);
     const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) };
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
@@ -3165,6 +3212,18 @@ const actions = {
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
+  'entry-week': el => go('entryweek', { ...current.params, w: el.dataset.w }),
+  // Einstiegswoche des neuen Plans übernehmen (Deload „selbst bestimmen“: die erste Woche ist der Deload), dann wie gewohnt weiter
+  'entry-ok': () => {
+    const { id, w } = current.params;
+    const ci = cycleInfo();
+    if (w === 'deload' && selfDeload()) { setRound(ci.cycleStart, 1, ci.cycle); data.cycle.deloadAt = 1; }
+    else setRound(ci.cycleStart, w === 'deload' ? data.cycle.buildWeeks + 1 : Number(w), ci.cycle);
+    delete activePlan().askEntry;
+    saveData();
+    if (!askSkipRound(findDay(id))) return;
+    beginAfterRound(id);
+  },
   'first-max-done': () => beginQuestions(current.params.id, current.params.exIds, current.params.choice),
   // erstes Training nach einem verlängerten Zyklus: Vergleich versetzen (1) oder Woche für Woche (0)
   'cycle-choice': el => {
