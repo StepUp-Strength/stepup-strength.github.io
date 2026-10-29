@@ -423,7 +423,7 @@ const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
   const own = wiz.mode === 'own';
-  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Basis', 'Fokus', 'Volumen', 'RIR', 'Übungen', 'Ende'];
+  const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Name', 'Fokus', 'Volumen', 'RIR', 'Übungen', 'Ende'];
   const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
   return `<div class="pills wiz-steps">${labels.map((l, i) =>
     `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
@@ -659,17 +659,12 @@ function renderWizDays() {
     body, true, days);
 }
 
-// Schritt „Name & Zykluslänge“
+// Schritt „Name“ (Zykluslänge und Deload kommen am Ende, siehe renderWizDeload)
 function renderWizBasics() {
-  return wizCard('✏️', 'Name und Zykluslänge',
-    'Ein Zyklus besteht aus der Intro-Woche zum Einsteigen, den Aufbauwochen, in denen es Woche für Woche etwas schwerer wird, und einer leichten Deload-Woche zum Erholen. Danach beginnt der nächste Zyklus. Eine Woche ist dabei ein Durchlauf: geschafft, sobald jeder Trainingstag dran war – egal, ob du dafür 6, 7 oder 9 Tage brauchst.',
+  return wizCard('✏️', 'Wie soll dein Plan heißen?',
+    'Der Name hilft dir, deine Pläne später auseinanderzuhalten – du kannst ihn jederzeit ändern. Wie lang ein Zyklus ist und wie der Deload abläuft, legst du ganz am Ende fest, wenn dein Plan fertig ist.',
     `<label class="lbl">Name des Plans
-        <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
-      <div class="row"><span>Trainingswochen<br><small class="hint">inkl. Intro, ohne Deload</small></span>
-        <div class="stepper">${[4, 5].map(n =>
-          `<button class="toggle ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">${n}</button>`).join('')}</div></div>
-      <p class="hint">4 Wochen sind der Standard. 5 Wochen = eine Aufbauwoche mehr. Wie der Deload abläuft, legst du am Ende fest,
-        wenn dein Plan fertig ist.</p>`);
+        <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>`);
 }
 
 // Am Ende (Plan ist fertig): schwere und leichte Tage abwechseln oder alle Tage gleich?
@@ -721,11 +716,26 @@ function renderWizInt() {
       <button class="btn primary" data-action="wiz-step" data-to="deloadq">Weiter</button></div>`;
 }
 
-// Am Ende (Plan ist fertig): Deload automatisch oder selbst bestimmen
+// Am Ende (Plan ist fertig): Zykluslänge (Trainingswochen) und Deload automatisch oder selbst bestimmen
 function renderWizDeload() {
   const opt = (m, title, text) => `<button class="split-opt freq-opt ${wiz.deload === m ? 'on' : ''}" data-action="wiz-deload" data-m="${m}">
       <b>${title}</b><small>${text}</small></button>`;
+  const wk = (n, title, text) => `<button class="split-opt freq-opt ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">
+      <b>${title}</b><small>${text}</small></button>`;
   return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🔄</span><h2>Wie lang soll ein Zyklus sein?</h2></div>
+      <p class="hint wiz-q-explain">Dein Training läuft in <b>Zyklen</b>. Ein Zyklus beginnt mit der <b>Intro-Woche</b>: Du steigst
+        etwas leichter ein und findest deine Gewichte. In den folgenden <b>Aufbauwochen</b> wird es Woche für Woche etwas fordernder –
+        mehr Sätze, weniger im Tank, mehr Gewicht oder Wiederholungen. Zum Schluss kommt die leichte <b>Deload-Woche</b> zum Erholen,
+        danach startet der nächste Zyklus wieder mit der Intro-Woche – auf etwas höherem Niveau als zuvor.<br><br>
+        Eine Woche ist dabei ein <b>Durchlauf</b>: geschafft, sobald jeder Trainingstag einmal dran war – egal, ob du dafür 6, 7 oder
+        9 Tage brauchst.<br><br>
+        <b>4 Trainingswochen + 1 Deload-Woche</b> sind der typische Zyklus: lang genug, um sich spürbar zu steigern, und kurz genug,
+        dass sich nicht zu viel Ermüdung ansammelt. Du kannst das aber jederzeit anpassen – auch später noch im Plan-Reiter.</p>
+      ${wk(4, '4 Trainingswochen + Deload (empfohlen)', 'Intro + 3 Aufbauwochen, dann die Deload-Woche. Der bewährte Standard – passt für die allermeisten.')}
+      ${wk(5, '5 Trainingswochen + Deload', 'Intro + 4 Aufbauwochen. Eine Aufbauwoche mehr, bevor du dich erholst – für Erfahrene, die sich gut erholen und länger am Stück steigern möchten. Die 5. Woche übernimmt Volumen und Tank der 4. Woche.')}
+    </div>
+    <div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">😮‍💨</span><h2>Wie soll dein Deload ablaufen?</h2></div>
       <p class="hint wiz-q-explain"><b>Was ist ein Deload?</b> Eine bewusst leichte Trainingswoche: halb so viele Sätze, etwa 20 %
         weniger Gewicht und mindestens ${DELOAD_RIR} Wiederholungen im Tank. Über die Aufbauwochen sammelt sich Ermüdung an – in
@@ -733,11 +743,13 @@ function renderWizDeload() {
         Danach bist du meist stärker als vorher, und der nächste Zyklus beginnt mit der Intro-Woche.</p>
       ${opt('auto', 'Automatisch (empfohlen)', `Nach deinen ${wiz.weeks} Trainingswochen folgt immer automatisch die Deload-Woche – du
         musst an nichts denken. Ideal für Neulinge und Einsteiger und für alle, die einen festen Rhythmus mögen.`)}
-      ${opt('self', 'Selbst bestimmen', `Nach der letzten Aufbauwoche geht es Woche für Woche weiter („Verlängerung“): Sätze und
+      ${opt('self', 'Selbst bestimmen', `Die ${wiz.weeks} Trainingswochen sind dann nur der Plan bis zur ersten möglichen Pause:
+        Nach der letzten Aufbauwoche geht es Woche für Woche weiter („Verlängerung“): Sätze und
         Tank bleiben wie in der letzten Aufbauwoche, Gewicht und Wiederholungen steigen weiter. Den Deload legst du per Knopf auf
         dem Startbildschirm ein, sobald du ihn brauchst – z. B. wenn Gelenke zwicken, die Kraft stagniert, du schlecht schläfst
         oder die Motivation fehlt. Beim nächsten Zyklus fragt die App, ob die Verlängerung beim Vergleich berücksichtigt werden
         soll. Für Erfahrene, die ihren Körper gut einschätzen können.`)}
+      <p class="hint">Beides lässt sich später im Plan-Reiter ändern.</p>
     </div>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="intq">Zurück</button>
       <button class="btn primary" data-action="wiz-step" data-to="progq">Weiter</button></div>`;
