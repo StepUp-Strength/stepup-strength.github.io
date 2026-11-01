@@ -153,7 +153,7 @@ function nutStartLine() {
   const ph = NUT_PHASES[n.phase];
   const maint = n.phase === 'minicut' && nutMinicutStage(n) !== 'cut';
   return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
-      <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutCalc(n, kg).kcal)} kcal
+      <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutCalc(n, kg).kcal)} kcal${(t => t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : "")(intakeOn(todayISO()))}
         ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
 }
 
@@ -522,6 +522,131 @@ function nutGoalCard(n, c, kg) {
     </div>`;
 }
 
+/* ---------- Gegessen: aus Health (Kurzbefehl) oder von Hand, data.intake ---------- */
+
+let nutIntakeForm = null;  // „Von Hand eintragen“ offen: { date, kcal, p, c, f } als Text
+
+const intakeOn = date => data.intake.find(x => x.date === date);
+const nutG = v => v == null ? '–' : `${deNum(v)} g`;
+
+// Balken Ist ↔ Soll; tol = erlaubte Abweichung (Anteil), lo = Untergrenze (Eiweiß)
+function nutIntakeBar(label, v, goal, unit, tol, lo = null) {
+  if (v == null) return `<div class="nut-ib"><div class="nut-ib-top"><span>${label}</span><b class="hint">–</b></div></div>`;
+  const pct = goal ? v / goal : 0;
+  const ok = lo != null ? v >= lo : Math.abs(pct - 1) <= tol;
+  const fmt = x => unit === 'kcal' ? nutKcal(x) : deNum(Math.round(x));
+  return `<div class="nut-ib ${ok ? 'ok' : 'off'}"><div class="nut-ib-top"><span>${label}</span>
+      <b>${fmt(v)} <small>/ ${lo != null ? `${deNum(lo)}+` : fmt(goal)} ${unit}</small></b></div>
+      <div class="nut-ib-bar"><div style="width:${Math.min(100, Math.round(pct * 100))}%"></div></div></div>`;
+}
+
+function nutIntakeFormHtml() {
+  const f = nutIntakeForm;
+  const inp = (k, ph) => `<input class="inp kg" type="text" inputmode="numeric" autocomplete="off" data-field="nut-intake" data-k="${k}" value="${esc(f[k])}" placeholder="${ph}">`;
+  return `<div class="nut-intake-form">
+      <label class="row"><span>Datum</span><input class="inp date" type="date" data-field="nut-intake" data-k="date" value="${f.date}" max="${todayISO()}"></label>
+      <label class="row"><span>Kalorien</span>${inp('kcal', 'kcal')}</label>
+      <label class="row"><span>Eiweiß</span>${inp('p', 'g')}</label>
+      <label class="row"><span>Kohlenhydrate</span>${inp('c', 'g')}</label>
+      <label class="row"><span>Fett</span>${inp('f', 'g')}</label>
+      <p class="hint nut-small">Tagessummen eintragen. Lässt du die Kalorien leer, rechnet die App sie aus den Makros aus
+        (Eiweiß und Kohlenhydrate 4 kcal, Fett 9 kcal pro Gramm).</p>
+      <div class="row"><button class="btn" data-action="nut-intake-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="nut-intake-save">Speichern</button></div>
+    </div>`;
+}
+
+// Heute: Ist ↔ Soll
+function nutIntakeCard(n, c) {
+  const t = intakeOn(todayISO());
+  const body = t
+    ? `${nutIntakeBar('Kalorien', t.kcal, c.kcal, 'kcal', 0.1)}
+       ${nutIntakeBar('Eiweiß', t.p, c.protein, 'g', 0, c.pLo)}
+       ${nutIntakeBar('Kohlenhydrate', t.c, c.carbs, 'g', 0.25)}
+       ${nutIntakeBar('Fett', t.f, c.fat, 'g', 0.25)}
+       <p class="hint nut-small">${t.src === 'health' ? 'Aus Health übernommen' : 'Von Hand eingetragen'} · Grün = passt
+         (Kalorien ±10 %, Eiweiß ab der Untergrenze, Kohlenhydrate und Fett ±25 %).</p>`
+    : '<p class="hint nut-small">Heute ist noch nichts eingetragen. Füg die Werte aus deiner Ernährungs-App über Health ein – oder trag die Tagessummen von Hand ein.</p>';
+  return `<div class="card nut-intake">
+      <p class="nut-intake-head"><b>🍽️ Heute gegessen</b></p>
+      ${body}
+      ${nutIntakeForm ? nutIntakeFormHtml() : `<div class="row">
+        <button class="btn" data-action="health-paste">❤️ Aus Health</button>
+        <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>`}
+    </div>`;
+}
+
+// Die letzten 14 Tage als Balken (Linie = Tagesziel) + Ø der letzten 7 Tage
+function nutHistoryCard(n, c) {
+  const days = Array.from({ length: 14 }, (_, i) => addDaysISO(todayISO(), i - 13));
+  const list = days.map(d => intakeOn(d));
+  if (!list.some(Boolean)) return '';
+  const max = Math.max(c.kcal * 1.3, ...list.map(x => (x && x.kcal) || 0));
+  const W = 280, H = 90, bw = W / 14;
+  const y = v => H - 14 - v / max * (H - 22);
+  let svg = `<svg class="nut-hist" viewBox="0 0 ${W} ${H}" aria-hidden="true">`;
+  list.forEach((x, i) => {
+    if (x && x.kcal) {
+      const ok = Math.abs(x.kcal / c.kcal - 1) <= 0.1;
+      svg += `<rect class="${ok ? 'ok' : 'off'}" x="${i * bw + 2}" y="${y(x.kcal)}" width="${bw - 4}" height="${H - 14 - y(x.kcal)}" rx="2"/>`;
+    }
+    svg += `<text x="${i * bw + bw / 2}" y="${H - 2}" text-anchor="middle">${new Date(days[i] + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'narrow' })}</text>`;
+  });
+  svg += `<line x1="0" x2="${W}" y1="${y(c.kcal)}" y2="${y(c.kcal)}"/></svg>`;
+  const week = days.slice(7).map(d => intakeOn(d)).filter(x => x && x.date < todayISO());
+  const avg = k => { const v = week.map(x => x[k]).filter(x => x != null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; };
+  const rows = [...data.intake].filter(x => x.date >= days[0]).sort((a, b) => b.date.localeCompare(a.date)).map(x => `<li class="bw-row">
+      <span>${fmtDate(x.date + 'T12:00:00')}<small class="hint">${x.p != null ? ` · E ${x.p}` : ''}${x.c != null ? ` · K ${x.c}` : ''}${x.f != null ? ` · F ${x.f}` : ''}</small></span>
+      <b>${x.kcal != null ? nutKcal(x.kcal) + ' kcal' : '–'}</b>
+      <button class="icon-btn" data-action="nut-intake-open" data-date="${x.date}" aria-label="Bearbeiten">✎</button>
+      <button class="icon-btn danger" data-action="nut-intake-del" data-date="${x.date}" aria-label="Löschen">✕</button></li>`).join('');
+  return `<div class="card nut-history">
+      <p class="nut-intake-head"><b>📅 Letzte 14 Tage</b> <small class="hint">· Linie = Tagesziel ${nutKcal(c.kcal)} kcal</small></p>
+      ${svg}
+      ${week.length ? `<div class="nut-goal-row nut-avg"><span>Ø Kalorien<b>${avg('kcal') != null ? nutKcal(avg('kcal')) : '–'}</b></span>
+        <span>Ø Eiweiß<b>${nutG(avg('p'))}</b></span><span>eingetragen<b>${week.length} von 7 Tagen</b></span></div>
+        <p class="hint nut-small">Ø der letzten 7 vollständigen Tage (ohne heute).</p>` : ''}
+      <details class="nut-more"><summary>Einträge ansehen und bearbeiten</summary><ul class="list">${rows}</ul></details>
+    </div>`;
+}
+
+// Gemessener Erhaltungsbedarf: Ø gegessen minus Gewichtsveränderung (letzte 4 Wochen, ohne heute)
+function nutMeasured() {
+  const from = addDaysISO(todayISO(), -28);
+  const days = data.intake.filter(x => x.date >= from && x.date < todayISO() && x.kcal > 0);
+  if (days.length < 14) return { days: days.length };
+  const pts = data.bodyweight.filter(b => b.date.slice(0, 10) >= from).map(b => ({ x: Date.parse(b.date) / DAY, y: b.kg }));
+  const span = pts.length ? Math.max(...pts.map(p => p.x)) - Math.min(...pts.map(p => p.x)) : 0;
+  if (pts.length < 4 || span < 14) return { days: days.length, noWeight: true };
+  const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length, my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+  const slope = pts.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0) / pts.reduce((a, p) => a + (p.x - mx) ** 2, 0);  // kg pro Tag
+  const avg = days.reduce((a, x) => a + x.kcal, 0) / days.length;
+  return { days: days.length, avg, perWeek: slope * 7, tdee: avg - slope * NUT_KCAL_KG };
+}
+
+function nutMeasuredCard(n, c) {
+  const m = nutMeasured();
+  if (m.tdee == null) {
+    return `<div class="card nut-check"><p><b>📏 Gemessener Bedarf</b></p>
+      <p class="hint nut-small">${m.noWeight
+        ? 'Genug Essens-Einträge sind da – jetzt fehlen noch Gewichtswerte: Wiege dich 3–4× pro Woche über mindestens zwei Wochen.'
+        : `Trägst du an mindestens 14 Tagen ein, was du isst (bisher ${m.days} in den letzten 4 Wochen), und wiegst dich regelmäßig,
+          rechnet die App deinen <b>echten</b> Erhaltungsbedarf aus: Was du im Schnitt isst, minus das, was sich am Gewicht
+          verändert. Das ist viel genauer als die Schätzformel.`}</p></div>`;
+  }
+  const real = Math.round(m.tdee / 10) * 10;
+  const used = c.tdee + (n.adjust || 0);
+  const adj = Math.round((real - c.tdee) / 50) * 50;
+  const close = Math.abs(real - used) < 100;
+  return `<div class="card nut-check ${close ? 'ok' : 'off'}"><p><b>📏 Gemessener Bedarf: ca. ${nutKcal(real)} kcal</b></p>
+      <p class="hint nut-small">In den letzten 4 Wochen hast du an ${m.days} Tagen im Schnitt <b>${nutKcal(m.avg)} kcal</b> gegessen,
+        dein Gewicht hat sich dabei um <b>${nutSigned(m.perWeek, 'kg')} pro Woche</b> verändert. Daraus ergibt sich ein Erhaltungsbedarf
+        von ca. ${nutKcal(real)} kcal – die App rechnet gerade mit ${nutKcal(used)} kcal${n.adjust ? ' (Formel + Anpassung)' : ' (Schätzformel)'}.
+        ${close ? 'Das passt gut zusammen.' : 'Übernimmst du den gemessenen Wert, rechnet die App dein Tagesziel ab jetzt damit.'}</p>
+      ${close ? '' : `<button class="btn primary" data-action="nut-measured-apply" data-v="${adj}">Gemessenen Bedarf übernehmen</button>`}
+      <p class="hint nut-small">Funktioniert am besten, wenn du an den eingetragenen Tagen wirklich alles erfasst.</p></div>`;
+}
+
 // Passt das Tempo? Vergleich Trend ↔ Plan, ggf. Vorschlag zur Anpassung
 function nutTrendCard(n, c) {
   if (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') return '';  // Erhaltungswoche: Wasser verfälscht den Trend
@@ -541,6 +666,12 @@ function nutTrendCard(n, c) {
   const what = diff > 0
     ? (c.planned < 0 ? 'Du nimmst langsamer ab als geplant.' : c.planned > 0 ? 'Du nimmst schneller zu als geplant.' : 'Du nimmst zu, obwohl dein Gewicht gleich bleiben soll.')
     : (c.planned > 0 ? 'Du nimmst langsamer zu als geplant.' : c.planned < 0 ? 'Du nimmst schneller ab als geplant.' : 'Du nimmst ab, obwohl dein Gewicht gleich bleiben soll.');
+  // Mit eingetragenem Essen ist der gemessene Bedarf genauer – dann dort anpassen statt hier pauschal
+  if (nutMeasured().tdee != null) {
+    return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
+      <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Weil du einträgst, was du isst,
+        rechnet die App beim <b>gemessenen Bedarf</b> oben genauer aus, woran es liegt und wie viel du essen solltest.</p></div>`;
+  }
   return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
     <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Vorschlag: täglich etwa
       <b>${Math.abs(corr)} kcal ${corr < 0 ? 'weniger' : 'mehr'}</b>. Die App rechnet dann ab heute neu und prüft in zwei Wochen wieder.</p>
@@ -592,6 +723,9 @@ function nutExplain(n, c, kg) {
         : `<p><b>Eiweiß:</b> ${fmtNum(NUT_PROTEIN[n.phase].def)} g pro kg (Mitte der Spanne ${fmtNum(NUT_PROTEIN[n.phase].lo)}–${fmtNum(NUT_PROTEIN[n.phase].hi)} g)${Math.abs(c.ref - kg) > 1 ? `, bezogen auf ${fmtNum(Math.round(c.ref))} kg statt deines vollen Gewichts, weil viel Körperfett kein Eiweiß braucht` : ''}.
         <b>Fett:</b> ${n.phase === 'minicut' ? '20' : '25'} % der Kalorien, mindestens ${fmtNum(n.phase === 'minicut' ? 0.6 : 0.8)} g pro kg.
         <b>Kohlenhydrate:</b> der Rest.</p>`}
+      <p><b>Gemessener Bedarf:</b> Trägst du ein, was du isst (aus Health oder von Hand), vergleicht die App über die letzten
+        4 Wochen, wie viel du im Schnitt gegessen hast und wie sich dein Gewicht dabei verändert hat. Nimmst du z. B. bei
+        2.300 kcal pro Tag 0,25 kg pro Woche ab, liegt dein Bedarf bei etwa 2.300 + 0,25 × ${deNum(NUT_KCAL_KG)} ÷ 7 ≈ 2.580 kcal.</p>
       <p>1 kg Körpergewicht entspricht grob ${deNum(NUT_KCAL_KG)} kcal. Rechne immer nur mit Schätzwerten (±10 %): Entscheidend ist,
         wie sich dein Gewicht über 2–3 Wochen entwickelt – dafür gibt es den Tempo-Check.</p>
       ${n.adjust ? `<button class="btn" data-action="nut-adjust-reset">Anpassung aus dem Gewichtsverlauf zurücksetzen</button>` : ''}
@@ -622,6 +756,9 @@ function renderNutrition() {
         <div><b>${ph.label}</b><small>seit ${fmtDate(n.since + 'T12:00:00')} · ${weekText} · ${nutPace(n).label}</small></div></div>
       ${nutPhaseHint(n)}
       ${nutTargetCard(n, c, true)}
+      ${nutIntakeCard(n, c)}
+      ${nutHistoryCard(n, c)}
+      ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
       ${nutTrendCard(n, c)}
       ${n.phase === 'diet' || n.phase === 'minicut' ? `<div class="card nut-train">
@@ -786,7 +923,44 @@ Object.assign(actions, {
     toast('Wieder die Empfehlung der App');
     render();
   },
+  // Gegessen von Hand eintragen / ändern (data-date: dieser Tag, vorhandene Werte vorausgefüllt)
+  'nut-intake-open': el => {
+    const x = intakeOn(el.dataset.date) || {};
+    const s = v => v == null ? '' : String(v);
+    nutIntakeForm = { date: el.dataset.date, kcal: s(x.kcal), p: s(x.p), c: s(x.c), f: s(x.f) };
+    render();
+    const form = $view.querySelector('.nut-intake-form');
+    if (form) form.scrollIntoView({ block: 'nearest' });
+  },
+  'nut-intake-cancel': () => { nutIntakeForm = null; render(); },
+  'nut-intake-save': () => {
+    const f = nutIntakeForm;
+    const num = k => (String(f[k]).trim() === '' ? null : parseNum(f[k]));
+    const v = { kcal: num('kcal'), p: num('p'), c: num('c'), f: num('f') };
+    if (Object.values(v).some(x => x != null && (x < 0 || x > 15000))) { alert('Bitte nur Zahlen zwischen 0 und 15.000 eintragen.'); return; }
+    if (v.kcal == null && [v.p, v.c, v.f].every(x => x == null)) { alert('Bitte mindestens die Kalorien oder die Makros eintragen.'); return; }
+    if (v.kcal == null) v.kcal = Math.round((v.p || 0) * 4 + (v.c || 0) * 4 + (v.f || 0) * 9);
+    for (const k of Object.keys(v)) if (v[k] != null) v[k] = Math.round(v[k]);
+    saveIntake(f.date || todayISO(), v, 'hand');
+    nutIntakeForm = null;
+    saveData();
+    toast('Gespeichert ✔');
+    render();
+  },
+  'nut-intake-del': el => {
+    if (!confirm(`Eintrag vom ${fmtDate(el.dataset.date + 'T12:00:00')} löschen?`)) return;
+    data.intake = data.intake.filter(x => x.date !== el.dataset.date);
+    saveData(); render();
+  },
+  // Gemessenen Bedarf übernehmen: Anpassung = gemessen − Schätzformel (ersetzt die bisherige Anpassung)
+  'nut-measured-apply': el => {
+    Object.assign(data.nutrition, { adjust: Number(el.dataset.v), adjustAt: todayISO() });
+    saveData();
+    toast('Tagesziel rechnet jetzt mit deinem gemessenen Bedarf');
+    render();
+  },
 });
 
 fields['nut-in'] = el => { nutDraft[el.dataset.k] = el.value; };
 fields['nut-pct'] = el => { nutMacroEdit[el.dataset.k] = el.value; nutPctUpdate(); };
+fields['nut-intake'] = el => { nutIntakeForm[el.dataset.k] = el.value; };

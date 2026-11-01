@@ -94,6 +94,7 @@ function upgradeData(d) {
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
+  if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
@@ -622,7 +623,7 @@ const progChip = (key, on, attrs) =>
 const RIR_PLAN = { 4: [2, 1.5, 1, 0.5], 5: [2, 1.5, 1, 0.5, 0.5] };  // 5. Woche: Option, noch offen
 
 // Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
-const KINDS = { compound: 'Grundübung', normal: 'Normal', assist: 'Assistenz' };
+const KINDS = { compound: 'Grundübung', normal: 'Normale Übung', assist: 'Assistenzübung' };
 const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
 const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken[^(]*\(langhantel|kreuzheben|schulterdrucken langhantel|rudern langhantel|dips|umsetzen|reissen)/;
 const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
@@ -1142,13 +1143,20 @@ function refAt(list, k) {
 
 // Vorschlag aus einem Bezugssatz: gleiches Gewicht, Wdh. +1 (plusOne) bzw. bestätigen –
 // reicht die damalige Leistung schon für die nächste Gewichtsstufe, steigt stattdessen das Gewicht.
-// Die Wdh. werden vorher auf das damalige Tank-Ziel (srcRir) umgerechnet: mehr Wdh. mit weniger Tank sind keine
-// Mehrleistung (11 Wdh. mit 2 statt 3 im Tank zählen wie 10), mehr Wdh. mit vollem Tank schon.
+// Mehr im Tank als das damalige Ziel (srcRir): Wdh. darauf umrechnen (abgerundet) – mehr Wdh. mit vollem Tank zählen.
+// Weniger im Tank als geplant: auf das Tank-Ziel der neuen Woche umrechnen (gerundet) – mehr Wdh. mit weniger Tank
+// sind keine Mehrleistung. Boden: nie weniger Wdh. als im Bezugssatz geschafft (User-Regel 2026-11-01); deutlich
+// verfehlte Sätze laufen vorher über die Bremse (refProposal/missed).
 function fromRef(src, target, plusOne, i, srcRir) {
   let weight = src.weight;
-  const base = src.reps != null && src.rir != null && srcRir != null
-    ? Math.floor(src.reps + src.rir - srcRir + 1e-9) : src.reps;
+  let base = src.reps;
+  if (src.reps != null && src.rir != null && srcRir != null) {
+    base = src.rir < srcRir
+      ? Math.round(src.reps + src.rir - (target.rir != null ? target.rir : srcRir))
+      : Math.floor(src.reps + src.rir - srcRir + 1e-9);
+  }
   let reps = base != null ? base + (plusOne ? 1 : 0) : goalReps(target, i);
+  if (src.reps != null) reps = Math.max(reps, src.reps);
   if (src.reps != null && src.weight != null) {
     const cap = src.reps + (src.rir != null ? src.rir : target.rir);
     const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
@@ -1540,7 +1548,12 @@ function warmupBlock(en, ei) {
   }
   const kind = warmupKind(en);
   const work = firstWorkWeight(en);
-  let h = `<div class="warmup" data-warm="${ei}"><div class="warm-title">🔥 Aufwärmen</div>
+  // zugeklappt (en.warmClosed): nur eine Zeile mit Kurzfassung, Pfeil zum Aufklappen
+  const summary = `${en.warmup.length} ${en.warmup.length === 1 ? 'Satz' : 'Sätze'}: ${en.warmup.map(w => w.weight || '–').join(' / ')} kg`;
+  const head = `<button class="warm-title warm-toggle" data-action="wu-toggle" data-ei="${ei}" aria-expanded="${!en.warmClosed}">
+      <span>🔥 Aufwärmen${en.warmClosed ? ` <small>· ${esc(summary)}</small>` : ''}</span><span class="chev" aria-hidden="true">${en.warmClosed ? '▸' : '▾'}</span></button>`;
+  if (en.warmClosed) return `<div class="warmup closed" data-warm="${ei}">${head}</div>`;
+  let h = `<div class="warmup" data-warm="${ei}">${head}
     <div class="setgrid warmgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">` +
     (kind === 'barbell' ? 'pro Seite' : '') + '</span>' + en.warmup.map((w, wi) => `<span class="setno">A${wi + 1}</span>
       <input type="text" inputmode="decimal" autocomplete="off" placeholder="kg"
@@ -1831,6 +1844,14 @@ function renderStart() {
   return h;
 }
 
+// Werte früherer Trainings: je Satz eine Zeile; mehrere Spalten nebeneinander (z. B. letzter Zyklus | Vorwoche)
+function setRows(cols, head = false) {
+  const n = Math.max(...cols.map(c => c.sets.length));
+  return `<table class="last-sets">${head ? `<tr><th></th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>` : ''}` +
+    Array.from({ length: n }, (_, i) => `<tr><td class="no">${i + 1}</td>${cols.map(c =>
+      `<td>${c.sets[i] ? fmtSet(c.sets[i]) : ''}</td>`).join('')}</tr>`).join('') + '</table>';
+}
+
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
   let h = draft.own
@@ -1865,7 +1886,7 @@ function renderTraining() {
   const stalls = stagnationHints();
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
-    h += `<section class="card">
+    h += `<section class="card ex-card tint-${ei % 4}">
       <div class="ex-head">
         <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
@@ -1912,8 +1933,8 @@ function renderTraining() {
       }
     }
     if (en.weekFirst) {
-      h += `<p class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):<br>
-        ${en.weekFirst.sets.map(fmtSet).join(' · ')}<br><b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></p>`;
+      h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
+        ${setRows([{ sets: en.weekFirst.sets }])}<b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></div>`;
     }
     if (en.compare) {
       const rule = en.compare.shifted && !en.rule
@@ -1926,14 +1947,12 @@ function renderTraining() {
             ? 'Heute: begrenzt durch das 1. Training dieser Woche'
             : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
       const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
-      h += `<p class="compare">Letzter Zyklus, ${weekLabel(en.compare.week)}${occ} (${fmtDate(en.compare.date)}):<br>
-        ${en.compare.sets.map(fmtSet).join(' · ')}` +
-        (en.prevWeek ? `<br>Vorwoche, ${weekLabel(en.prevWeek.week)} (${fmtDate(en.prevWeek.date)}):<br>
-        ${en.prevWeek.sets.map(fmtSet).join(' · ')}` : '') +
-        `<br><b>${rule}</b></p>`;
+      const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.sets }];
+      if (en.prevWeek) cols.push({ label: `Vorwoche<small>${weekLabel(en.prevWeek.week)} · ${fmtDate(en.prevWeek.date)}</small>`, sets: en.prevWeek.sets });
+      h += `<div class="compare">${setRows(cols, true)}<b>${rule}</b></div>`;
     } else {
       h += last
-        ? `<p class="last">Letztes Mal (${fmtDate(last.date)}): ${last.sets.map(fmtSet).join(' · ')}</p>`
+        ? `<div class="last">Letztes Mal (${fmtDate(last.date)}):${setRows([{ sets: last.sets }])}</div>`
         : en.target && en.target.own ? '<p class="last">Erstes Mal – Werte aus deinem Plan.</p>'
         : en.target && en.target.max10 == null && !body ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
           : '<p class="last">Erstes Mal – noch keine Werte.</p>';
@@ -3094,7 +3113,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake,
     });
     saveData();
     toast('Sicherung importiert ✔');
@@ -3654,6 +3673,14 @@ const actions = {
     if (Object.keys(own).length) p.weekProgression[round] = own; else delete p.weekProgression[round];
     saveData(); render();
   },
+  // Aufwärmen auf-/zuklappen (nur dieser Kasten wird neu gezeichnet, die Seite springt nicht)
+  'wu-toggle': el => {
+    const ei = +el.dataset.ei, en = draft.entries[ei];
+    en.warmClosed = !en.warmClosed;
+    saveDraft();
+    const box = $view.querySelector(`[data-warm="${ei}"]`);
+    if (box) box.outerHTML = warmupBlock(en, ei); else render();
+  },
   // Aufwärmsatz hinzufügen: etwas schwerer als der letzte (+20 % vom Arbeitssatz, höchstens 90 %), weniger Wdh.
   'wu-add': el => {
     const en = draft.entries[el.dataset.ei];
@@ -3706,9 +3733,9 @@ const actions = {
   export: () => exportData(),
   import: () => document.getElementById('import-file').click(),
   'reset-trainings': () => {
-    if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht und Schritte löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
+    if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);

@@ -1364,3 +1364,51 @@ table.vol.view td { font-weight: 650; }
 .split-opt:disabled { opacity: .55; }
 .split-opt.int-opt small b { font-size: 15px; }
 .split-opt.int-opt .int-days b { font-size: 14px; color: var(--text); }
+/* Ernährung: gegessen (Ist ↔ Soll), Verlauf */
+.nut-intake-head { margin: 0 0 10px; font-size: 17px; }
+.nut-ib { margin: 0 0 10px; }
+.nut-ib-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 15.5px; }
+.nut-ib-top b { font-variant-numeric: tabular-nums; }
+.nut-ib-top small { font-weight: 500; color: var(--muted); }
+.nut-ib-bar { height: 8px; margin-top: 4px; border-radius: 999px; background: var(--fill); overflow: hidden; }
+.nut-ib-bar div { height: 100%; border-radius: 999px; background: var(--warn); }
+.nut-ib.ok .nut-ib-bar div { background: var(--success); }
+.nut-intake .row .btn { min-height: 48px; font-size: 16px; }
+.nut-intake-form { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+.nut-hist { display: block; width: 100%; height: auto; margin: 4px 0 10px; }
+.nut-hist rect.ok { fill: var(--success); }
+.nut-hist rect.off { fill: var(--warn); }
+.nut-hist line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.nut-hist text { fill: var(--muted); font-size: 9px; }
+.nut-avg { margin-top: 4px; }
+.nut-history .bw-row small { display: block; }
+/* Training: Übungskarten leicht unterschiedlich getönt, Name prägnanter */
+.ex-card.tint-0 { background: #f6f9ff; }
+.ex-card.tint-1 { background: #f5fbf7; }
+.ex-card.tint-2 { background: #fffaf3; }
+.ex-card.tint-3 { background: #f9f6ff; }
+@media (prefers-color-scheme: dark) {
+  .ex-card.tint-0 { background: #1a1e28; }
+  .ex-card.tint-1 { background: #19221d; }
+  .ex-card.tint-2 { background: #231f1a; }
+  .ex-card.tint-3 { background: #201c28; }
+}
+.ex-card .ex-head { margin: -2px 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.ex-card .ex-head h2 { font-size: 24px; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+/* Aufwärmen: auf-/zuklappbar */
+.warm-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px;
+  margin: -4px 0 6px; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; font-weight: 750;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--muted); text-align: left; }
+.warm-toggle small { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.warm-toggle .chev { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px;
+  background: var(--card); font-size: 16px; color: var(--text); }
+.warmup.closed { padding-top: 8px; padding-bottom: 8px; }
+.warmup.closed .warm-toggle { margin: 0; }
+/* Werte früherer Trainings: je Satz eine Zeile */
+.last-sets { width: 100%; margin: 4px 0 6px; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+.last-sets td, .last-sets th { padding: 3px 6px 3px 0; text-align: left; vertical-align: top; }
+.last-sets th { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.last-sets th small { display: block; font-weight: 500; }
+.last-sets td.no { width: 22px; color: var(--muted); font-weight: 700; }
+.last-sets tr + tr td { border-top: 1px solid var(--line); }
+div.last { margin: 0 0 12px; font-size: 15px; color: var(--muted); }

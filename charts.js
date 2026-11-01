@@ -651,7 +651,7 @@ function stepsList() {
 function healthCard() {
   return `<div class="card health">
     <button class="btn primary" data-action="health-paste">❤️ Aus Health einfügen</button>
-    <p class="hint">Übernimmt Schritte und Gewicht, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
+    <p class="hint">Übernimmt Schritte, Gewicht und – wenn eingerichtet – Kalorien, Eiweiß, Kohlenhydrate und Fett, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
     ${chartState.pasteBox ? `<textarea class="inp comment" id="health-text" rows="3"
         placeholder="Hier lange drücken → Einsetzen"></textarea>
       <div class="row"><button class="btn" data-action="health-apply">Übernehmen</button></div>` : ''}
@@ -659,23 +659,56 @@ function healthCard() {
   </div>`;
 }
 
-// Anleitung (iPhone): Kurzbefehl, der Schritte und Gewicht aus Health in die Zwischenablage kopiert,
-// und eine Automation, die ihn jeden Tag von selbst ausführt
+// Anleitung (iPhone): Kurzbefehl, der Schritte, Gewicht und (optional) Ernährungswerte aus Health in die
+// Zwischenablage kopiert, und eine Automation, die ihn jeden Tag von selbst ausführt
 const healthGuide = () => `<details class="health-guide">
     <summary>📲 So richtest du den Kurzbefehl ein (iPhone)</summary>
-    <p><b>1. Kurzbefehl erstellen</b> – App „Kurzbefehle“ öffnen, unten „Kurzbefehle“, oben rechts <b>+</b>. Name z. B. „StepUp Health“. Dann diese Aktionen hinzufügen (oben ins Suchfeld eintippen):</p>
+    <p><b>0. Nur für Ernährungswerte: Ernährungs-App mit Health verbinden</b> – Wenn du deine Mahlzeiten in einer App wie
+      Yazio, MyFitnessPal, FDDB, Lifesum oder Cronometer einträgst: In deren Einstellungen die Verbindung zu
+      <b>Apple Health</b> einschalten und erlauben, dass sie <b>Ernährungsdaten schreiben</b> darf (Energie, Protein,
+      Kohlenhydrate, Fett). Prüfen kannst du das in der Health-App unter „Durchsuchen“ → „Ernährung“: Dort sollten die Werte
+      vom heutigen Tag auftauchen.</p>
+    <p><b>1. Kurzbefehl erstellen</b> – App „Kurzbefehle“ öffnen, unten „Kurzbefehle“, oben rechts <b>+</b>. Name z. B. „StepUp Health“.
+      Dann diese Aktionen der Reihe nach hinzufügen (oben ins Suchfeld eintippen):</p>
     <ol>
       <li><b>Health-Samples suchen</b>: Typ „Schritte“, Startdatum „ist heute“.</li>
       <li><b>Statistiken berechnen</b>: „Summe“ von den Health-Samples aus Schritt 1.</li>
-      <li><b>Health-Samples suchen</b> (zweites Mal): Typ „Gewicht“, sortiert nach „Startdatum“, „Neueste zuerst“, Limit „1“.</li>
-      <li><b>Text</b>: <code>Datum: </code> und die Variable „Aktuelles Datum“, dann <code> Schritte: </code> und das Ergebnis aus Schritt 2, dann <code> Gewicht: </code> und das Ergebnis aus Schritt 3. Ergibt z. B. „Datum: 27.10.2026 Schritte: 8432 Gewicht: 89,4 kg“.</li>
+      <li><b>Health-Samples suchen</b>: Typ „Gewicht“, sortiert nach „Startdatum“, „Neueste zuerst“, Limit „1“.</li>
+    </ol>
+    <p><i>Optional für die Ernährung – je zwei Aktionen pro Wert:</i></p>
+    <ol start="4">
+      <li><b>Health-Samples suchen</b>: Typ „Nahrungsenergie“ (heißt je nach iOS-Version auch „Aufgenommene Energie“ oder
+        „Energie“ unter Ernährung), Startdatum „ist heute“ – dann <b>Statistiken berechnen</b>: „Summe“.</li>
+      <li>Dasselbe für <b>„Protein“</b>: Health-Samples suchen (ist heute) + Statistiken berechnen (Summe).</li>
+      <li>Dasselbe für <b>„Kohlenhydrate“</b>.</li>
+      <li>Dasselbe für <b>„Fett gesamt“</b>.</li>
+    </ol>
+    <p><i>Zum Schluss:</i></p>
+    <ol start="8">
+      <li><b>Text</b>: Hier schreibst du den Text zusammen und setzt die Ergebnisse als Variablen ein (beim Tippen in das Textfeld
+        erscheinen sie oben über der Tastatur):<br>
+        <code>Datum: </code>[Aktuelles Datum] <code> Schritte: </code>[Summe Schritte] <code> Gewicht: </code>[Gewicht]
+        <code> Kalorien: </code>[Summe Energie] <code> Eiweiß: </code>[Summe Protein] <code> Kohlenhydrate: </code>[Summe Kohlenhydrate]
+        <code> Fett: </code>[Summe Fett]<br>
+        Ergibt z. B. „Datum: 29.10.2026 Schritte: 8432 Gewicht: 88,4 kg Kalorien: 1850 Eiweiß: 165 Kohlenhydrate: 170 Fett: 60“.
+        Ohne Ernährungs-App lässt du einfach alles ab „Kalorien“ weg.</li>
       <li><b>In Zwischenablage kopieren</b> (kopiert den Text).</li>
       <li>Optional <b>Mitteilung anzeigen</b>: „Health-Daten bereit – StepUp öffnen und einfügen“.</li>
     </ol>
-    <p>Einmal auf ▶︎ tippen und Zugriff auf Health erlauben.</p>
-    <p><b>2. Täglich automatisch ausführen</b> – in „Kurzbefehle“ unten „Automation“, <b>+</b>, „Tageszeit“ wählen, z. B. 21:00 Uhr, „Täglich“. „Sofort ausführen“ einstellen, dann „Weiter“ und den Kurzbefehl „StepUp Health“ auswählen.</p>
-    <p><b>3. In die App übernehmen</b> – StepUp öffnen und hier auf „❤️ Aus Health einfügen“ tippen (ggf. „Einsetzen“ erlauben).</p>
-    <p class="hint">Ganz ohne Tippen geht es leider nicht: Das iPhone lässt Web-Apps nicht selbst auf Health zugreifen. Der Kurzbefehl legt die Daten jeden Tag bereit – am besten am selben Abend einfügen, bevor du etwas anderes kopierst.</p>
+    <p>Einmal auf ▶︎ tippen und den Zugriff auf alle abgefragten Health-Daten erlauben.</p>
+    <p><b>2. Täglich automatisch ausführen</b> – in „Kurzbefehle“ unten „Automation“, <b>+</b>, „Tageszeit“ wählen und „Täglich“.
+      Mit Ernährungswerten am besten <b>spät am Abend</b> (z. B. 22:00 Uhr), wenn alle Mahlzeiten eingetragen sind. „Sofort
+      ausführen“ einstellen, dann „Weiter“ und den Kurzbefehl „StepUp Health“ auswählen.</p>
+    <p><b>3. In die App übernehmen</b> – StepUp öffnen und auf „❤️ Aus Health einfügen“ tippen (ggf. „Einsetzen“ erlauben).</p>
+    <p><b>Gut zu wissen:</b></p>
+    <ul>
+      <li>Du kannst den Kurzbefehl so oft ausführen und einfügen, wie du willst – die Werte eines Tages werden jedes Mal
+        <b>überschrieben</b>, nicht doppelt gezählt. Hast du nach der Automation noch etwas gegessen: einfach noch einmal ausführen.</li>
+      <li>Kommen die Kalorien in <b>kJ</b> statt kcal an, stell in der Health-App bei „Nahrungsenergie“ die Einheit auf kcal um.</li>
+      <li>Schreiben <b>zwei</b> Ernährungs-Apps nach Health, zählt Health beide zusammen – dann nur eine davon verbinden.</li>
+    </ul>
+    <p class="hint">Ganz ohne Tippen geht es leider nicht: Das iPhone lässt Web-Apps nicht selbst auf Health zugreifen. Der
+      Kurzbefehl legt die Daten jeden Tag bereit – am besten am selben Abend einfügen, bevor du etwas anderes kopierst.</p>
   </details>`;
 
 // Datum (JJJJ-MM-TT oder TT.MM.JJ[JJ]), Schritte und Gewicht aus dem Text lesen
@@ -705,7 +738,32 @@ function parseHealthText(text) {
     const only = t.trim().match(/^[\d.,' ]+$/) && parseInt(t.replace(/[.,]\d{1,2}\s*$/, '').replace(/\D/g, ''), 10);
     if (only && only >= 300) steps = only;
   }
-  return { date, steps, kg };
+  // Ernährung (Tagessummen aus Health): „Kalorien: 1.850,4 Eiweiß: 165 Kohlenhydrate: 170 Fett: 60“
+  const amount = re => {
+    const m = t.match(re);
+    if (!m) return null;
+    let s = m[1].trim().replace(/[.,]$/, '');
+    if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '');  // deutscher Tausenderpunkt
+    const n = parseNum(s);
+    return n != null && n >= 0 ? Math.round(n) : null;
+  };
+  const intake = {
+    kcal: amount(/(?:kalorien|nahrungsenergie|energie)\D{0,6}([\d.,]+)/i),
+    p: amount(/(?:eiwei(?:ß|ss)|protein)\D{0,6}([\d.,]+)/i),
+    c: amount(/(?:kohlenhydrate|carbs)\D{0,6}([\d.,]+)/i),
+    f: amount(/(?:fett|fat)\D{0,6}([\d.,]+)/i),
+  };
+  if (intake.kcal != null && intake.kcal > 15000) intake.kcal = null;  // unplausibel (z. B. kJ)
+  const hasIntake = Object.values(intake).some(v => v != null);
+  return { date, steps, kg, intake: hasIntake ? intake : null };
+}
+
+// Gegessenes eines Tages speichern (überschreibt den Tag): data.intake = [{ date, kcal, p, c, f, src }]
+function saveIntake(date, v, src) {
+  const existing = data.intake.find(x => x.date === date);
+  const entry = { date, kcal: v.kcal, p: v.p, c: v.c, f: v.f, src };
+  if (existing) Object.assign(existing, entry);
+  else data.intake.push(entry);
 }
 
 function saveSteps(date, steps) {
@@ -721,19 +779,21 @@ function saveBodyweight(day, kg) {
 }
 
 function applyHealthText(text) {
-  const { date, steps, kg } = parseHealthText(text);
-  if (steps == null && kg == null) {
-    alert('In der Zwischenablage wurden keine Schritte oder kein Gewicht gefunden.\n\nErwartet wird z. B.: „Datum: 2026-10-23 Schritte: 8432 Gewicht: 89,4“');
+  const { date, steps, kg, intake } = parseHealthText(text);
+  if (steps == null && kg == null && !intake) {
+    alert('In der Zwischenablage wurden keine Schritte, kein Gewicht und keine Ernährungswerte gefunden.\n\nErwartet wird z. B.: „Datum: 2026-10-23 Schritte: 8432 Gewicht: 89,4 Kalorien: 1850 Eiweiß: 165 Kohlenhydrate: 170 Fett: 60“');
     return;
   }
   withAwards(() => {
     if (steps != null) saveSteps(date, steps);
     if (kg != null) saveBodyweight(date, kg);
   });
+  if (intake) saveIntake(date, intake, 'health');
   saveData();
   chartState.pasteBox = false;
   render();
-  const parts = [steps != null ? `${deNum(steps)} Schritte` : null, kg != null ? `${fmtNum(kg)} kg` : null].filter(Boolean);
+  const parts = [steps != null ? `${deNum(steps)} Schritte` : null, kg != null ? `${fmtNum(kg)} kg` : null,
+    intake && intake.kcal != null ? `${deNum(intake.kcal)} kcal` : intake ? 'Makros' : null].filter(Boolean);
   toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}`);
 }
 

@@ -9,7 +9,7 @@
 // Der fertige Plan kommt als zusätzlicher Plan in data.plans und wird aktiv.
 
 const KIND_ORDER = { compound: 0, normal: 1, assist: 2 };
-const KIND_SHORT = { compound: 'Grund', normal: 'Normal', assist: 'Assistenz' };
+const KIND_SHORT = { compound: 'Grundübung', normal: 'normale Übung', assist: 'Assistenzübung' };
 const PLAN_GROUPS = Object.keys(MUSCLES).filter(g => g !== 'ausdauer' && g !== 'ganzkoerper');
 const MAX_FOCUS = 2;       // höchstens 2 Muskelgruppen priorisieren bzw. „low“
 const FOCUS_SETS = 2;      // ± Sätze pro Woche
@@ -687,7 +687,7 @@ function renderWizInt() {
       ${opt('alt', `Abwechselnd schwer und leicht${alt ? ' (empfohlen)' : ''}`, alt
         ? `Muskelgruppen, die mehrmals pro Woche dran sind, bekommen einmal einen schweren und einmal einen leichten Tag.
           <span class="int-days">${pattern}</span>
-          <b>Vorteile:</b>${list(['zwei verschiedene Reize: schwere Tage für Kraft, leichte für Muskelaufbau und Ausdauer – zusammen meist der beste Mix',
+          <b>Vorteile:</b>${list(['ideal, wenn du gerne schwere Gewichte bewegst und näher an deiner Maximalkraft arbeiten möchtest – ohne dass jedes Training so belastend ist',
             'Gelenke, Sehnen und Nervensystem erholen sich besser, weil nicht jedes Training mit schweren Gewichten läuft',
             'weniger Verletzungsrisiko durch geringere Dauerbelastung',
             'mehr Abwechslung – die schweren Tage fühlen sich frischer an'])}
