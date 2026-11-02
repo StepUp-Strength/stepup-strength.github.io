@@ -118,6 +118,9 @@ function nutWeight() {
   return round1(week.reduce((a, b) => a + b.kg, 0) / week.length);
 }
 
+// Vollständig eingerichtet? Beim ersten Öffnen wird nur die Phase gewählt – Kalorien gibt es erst mit den Angaben.
+const nutReady = n => !!(n && n.sex && n.age != null && n.height != null && n.activity);
+
 const nutPace = n => NUT_PACES[n.phase].find(p => p.k === n.pace) || NUT_PACES[n.phase].find(p => p.k === 'normal' || p.k === 'light');
 // Minicut-Abschnitt: 'cut' (Defizit), 'maint' (Erhaltungswoche danach), 'done'
 // Training an Diät/Minicut angepasst (n.trainAdapt, beim Einrichten gefragt): halber Volumenanstieg von der Intro-
@@ -131,9 +134,9 @@ function nutTrainAdapt() {
 const NUT_ADAPT_TEXT = 'Das Volumen steigt von der Intro- bis zur letzten Zykluswoche nur halb so stark an (z. B. 10 → 13 statt 10 → 16 Sätze pro Woche), dafür trainierst du immer 1 Wiederholung näher am Muskelversagen (1 Wdh. weniger im Tank). So bleibt der Trainingsreiz hoch, ohne dass die Ermüdung im Defizit überhandnimmt. Deload-Wochen bleiben wie gehabt.';
 
 // Frage beim Einrichten von Diät und Minicut
-function nutTrainQuestion(d) {
+function nutTrainQuestion(d, action = 'nut-train-pick') {
   if (d.phase !== 'diet' && d.phase !== 'minicut') return '';
-  const opt = (v, title, text) => `<button class="split-opt ${d.trainAdapt === v ? 'on' : ''}" data-action="nut-train-pick" data-v="${v ? 1 : 0}">
+  const opt = (v, title, text) => `<button class="split-opt ${d.trainAdapt === v ? 'on' : ''}" data-action="${action}" data-v="${v ? 1 : 0}">
       <b>${title}</b><small>${text}</small></button>`;
   const own = data.plans.length && hasActivePlan() && ownPlan();
   return `<div class="card wiz-q">
@@ -149,9 +152,13 @@ function nutTrainQuestion(d) {
 function nutStartLine() {
   const n = data.nutrition;
   const kg = nutWeight();
-  if (!n || kg == null) return '';
+  if (!n) return '';
   const ph = NUT_PHASES[n.phase];
   const maint = n.phase === 'minicut' && nutMinicutStage(n) !== 'cut';
+  if (!nutReady(n)) return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
+      <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel: Angaben noch ergänzen
+        ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
+  if (kg == null) return '';
   return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
       <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutCalc(n, kg).kcal)} kcal${(t => t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : "")(intakeOn(todayISO()))}
         ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
@@ -254,7 +261,7 @@ function navyBodyFat(sex, height, waist, neck, hip) {
 function nutInit(view) {
   const n = data.nutrition;
   const level = data.plans.length && activePlan().level;
-  nutDraft = n ? { ...n, kg: nutWeight() } : {
+  nutDraft = n ? { ...n, sex: n.sex || profileSex(), kg: nutWeight() } : {
     sex: profileSex(), age: null, ageYear: new Date().getFullYear(), height: null, bodyFat: null, activity: null,
     phase: null, pace: null, goalKg: null, weeks: 4, kg: nutWeight(),
   };
@@ -284,6 +291,15 @@ function nutBodyErrors(d) {
   return null;
 }
 
+const NUT_HELP = `<summary>Unsicher? So findest du deine Phase</summary>
+      <ul>
+        <li><b>Neu im Training oder nach langer Pause</b> → Body Recomposition</li>
+        <li><b>Eher schlank und du willst mehr Muskeln</b> → Aufbau</li>
+        <li><b>Deutlich zu viel Körperfett</b> → Diät</li>
+        <li><b>Im Aufbau zu viel Fett angesetzt</b> → Minicut, danach weiter Aufbau</li>
+      </ul>
+      <p class="hint">Faustregel: Bist du mit deinem Körperfett zufrieden, baue auf. Wenn nicht, nimm erst ab.</p>`;
+
 const nutStep = (no, of) => `<p class="sub">Schritt ${no} von ${of}</p>`;
 
 function renderNutPhase() {
@@ -301,15 +317,7 @@ function renderNutPhase() {
       ${Object.entries(NUT_PHASES).map(([p, ph]) => `<button class="split-opt cat ${d.phase === p ? 'on' : ''}" data-action="nut-phase" data-p="${p}">
           <span class="cat-icon">${ph.icon}</span><b>${ph.label}</b><small>${ph.short}</small></button>${more(p, ph)}`).join('')}
     </div>
-    <details class="card nut-help"><summary>Unsicher? So findest du deine Phase</summary>
-      <ul>
-        <li><b>Neu im Training oder nach langer Pause</b> → Body Recomposition</li>
-        <li><b>Eher schlank und du willst mehr Muskeln</b> → Aufbau</li>
-        <li><b>Deutlich zu viel Körperfett</b> → Diät</li>
-        <li><b>Im Aufbau zu viel Fett angesetzt</b> → Minicut, danach weiter Aufbau</li>
-      </ul>
-      <p class="hint">Faustregel: Bist du mit deinem Körperfett zufrieden, baue auf. Wenn nicht, nimm erst ab.</p>
-    </details>`;
+    <details class="card nut-help">${NUT_HELP}</details>`;
 }
 
 function renderNutBody() {
@@ -732,11 +740,44 @@ function nutExplain(n, c, kg) {
     </details>`;
 }
 
+// Karte „Training angepasst / unverändert“ (Diät und Minicut)
+function nutTrainCard(n) {
+  if (n.phase !== 'diet' && n.phase !== 'minicut') return '';
+  return `<div class="card nut-train">
+        <p><b>🏋️ Training ${n.trainAdapt ? (n.phase === 'minicut' ? 'an den Minicut' : 'an die Diät') + ' angepasst' : 'läuft unverändert'}</b></p>
+        <p class="hint nut-small">${n.trainAdapt ? (nutTrainAdapt() ? NUT_ADAPT_TEXT : 'In der Erhaltungswoche läuft das Training wieder normal (am besten als Deload).')
+          : 'Du kannst den Plan an die Phase anpassen lassen: halber Volumenanstieg und 1 Wdh. näher am Muskelversagen.'}</p>
+        <button class="btn" data-action="nut-train-toggle">${n.trainAdapt ? 'Anpassung ausschalten' : 'Training anpassen'}</button></div>`;
+}
+
+// Phase gewählt (z. B. beim ersten Öffnen), aber noch ohne Angaben
+function nutPhaseOnly(n) {
+  const ph = NUT_PHASES[n.phase];
+  const stage = n.phase === 'minicut' ? nutMinicutStage(n) : null;
+  const week = Math.floor(daysSince(n.since) / 7) + 1;
+  const weekText = !stage ? `Woche ${week}` : stage === 'cut' ? `Woche ${week} von ${Math.min(n.weeks, NUT_MINICUT_MAX)}`
+    : stage === 'maint' ? 'Erhaltungswoche' : 'abgeschlossen';
+  return `<div class="nut-phase-head"><span class="wiz-q-icon" aria-hidden="true">${ph.icon}</span>
+      <div><b>${ph.label}</b><small>seit ${fmtDate(n.since + 'T12:00:00')} · ${weekText}</small></div></div>
+    ${nutPhaseHint(n)}
+    <div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🍽️</span><h2>Dein Tagesziel berechnen</h2></div>
+      <p class="hint wiz-q-explain">Deine Phase steht fest. Damit die App dir sagen kann, wie viele Kalorien, Eiweiß, Fett und
+        Kohlenhydrate pro Tag zu deinem Ziel passen, braucht sie noch ein paar Angaben: Alter, Größe, Gewicht und wie aktiv du im
+        Alltag bist. Danach wählst du noch dein Tempo${n.phase === 'minicut' ? ' und die Dauer' : ''}.</p>
+      <button class="btn primary" data-action="nut-edit">Angaben ergänzen</button>
+    </div>
+    ${nutTrainCard(n)}
+    <div class="row nut-actions"><button class="btn" data-action="nut-setup">Phase wechseln</button></div>`;
+}
+
 function renderNutrition() {
   const n = data.nutrition;
   const kg = nutWeight();
   let h = '';
-  if (!n) {
+  if (n && !nutReady(n)) {
+    h += nutPhaseOnly(n);
+  } else if (!n) {
     h += `<div class="card wiz-q">
         <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🍽️</span><h2>Ernährung</h2></div>
         <p class="hint wiz-q-explain">Wähle deine Phase – Aufbau, Body Recomposition, Diät oder Minicut. Die App schätzt dann
@@ -761,11 +802,7 @@ function renderNutrition() {
       ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
       ${nutTrendCard(n, c)}
-      ${n.phase === 'diet' || n.phase === 'minicut' ? `<div class="card nut-train">
-        <p><b>🏋️ Training ${n.trainAdapt ? (n.phase === 'minicut' ? 'an den Minicut' : 'an die Diät') + ' angepasst' : 'läuft unverändert'}</b></p>
-        <p class="hint nut-small">${n.trainAdapt ? (nutTrainAdapt() ? NUT_ADAPT_TEXT : 'In der Erhaltungswoche läuft das Training wieder normal (am besten als Deload).')
-          : 'Du kannst den Plan an die Phase anpassen lassen: halber Volumenanstieg und 1 Wdh. näher am Muskelversagen.'}</p>
-        <button class="btn" data-action="nut-train-toggle">${n.trainAdapt ? 'Anpassung ausschalten' : 'Training anpassen'}</button></div>` : ''}
+      ${nutTrainCard(n)}
       <div class="row nut-actions"><button class="btn" data-action="nut-edit">Angaben ändern</button>
         <button class="btn" data-action="nut-setup">Phase wechseln</button></div>
       ${nutExplain(n, c, kg)}

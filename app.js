@@ -4229,16 +4229,32 @@ function profileCard() {
     </div>`;
 }
 
-// Erstes Öffnen: Begrüßung mit Name und Geschlecht. Wer die App schon nutzt, wird nur nach dem Profil gefragt.
+// Erstes Öffnen: Begrüßung in zwei Schritten – 1. Name und Geschlecht, 2. Ernährungsphase (und ob das Training angepasst wird).
+// Wer die App schon nutzt, wird nur nach dem gefragt, was noch fehlt (die Phase nur einmal, „Später“ zählt als Antwort).
+let welc = null;  // { step, fresh, phase: null | '' (später) | 'bulk' …, trainAdapt }
+
+const welcomeNeedsProfile = () => !(data.profile && data.profile.name && data.profile.sex);
+const welcomeNeedsPhase = () => !data.nutrition && !(data.profile && data.profile.phaseAsked);
+
 function showWelcome() {
-  if (data.profile && data.profile.name && data.profile.sex) return;
-  const fresh = !data.welcomeSeen && !data.sessions.length;
+  if (!welcomeNeedsProfile() && !welcomeNeedsPhase()) return;
+  welc = { step: welcomeNeedsProfile() ? 1 : 2, fresh: !data.welcomeSeen && !data.sessions.length, phase: null, trainAdapt: null };
   const el = document.createElement('div');
   el.className = 'welcome';
-  el.innerHTML = `<div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
-      <div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
-        <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>
-      ${fresh ? `<h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
+  el.innerHTML = `<div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">${welcomeHtml()}</div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+}
+
+function welcomeHtml() {
+  const icon = `<div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
+        <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>`;
+  const two = welcomeNeedsPhase();  // gibt es einen zweiten Schritt?
+  const dots = (welc.step === 1 ? two : welcomeNeedsProfile() || welc.fresh)
+    ? `<p class="welcome-step">Schritt ${welc.step} von 2</p>` : '';
+  if (welc.step === 1) {
+    return `${icon}${dots}
+      ${welc.fresh ? `<h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
       <p>Schön, dass du auf StepUp Strength aufmerksam geworden bist! Viel Spaß auf deiner Reise – nimm dir ruhig
         etwas Zeit, um dich mit den Möglichkeiten der App vertraut zu machen. 🙂</p>`
       : `<h2 id="welcome-title">Etwas persönlicher</h2>
@@ -4250,15 +4266,52 @@ function showWelcome() {
         <p class="lbl">Geschlecht</p>
         <div class="seg two" id="welcome-sex">${sexButtons(profileSex(), 'welcome-sex')}</div>
       </div>
-      ${fresh ? `<ul class="welcome-tips">
+      ${two ? '' : '<p class="hint welcome-note">Du kannst beides später im Reiter „Sicherung“ unter „Profil“ ändern.</p>'}
+      <button class="btn primary" data-action="welcome-ok">${two ? 'Weiter' : 'Speichern'}</button>`;
+  }
+  const opt = (p, icon, label, text) => `<button class="split-opt cat ${welc.phase === p ? 'on' : ''}" data-action="welcome-phase" data-p="${p}">
+        <span class="cat-icon">${icon}</span><b>${label}</b><small>${text}</small></button>`;
+  const train = welc.phase === 'diet' || welc.phase === 'minicut'
+    ? nutTrainQuestion(welc, 'welcome-train')
+    : welc.phase === 'bulk' || welc.phase === 'recomp'
+      ? `<p class="hint welcome-note">Im ${welc.phase === 'bulk' ? 'Aufbau' : 'Body Recomposition'} läuft dein Trainingsplan ganz normal –
+          eine Anpassung ist nur in Diät und Minicut vorgesehen.</p>` : '';
+  return `${icon}${dots}
+      <h2 id="welcome-title">${welc.fresh || welcomeNeedsProfile() ? 'Deine Ernährungsphase' : `${esc(profileName()) ? esc(profileName()) + ', i' : 'I'}n welcher Phase bist du?`}</h2>
+      <p>${welc.fresh || welcomeNeedsProfile() ? 'In welcher Phase bist du gerade?' : 'Neu in der App:'} Davon hängt ab, wie viel du essen solltest – und
+        auf Wunsch passt die App in einer Diät auch deinen Trainingsplan an.</p>
+      <div class="welcome-form wiz-q welcome-phases">
+        ${Object.entries(NUT_PHASES).map(([p, ph]) => opt(p, ph.icon, ph.label, ph.short)).join('')}
+        ${opt('', '🕓', 'Später festlegen', 'Kein Problem – du kannst die Phase jederzeit im Reiter „Ernährung“ wählen.')}
+        <details class="nut-help">${NUT_HELP}</details>
+      </div>
+      <div id="welcome-train">${train}</div>
+      ${welc.phase ? `<p class="hint welcome-note">Dein Kalorienziel berechnet die App, sobald du im Reiter „Ernährung“ noch Alter, Größe,
+        Gewicht und Aktivität ergänzt. Phase und Trainingsanpassung kannst du dort jederzeit ändern.</p>` : ''}
+      ${welc.fresh ? `<ul class="welcome-tips">
         <li><b>Plan:</b> Mit dem Assistenten in wenigen Schritten deinen Trainingsplan erstellen.</li>
         <li><b>Training:</b> Trainingstag antippen und loslegen – die App schlägt Gewichte und Wiederholungen vor.</li>
         <li><b>Sicherung:</b> Alles bleibt nur auf deinem Handy – sichere es ab und zu. Name und Geschlecht kannst du dort jederzeit ändern.</li>
-      </ul>` : '<p class="hint welcome-note">Du kannst beides später im Reiter „Sicherung“ unter „Profil“ ändern.</p>'}
-      <button class="btn primary" data-action="welcome-ok">${fresh ? "Los geht's 💪" : 'Speichern'}</button>
-    </div>`;
-  document.body.appendChild(el);
-  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+      </ul>` : ''}
+      <button class="btn primary" data-action="welcome-done">${welc.fresh ? "Los geht's 💪" : 'Speichern'}</button>`;
+}
+
+// Inhalt neu zeichnen, Scroll-Position behalten
+function welcomeRedraw(focus) {
+  const card = document.querySelector('.welcome-card');
+  if (!card) return;
+  const top = card.scrollTop;
+  card.innerHTML = welcomeHtml();
+  card.scrollTop = top;
+  const t = focus && card.querySelector(focus);
+  if (t && t.firstElementChild) t.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function welcomeClose() {
+  const box = document.querySelector('.welcome');
+  welc = null;
+  if (box) { box.classList.remove('show'); setTimeout(() => box.remove(), 350); }
+  render();
 }
 
 actions['welcome-sex'] = el => {
@@ -4275,12 +4328,39 @@ actions['welcome-ok'] = () => {
   if (!name) { alert('Bitte gib deinen Namen ein.'); return; }
   if (!on) { alert('Bitte wähle dein Geschlecht.'); return; }
   data.profile = { ...(data.profile || {}), name, sex: on.dataset.k, color: (data.profile && data.profile.color) || null };
-  data.welcomeSeen = true;
+  if (!welcomeNeedsPhase()) data.welcomeSeen = true;
   saveData();
   applyTheme();
-  box.classList.remove('show');
-  setTimeout(() => box.remove(), 350);
-  render();
+  if (welcomeNeedsPhase()) { welc.step = 2; welcomeRedraw(); document.querySelector('.welcome-card').scrollTop = 0; return; }
+  welcomeClose();
+};
+
+actions['welcome-phase'] = el => {
+  const p = el.dataset.p;
+  if (welc.phase !== p) welc.trainAdapt = null;
+  welc.phase = p;
+  welcomeRedraw('#welcome-train');
+};
+actions['welcome-train'] = el => { welc.trainAdapt = el.dataset.v === '1'; welcomeRedraw(); };
+
+actions['welcome-done'] = () => {
+  if (welc.phase == null) { alert('Bitte wähle deine Phase – oder „Später festlegen“.'); return; }
+  if ((welc.phase === 'diet' || welc.phase === 'minicut') && welc.trainAdapt == null) {
+    alert('Bitte noch auswählen, ob dein Trainingsplan an die Phase angepasst werden soll.');
+    return;
+  }
+  if (welc.phase && !data.nutrition) {
+    // Nur die Phase – Alter, Größe usw. ergänzt man im Reiter „Ernährung“ (bis dahin kein Kalorienziel)
+    data.nutrition = nutBeginPhase({
+      sex: profileSex(), age: null, ageYear: null, height: null, bodyFat: null, activity: null,
+      phase: welc.phase, pace: welc.phase === 'recomp' ? 'light' : 'normal', goalKg: null, weeks: NUT_MINICUT_MAX,
+      macroPct: null, trainAdapt: welc.trainAdapt,
+    }, welc.phase, nutWeight());
+  }
+  data.profile = { ...(data.profile || {}), phaseAsked: true };
+  data.welcomeSeen = true;
+  saveData();
+  welcomeClose();
 };
 
 actions['profile-sex'] = el => {
