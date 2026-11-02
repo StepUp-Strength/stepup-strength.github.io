@@ -1,9 +1,9 @@
-﻿// Service Worker: hält die App offline verfügbar.
+// Service Worker: hält die App offline verfügbar.
 // Antwortet sofort aus dem Cache und lädt im Hintergrund die neueste Version nach.
 // Wichtig: immer direkt vom Server laden (cache: 'reload' / 'no-cache'), nicht aus dem Browser-Zwischenspeicher –
 // GitHub Pages erlaubt dort 10 Minuten, sonst landen kurz nach einem Update noch alte Dateien im neuen Cache.
 
-const CACHE = 'trainingsapp-v107';
+const CACHE = 'trainingsapp-v112';
 const FILES = [
   './',
   './index.html',

@@ -24,6 +24,10 @@ const G_FB_PUSH = ['brust', 'schulter_vorne', 'schulter_seite', 'trizeps', 'quad
 const G_FB_PULL = ['lat', 'trapez', 'schulter_hinten', 'bizeps', 'beinbeuger', 'bauch'];
 const G_CHEST_BACK = ['brust', 'lat', 'trapez'];
 const G_SHOULDER_ARMS = ['schulter_vorne', 'schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps'];
+// Torso/Limbs: Rumpf (Brust, Rücken, Schultern, Bauch) bzw. Gliedmaßen (Beine und Arme)
+const G_TORSO = ['brust', 'lat', 'trapez', 'schulter_seite', 'schulter_hinten', 'bauch'];
+const G_LIMBS = ['quadrizeps', 'beinbeuger', 'waden', 'adduktoren', 'abduktoren', 'bizeps', 'trizeps'];
+const TL_NOTE = 'Torso = Brust, Rücken, Schultern, Bauch · Limbs = Beine und Arme';
 
 // Feste Vorlagen: [Name, Intensität, Muskelgruppen] je Trainingstag. Angezeigt werden die mit passender Tageszahl.
 // pairs: die zweite Hälfte der Tage wiederholt die erste als B- bzw. leichte Variante – dann kann man stattdessen
@@ -86,9 +90,13 @@ const SPLITS = [
   { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper schwer', 'heavy', G_UPPER], ['Unterkörper schwer', 'heavy', G_LOWER],
     ['Oberkörper leicht', 'light', G_UPPER], ['Unterkörper leicht', 'light', G_LOWER]] },
   { id: 'fbpp4', tag: '2er-Split', label: 'Ganzkörper Push/Pull', pairs: true, days: FBPP(4) },
+  { id: 'tl', tag: '2er-Split', label: 'Torso/Limbs', note: TL_NOTE, pairs: true, days: [['Torso schwer', 'heavy', G_TORSO], ['Limbs schwer', 'heavy', G_LIMBS],
+    ['Torso leicht', 'light', G_TORSO], ['Limbs leicht', 'light', G_LIMBS]] },
   // 5
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Oberkörper', 'light', G_UPPER], ['Unterkörper', 'light', G_LOWER]] },
+  { id: 'ppltl', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Torso/Limbs', note: TL_NOTE, days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
+    ['Torso', 'light', G_TORSO], ['Limbs', 'light', G_LIMBS]] },
   { id: 'ul5', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 3×, Unterkörper 2× pro Woche', days: UL(5) },
   { id: 'fbpp5', tag: '2er-Split', label: 'Ganzkörper Push/Pull', note: 'Push 3×, Pull 2× pro Woche', days: FBPP(5) },
   // 6
@@ -418,7 +426,10 @@ function buildPlanDays() {
         list.push([name, name !== pick && PLAN_GROUPS.includes(ng) ? ng : g]);
       }
     }
-    list.sort((a, b) => KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
+    // Limbs (Beine + Arme ohne Rumpf): erst alle Beinübungen, dann die Arme – sonst stünden Dips vor den Kniebeugen
+    const limbs = !d.groups.some(g => G_TORSO.includes(g)) && d.groups.some(g => G_LOWER.includes(g));
+    const armLast = g => limbs && ['bizeps', 'trizeps', 'unterarme'].includes(g) ? 10 : 0;
+    list.sort((a, b) => armLast(a[1]) - armLast(b[1]) || KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
     return {
       id: uid(),
       name: names[di],

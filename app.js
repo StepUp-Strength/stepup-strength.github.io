@@ -95,7 +95,9 @@ function upgradeData(d) {
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
-  if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: null | 'blue' | 'berry' } – beim ersten Öffnen gefragt
+  if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: Schlüssel aus PROFILE_COLORS } – beim ersten Öffnen gefragt
+  // Farbe wird einmal nach dem Geschlecht vorbelegt (früher „Passend“ = color null) und folgt ihm danach nicht mehr
+  if (d.profile && d.profile.sex && !d.profile.color) d.profile.color = d.profile.sex === 'f' ? 'berry' : 'blue';
   if (!Array.isArray(d.customExercises)) d.customExercises = [];  // eigene Übungen: [{ name, kind, group, like, note }]
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
@@ -210,7 +212,7 @@ function lastEntry(name) {
   const k = nameKey(name);
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets, result: e.result };
+    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets, result: e.result, deload: !!s.deload };
   }
   return null;
 }
@@ -363,15 +365,17 @@ const MIN_REPS = 5;
 function planSet(cap, w, t, k, fixedWeight, startWeight, keepWeight = false) {
   const repsAt = wt => Math.floor(capacityAt(cap, w, wt) - t.rir - FATIGUE * k + 1e-9);
   if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(MIN_REPS, repsAt(fixedWeight)) };
-  if (w == null) return { weight: null, reps: Math.max(1, repsAt(null)) };  // ohne Gewicht
+  if (w == null) return { weight: null, reps: Math.max(MIN_REPS, repsAt(null)) };  // ohne Gewicht (Eigengewicht)
   let wt = startWeight != null ? startWeight : w;
   if (!keepWeight || repsAt(wt) < MIN_REPS - 1) while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
   return { weight: wt, reps: Math.max(MIN_REPS, repsAt(wt)) };
 }
 
 // Nie weniger als MIN_REPS Wdh.: sonst das Gewicht so weit senken, dass MIN_REPS mit derselben Anstrengung passen
+// (Eigengewicht: mindestens MIN_REPS – schafft man weniger, empfiehlt die App eine leichtere Variante, siehe bwHint)
 function atLeastMinReps(p, t) {
-  if (p.weight == null || p.reps == null || p.reps >= MIN_REPS) return p;
+  if (p.reps == null || p.reps >= MIN_REPS) return p;
+  if (p.weight == null) return t.bodyweight ? { ...p, reps: MIN_REPS } : p;
   const step = t.step || 2.5;
   const w = roundTo(p.weight * repFactor(MIN_REPS + t.rir) / repFactor(p.reps + t.rir), step, Math.floor);
   return { weight: Math.max(step, w), reps: MIN_REPS };
@@ -417,6 +421,8 @@ function recalcSets(ei) {
   if (!t) return;
   const avgEl = $view.querySelector(`[data-avg="${ei}"]`);
   if (avgEl) avgEl.innerHTML = avgTankText(en);
+  const bwEl = $view.querySelector(`[data-bwhint="${ei}"]`);
+  if (bwEl) { const html = bwHint(en); bwEl.innerHTML = html; bwEl.hidden = !html; }
   updateNextHints(ei);
   if (t.own) return;  // eigener Plan: folgende Sätze nicht anpassen
   const tt = { step: 2.5, ...t };
@@ -456,6 +462,12 @@ function recalcSets(ei) {
         reduced = true;
       }
     }
+    // Nie schwerer als der Satz davor (kein Zickzack, kein Sprung nach oben) – dann eben mehr Wdh. bei dessen Gewicht
+    if (!s.manualWeight && p.weight != null) {
+      let pw = null;
+      for (let i = j - 1; i >= 0; i--) if (variantOf(en.sets[i]) === variantOf(s)) { pw = parseNum(en.sets[i].weight); break; }
+      if (pw != null && p.weight > pw) p = planSet(cap, w, tt, j - last, pw);
+    }
     if (capToPlan && !s.manualWeight) {
       // nie über den Vorschlag hinaus, nur nach unten anpassen
       const pl = en.planned[j] || {};
@@ -465,9 +477,10 @@ function recalcSets(ei) {
     if (t.deload) {
       // Deload: Wdh. nie über das Ziel erhöhen, nur senken, falls es schwerer als DELOAD_RIR war
       const keep = parseNum(s.weight);
+      const pl = en.planned[j];
       p = {
         weight: p.weight != null && keep != null && p.weight < keep ? p.weight : keep,
-        reps: Math.min(p.reps, t.reps),
+        reps: Math.min(p.reps, t.bodyweight && pl && pl.reps != null ? pl.reps : t.reps),
       };
     }
     if (!first) { first = p; firstLast = last; firstCap = cap; firstReduced = reduced; }
@@ -1215,6 +1228,7 @@ function nextPreview(en) {
   const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart, occurrence: occ });
   const fmt = p => (p.weight != null ? `${fmtNum(p.weight)} kg × ` : '') + `${p.reps} Wdh.`;
   const when = occ > 1 ? `Nächste Woche, ${occ}. Training` : 'Nächste Woche';
+  const lastW = {};  // zuletzt vorgeschlagenes Gewicht je Ausführung (kein Satz schwerer als der davor)
 
   return en.sets.map((s, i) => {
     if (!done[i]) return '';
@@ -1231,9 +1245,13 @@ function nextPreview(en) {
     } else {
       const r = refProposal(t, { sets: doneSets, planned: en.planned, target: en.target }, cmp, iNext, k, v);
       p = r.p;
-      why = r.rule === 'brake' ? 'Ziel verfehlt → leichter' : r.fromCmp ? 'Vergleich letzter Zyklus' : '';
+      why = r.rule === 'brake' ? 'Ziel verfehlt → leichter' : r.hold ? 'halten' : r.fromCmp ? 'Vergleich letzter Zyklus' : '';
     }
     p = atLeastMinReps(p, t);
+    if (p.weight != null && lastW[v] != null && p.weight > lastW[v]) {
+      p = { weight: lastW[v], reps: Math.max(MIN_REPS, repsAtWeight(p.reps, t.rir, p.weight, lastW[v])) };
+    }
+    if (p.weight != null) lastW[v] = p.weight;
     const dir = p.weight == null || src.weight == null || p.weight === src.weight ? ''
       : p.weight > src.weight ? ' ↑' : ' ↓';
     return `<span>→ ${when}: <b>${fmt(p)}</b>${dir}${why ? ` <small>(${why})</small>` : ''}</span>`;
@@ -1282,7 +1300,11 @@ function refProposal(t, prev, cmp, i, k, v) {
     const src = prevV[k];
     const pl = ofVariant(prev.planned, v)[k];
     const goal = pl && pl.reps != null ? pl.reps : src.reps;
-    if (src.weight == null) return { p: { weight: null, reps: src.reps }, rule: 'brake' };
+    if (src.weight == null) {
+      // Eigengewicht: Wdh. so weit senken, dass das Tank-Ziel wieder stimmt (mind. MIN_REPS)
+      const capBw = src.reps + (src.rir != null ? src.rir : t.rir);
+      return { p: { weight: null, reps: Math.max(MIN_REPS, Math.floor(capBw - t.rir + 1e-9)) }, rule: 'brake' };
+    }
     const cap = src.reps + (src.rir != null ? src.rir : t.rir);
     return { p: weightForGoal(cap, src.weight, { step: 2.5, ...t }, 0, goal), rule: 'brake' };
   }
@@ -1290,7 +1312,16 @@ function refProposal(t, prev, cmp, i, k, v) {
   const a = !cmpV.length ? null
     : cmp.shifted ? shiftedRef(refAt(cmpV, k), t, i, rirOf(cmp)) : fromRef(refAt(cmpV, k), t, true, i, rirOf(cmp));
   const b = prevV.length ? fromRef(refAt(prevV, k), t, k === 0, i, rirOf(prev)) : null;
-  if (a && b) return { p: lighterSet(b, a) ? b : a, rule: 'lower', fromCmp: lighterSet(a, b) };
+  if (a && b) {
+    if (!lighterSet(a, b)) return { p: b, rule: 'lower', fromCmp: false };
+    // Der letzte Zyklus ist leichter: Steigerung entfällt, aber das Gewicht der Vorwoche bleibt (Gewicht und Wdh.
+    // halten) – weniger Gewicht gibt es nur, wenn ein Satz deutlich verfehlt wurde (Bremse oben). User-Regel 2026-11-02
+    const src = refAt(prevV, k);
+    if (a.weight != null && src.weight != null && a.weight < src.weight) {
+      return { p: { weight: src.weight, reps: src.reps != null ? src.reps : a.reps }, rule: 'lower', fromCmp: true, hold: true };
+    }
+    return { p: a, rule: 'lower', fromCmp: true };
+  }
   return { p: a || b, rule: null };
 }
 
@@ -1349,6 +1380,7 @@ function applyPenalty(set, t, pen) {
   let reps = r - pen;
   let w = parseNum(set.weight);
   if (reps < MIN_REPS && w != null) ({ weight: w, reps } = planSet(reps + t.rir, w, { step: 2.5, ...t }, 0));
+  if (w == null && t.bodyweight) reps = Math.max(MIN_REPS, reps);
   return {
     ...set,
     weight: w != null ? fmtNum(w) : set.weight,
@@ -1357,10 +1389,27 @@ function applyPenalty(set, t, pen) {
   };
 }
 
+// Wdh. bei einem anderen Gewicht mit derselben Anstrengung (Wdh. + Tank bei Gewicht from -> bei Gewicht to)
+const repsAtWeight = (reps, rir, from, to) => Math.floor(capacityAt(reps + rir, from, to) - rir + 1e-9);
+
+// Innerhalb eines Trainings nie schwerer als der Satz davor (derselben Ausführung): sonst dessen Gewicht,
+// Wdh. passend umgerechnet. Leichter werden darf ein Satz (Ermüdung), wieder schwerer werden nicht (kein Zickzack).
+function notHeavierThanBefore(en, i, v, set) {
+  const w = parseNum(set.weight);
+  if (w == null) return set;
+  let before = null;
+  for (let j = i - 1; j >= 0; j--) if (en.sets[j] && variantOf(en.sets[j]) === v) { before = en.sets[j]; break; }
+  const pw = before && parseNum(before.weight);
+  if (pw == null || w <= pw) return set;
+  const rir = en.target.rir != null ? en.target.rir : 2;
+  const reps = Math.max(MIN_REPS, repsAtWeight(parseNum(set.reps), rir, w, pw));
+  return { ...set, weight: fmtNum(pw), reps: String(reps), baseWeight: pw };
+}
+
 // Satz i (neu) vorschlagen und den ursprünglichen Vorschlag für die Bremse merken
 function applyProposal(en, i, v) {
   const { set: proposed, rule } = proposeSet(en, i, v);
-  const set = applyPenalty(proposed, en.target, draft.penalty || 0);
+  const set = notHeavierThanBefore(en, i, v, applyPenalty(proposed, en.target, draft.penalty || 0));
   en.sets[i] = set;
   en.planned[i] = { weight: parseNum(set.weight), reps: parseNum(set.reps), variant: v };
   if (i === 0) en.rule = rule;
@@ -1553,11 +1602,13 @@ function warmupBlock(en, ei) {
   }
   const kind = warmupKind(en);
   const work = firstWorkWeight(en);
-  // zugeklappt (en.warmClosed): nur eine Zeile mit Kurzfassung, Pfeil zum Aufklappen
-  const summary = `${en.warmup.length} ${en.warmup.length === 1 ? 'Satz' : 'Sätze'}: ${en.warmup.map(w => w.weight || '–').join(' / ')} kg`;
-  const head = `<button class="warm-title warm-toggle" data-action="wu-toggle" data-ei="${ei}" aria-expanded="${!en.warmClosed}">
-      <span>🔥 Aufwärmen${en.warmClosed ? ` <small>· ${esc(summary)}</small>` : ''}</span><span class="chev" aria-hidden="true">${en.warmClosed ? '▸' : '▾'}</span></button>`;
-  if (en.warmClosed) return `<div class="warmup closed" data-warm="${ei}">${head}</div>`;
+  // Standard zugeklappt (spart Platz, eine Übung passt so etwa auf einen Bildschirm): eine Zeile mit allen Werten,
+  // aufgeklappt (en.warmOpen) zum Ändern
+  const closed = !en.warmOpen;
+  const summary = en.warmup.map(w => `${w.weight || '–'} kg × ${w.reps || '–'}`).join(' · ');
+  const head = `<button class="warm-title warm-toggle" data-action="wu-toggle" data-ei="${ei}" aria-expanded="${!closed}">
+      <span>🔥 Aufwärmen${closed ? ` <small>${esc(summary)}</small>` : ''}</span><span class="chev" aria-hidden="true">${closed ? '▸' : '▾'}</span></button>`;
+  if (closed) return `<div class="warmup closed" data-warm="${ei}">${head}</div>`;
   let h = `<div class="warmup" data-warm="${ei}">${head}
     <div class="setgrid warmgrid"><span></span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">` +
     (kind === 'barbell' ? 'pro Seite' : '') + '</span>' + en.warmup.map((w, wi) => `<span class="setno">A${wi + 1}</span>
@@ -1650,7 +1701,7 @@ const views = {
     back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
   cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
   entryweek: { title: 'Neuer Plan',      tab: 'start', back: 'start', render: renderEntryWeek, cancel: () => CANCEL_START },
-  data:     { title: 'Sicherung',     tab: 'data',    render: renderData, after: showAppVersion },
+  data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: showAppVersion },
 };
 
 function go(view, params = {}) {
@@ -1806,7 +1857,7 @@ function hintsCard() {
 }
 
 function renderStart() {
-  let h = greeting() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
+  let h = greeting() + colorHintCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -1854,7 +1905,7 @@ function renderStart() {
 // Werte früherer Trainings: je Satz eine Zeile; mehrere Spalten nebeneinander (z. B. letzter Zyklus | Vorwoche)
 function setRows(cols, head = false) {
   const n = Math.max(...cols.map(c => c.sets.length));
-  return `<table class="last-sets">${head ? `<tr><th></th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>` : ''}` +
+  return `<table class="last-sets${cols.length === 1 ? ' one' : ''}">${head ?`<tr><th></th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>` : ''}` +
     Array.from({ length: n }, (_, i) => `<tr><td class="no">${i + 1}</td>${cols.map(c =>
       `<td>${c.sets[i] ? fmtSet(c.sets[i]) : ''}</td>`).join('')}</tr>`).join('') + '</table>';
 }
@@ -1930,18 +1981,30 @@ function renderTraining() {
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
     if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
+    if (body) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
     if (en.target && en.target.own) {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
       const t = en.target;
       h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank</p>`;
-      if (!body) {
-        h += `<label class="row max-row"><span>Max. kg bei 10 Wdh.</span>
+    }
+    // Max. bei 10 Wdh., Steigerung und Ausführung kompakt nebeneinander; die Auswahl klappt darunter auf
+    const t = en.target;
+    const withMax = t && !t.own && !body;
+    const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
+    h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.</span>
           <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
-            data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>`;
-        if (t.max10 == null) h += `<p class="first-max-hint">${last ? '' : '🆕 Erstes Mal: '}${MAX_UNKNOWN_HINT}</p>`;
-        h += stepPicker(en, ei);
-      }
+            data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>` : ''}
+        <div class="ex-chips">${withMax ? stepChip(en, ei) : ''}
+          <button class="step-chip" data-action="ex-variant-open" data-ei="${ei}" aria-expanded="${!!en.variantOpen}">Ausführung:
+            <b>${vAll != null ? VARIANTS[vAll] : 'gemischt'}</b> <span aria-hidden="true">✎</span></button></div>
+      </div>`;
+    if (withMax && t.max10 == null) h += `<p class="first-max-hint">${last ? '' : '🆕 Erstes Mal: '}${MAX_UNKNOWN_HINT}</p>`;
+    if (withMax && en.stepOpen) h += stepPick(en, ei);
+    if (en.variantOpen) {
+      h += `<div class="variants ex-var-pick">${Object.entries(VARIANTS).map(([v, label]) =>
+        `<button class="vchip ${vAll === v ? 'on' : ''}" data-action="ex-variant" data-ei="${ei}" data-v="${v}">${label}</button>`).join('')}
+        <p class="hint">Gilt für alle noch offenen Sätze. Einzelne Sätze: Satznummer antippen.</p></div>`;
     }
     if (en.weekFirst) {
       h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
@@ -1968,10 +2031,6 @@ function renderTraining() {
         : en.target && en.target.max10 == null && !body ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
           : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
-    const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
-    h += `<div class="variants"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
-      `<button class="vchip ${vAll === v ? 'on' : ''}" data-action="ex-variant" data-ei="${ei}" data-v="${v}">${label}</button>`).join('')}
-    </div>`;
     h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
     const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
@@ -1991,7 +2050,7 @@ function renderTraining() {
         <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>`;
     });
     h += `</div><p class="avg" data-avg="${ei}">${avgTankText(en)}</p>
-      <div class="row">
+      <div class="row set-btns">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
       </div></section>`;
@@ -2850,7 +2909,7 @@ const readinessText = r => {
 };
 
 function renderData() {
-  return profileCard() + `<div class="card">
+  return appearanceCard() + profileCard() + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -3042,6 +3101,55 @@ function setupEntry(en, target, variantFor = () => '') {
   en.warmupEdited = false;
 }
 
+// Eigengewicht im Deload: Wdh. + Tank des ersten Satzes im letzten Training ohne Deload (null ohne Training)
+function bwDeloadRef(name) {
+  const k = nameKey(name);
+  for (const s of sessionsNewestFirst()) {
+    if (s.deload) continue;
+    const e = s.entries.find(en => nameKey(en.name) === k);
+    const first = e && ofVariant(e.sets, '').find(x => x.reps != null);
+    if (first) return first.reps + (first.rir != null ? first.rir : 2);
+  }
+  return null;
+}
+
+// Eigengewicht: leichtere / schwerere Variante je Übung (Name ohne Umlaute, wie BODYWEIGHT)
+const BW_VARIANTS = [
+  [/^klimmzuge/, '„Klimmzüge assistiert (Maschine)“ oder mit Widerstandsband', '„Klimmzüge mit Zusatzgewicht“ (Dip-Gürtel oder Gewichtsweste)'],
+  [/^(dips|bankdips)/, '„Dips assistiert (Maschine)“ oder „Dips Maschine“', 'Dips mit Zusatzgewicht (Dip-Gürtel oder Gewichtsweste)'],
+  [/^liegestutze/, '„Liegestütze erhöht“ (Hände auf Bank oder Kasten)', 'Liegestütze mit Gewichtsweste oder Füßen erhöht – oder „Bankdrücken“'],
+  [/^hyperextensions \(/, 'einen kleineren Bewegungsradius', '„Hyperextensions mit Gewicht“'],
+  [/^beinheben/, '„Knieheben hängend“', 'Beinheben langsamer und mit gestreckten Beinen'],
+  [/^knieheben/, 'eine kleinere Bewegung', '„Beinheben hängend“'],
+  [/^(crunches|sit-ups)/, 'eine kleinere Bewegung', '„Crunches Kabelzug (kniend)“ oder „Crunches Maschine“'],
+  [/^glute bridge/, 'eine kleinere Bewegung', '„Hip Thrust Langhantel“'],
+];
+function bwVariants(name) {
+  const n = norm(name);
+  const hit = BW_VARIANTS.find(([re]) => re.test(n));
+  return hit ? { easy: hit[1], hard: hit[2] }
+    : { easy: 'eine leichtere Ausführung (z. B. mit Unterstützung oder kleinerem Bewegungsradius)', hard: 'Zusatzgewicht oder langsamer (z. B. 3 Sekunden absenken)' };
+}
+
+// Hinweis bei Eigengewicht: unter MIN_REPS Wdh. geschafft -> leichtere Variante; über BW_MAX_REPS -> schwerere
+const BW_MAX_REPS = 15;
+function bwHint(en) {
+  const t = en.target;
+  if (!t || !t.bodyweight || t.own || t.deload) return '';
+  const done = en.sets.filter(isDone).map(x => parseNum(x.reps));
+  const last = lastEntry(en.name);
+  const lastReps = last && !last.deload ? last.sets.map(x => x.reps).filter(r => r != null) : [];
+  const v = bwVariants(en.name);
+  const swap = ' Tauschen kannst du die Übung oben über „⇄ Ersetzen“.';
+  if (done.some(r => r < MIN_REPS) || (!done.length && lastReps.some(r => r < MIN_REPS))) {
+    return `💡 Weniger als ${MIN_REPS} Wdh. sind für einen sinnvollen Satz zu wenig. Nimm besser eine leichtere Variante: ${v.easy}.${swap}`;
+  }
+  if (en.sets.some(x => parseNum(x.reps) > BW_MAX_REPS)) {
+    return `💡 Mehr als ${BW_MAX_REPS} Wdh.: Ab hier trainierst du vor allem Ausdauer. Zeit für eine schwerere Variante: ${v.hard}.${swap}`;
+  }
+  return '';
+}
+
 // Vorgeschlagene Sätze für den Trainingsstart
 function buildSets(name, target) {
   // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
@@ -3055,6 +3163,13 @@ function buildSets(name, target) {
     const lw = ls && ls.weight != null ? ls.weight : null;
     if (target.own && target.bodyweight) {
       sets.push({ weight: '', reps: String(target.reps), rir: '', auto: true });
+      continue;
+    }
+    if (target.deload && target.bodyweight) {
+      // Deload ohne Gewicht: Wdh. aus der letzten Leistung, so dass DELOAD_RIR im Tank bleiben (je Satz −1 Ermüdung)
+      const ref = bwDeloadRef(name);
+      const reps = ref != null ? Math.max(MIN_REPS, ref - DELOAD_RIR - FATIGUE * i) : target.reps;
+      sets.push({ weight: '', reps: String(reps), rir: '', auto: true });
       continue;
     }
     if (target.own) {
@@ -3095,11 +3210,10 @@ function knownMax10(name) {
 }
 
 // Gewichtssprung der Übung im Training: kleiner Knopf, aufgeklappt die Auswahl 1,25 / 2 / 2,5 / 5 kg
-function stepPicker(en, ei) {
+const stepChip = (en, ei) => `<button class="step-chip" data-action="tr-step-open" data-ei="${ei}" aria-expanded="${!!en.stepOpen}">Steigerung:
+    <b>${fmtNum(en.target.step || 2.5)} kg</b> <span aria-hidden="true">✎</span></button>`;
+function stepPick(en, ei) {
   const cur = en.target.step || 2.5;
-  if (!en.stepOpen) {
-    return `<button class="step-chip" data-action="tr-step-open" data-ei="${ei}">Steigerung: <b>${fmtNum(cur)} kg</b> <span aria-hidden="true">✎</span></button>`;
-  }
   return `<div class="step-pick">
       <div class="variants plan"><span>Steigerung</span>${STEP_OPTIONS.map(v =>
         `<button class="vchip ${cur === v ? 'on' : ''}" data-action="tr-step" data-ei="${ei}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
@@ -3828,9 +3942,15 @@ const actions = {
     saveData(); render();
   },
   // Ganze Übung: alle noch offenen Sätze auf die Variante stellen
+  'ex-variant-open': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.variantOpen = !en.variantOpen;
+    saveDraft(); render();
+  },
   'ex-variant': el => {
     const ei = +el.dataset.ei;
     const en = draft.entries[ei];
+    en.variantOpen = false;
     en.sets.forEach((s, i) => { if (!isDone(s)) changeVariant(en, i, el.dataset.v); });
     recalcSets(ei); saveDraft(); render();
   },
@@ -3905,7 +4025,7 @@ const actions = {
   // Aufwärmen auf-/zuklappen (nur dieser Kasten wird neu gezeichnet, die Seite springt nicht)
   'wu-toggle': el => {
     const ei = +el.dataset.ei, en = draft.entries[ei];
-    en.warmClosed = !en.warmClosed;
+    en.warmOpen = !en.warmOpen;
     saveDraft();
     const box = $view.querySelector(`[data-warm="${ei}"]`);
     if (box) box.outerHTML = warmupBlock(en, ei); else render();
@@ -3919,6 +4039,7 @@ const actions = {
     const work = firstWorkWeight(en);
     en.warmup.push({ pct, weight: work ? fmtNum(warmWeight(en, pct, work)) : '', reps: String(reps) });
     en.warmupEdited = true;
+    en.warmOpen = true;  // neuen Satz gleich zeigen
     saveDraft(); render();
   },
   'wu-del': el => {
@@ -4167,11 +4288,27 @@ document.addEventListener('focusin', e => {
 // Nur für neue Nutzer (noch keine Trainings) und nur einmal – danach merkt sich die App das in data.welcomeSeen
 /* ---------- Profil: Name, Geschlecht, Farbe ---------- */
 
-const PROFILE_COLORS = { blue: 'Blau', berry: 'Beere' };
+// Farbwelten: Akzentfarbe (a = Verlauf) und Hintergrund (bg = hell, dunkel). Blau und Beere mit neutralem Grau,
+// die übrigen färben auch den Hintergrund ein (CSS: :root[data-accent=…] in style.css).
+const PROFILE_COLORS = {
+  blue: { label: 'Blau', bg: ['#f3f4f8', '#0b0c0f'], a: ['#2563eb', '#4f46e5'] },
+  berry: { label: 'Beere', bg: ['#f3f4f8', '#0b0c0f'], a: ['#d6336c', '#9c36b5'] },
+  ocean: { label: 'Ozean', bg: ['#e8f0fa', '#07101d'], a: ['#0b6bcb', '#0ea5e9'] },
+  rose: { label: 'Rosé', bg: ['#fbeef3', '#16090f'], a: ['#db2777', '#f43f5e'] },
+  forest: { label: 'Wald', bg: ['#eaf3ec', '#07120c'], a: ['#0f8a5f', '#4d8f1f'] },
+  lavender: { label: 'Lavendel', bg: ['#f2eefb', '#0f0b1a'], a: ['#7c3aed', '#c026d3'] },
+  sunset: { label: 'Abendrot', bg: ['#fdf0e7', '#170c07'], a: ['#ea580c', '#e11d48'] },
+  lagoon: { label: 'Lagune', bg: ['#e7f5f6', '#061315'], a: ['#0891b2', '#0d9488'] },
+  sand: { label: 'Sand', bg: ['#f5efe4', '#12100b'], a: ['#b45309', '#a16207'] },
+};
 const profileName = () => (data.profile && data.profile.name) || '';
 const profileSex = () => (data.profile && data.profile.sex) || null;
 // Farbe: selbst gewählt, sonst passend zum Geschlecht (Frau: Beere, sonst Blau)
-const profileColor = () => (data.profile && data.profile.color) || (profileSex() === 'f' ? 'berry' : 'blue');
+const sexColor = () => profileSex() === 'f' ? 'berry' : 'blue';
+const profileColor = () => {
+  const c = data.profile && data.profile.color;
+  return c && PROFILE_COLORS[c] ? c : sexColor();
+};
 
 const THEME_MODES = { '': 'Automatisch', light: 'Hell', dark: 'Dunkel' };
 
@@ -4181,10 +4318,11 @@ function applyTheme() {
   root.dataset.accent = profileColor();
   const mode = (data.profile && data.profile.theme) || '';
   if (mode) root.dataset.theme = mode; else delete root.dataset.theme;
-  // Statusleiste des Handys passend einfärben
+  // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
+  const [light, dark] = PROFILE_COLORS[profileColor()].bg;
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
-    if (!m.dataset.auto) m.dataset.auto = m.getAttribute('content');
-    m.setAttribute('content', mode === 'dark' ? '#0b0c0f' : mode === 'light' ? '#f3f4f8' : m.dataset.auto);
+    const isDark = /dark/.test(m.getAttribute('media') || '');
+    m.setAttribute('content', mode === 'dark' ? dark : mode === 'light' ? light : isDark ? dark : light);
   });
 }
 
@@ -4205,6 +4343,26 @@ function greeting() {
 const sexButtons = (cur, action) => [['m', 'Männlich'], ['f', 'Weiblich']].map(([k, l]) =>
   `<button class="${cur === k ? 'on' : ''}" data-action="${action}" data-k="${k}">${l}</button>`).join('');
 
+// Optionen → Aussehen: Farbwelt als Kacheln (Vorschau von Hintergrund und Akzent), dazu Hell/Dunkel
+function appearanceCard() {
+  const p = data.profile || {};
+  const cur = profileColor();
+  const tile = (k, c) => `<button class="color-opt ${cur === k ? 'on' : ''}" data-action="profile-color" data-k="${k}"
+      style="--sw-bg-l:${c.bg[0]};--sw-bg-d:${c.bg[1]};--sw-a:${c.a[0]};--sw-b:${c.a[1]}"><span class="sw"><i></i></span>${c.label}</button>`;
+  return `<div class="card profile-card">
+      <h2>Aussehen</h2>
+      <p class="lbl">Farbwelt</p>
+      <div class="color-grid">${Object.entries(PROFILE_COLORS).map(([k, c]) => tile(k, c)).join('')}</div>
+      <p class="lbl">Darstellung</p>
+      <div class="seg three">${Object.entries(THEME_MODES).map(([k, l]) =>
+        `<button class="${((p.theme || '') === k) ? 'on' : ''}" data-action="profile-theme" data-k="${k}">${l}</button>`).join('')}
+      </div>
+      <p class="hint">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
+        „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
+        „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
+    </div>`;
+}
+
 function profileCard() {
   const p = data.profile || {};
   return `<div class="card profile-card">
@@ -4214,18 +4372,20 @@ function profileCard() {
       </label>
       <p class="lbl">Geschlecht</p>
       <div class="seg two">${sexButtons(p.sex, 'profile-sex')}</div>
-      <p class="lbl">Farbe der App</p>
-      <div class="seg three">
-        <button class="${!p.color ? 'on' : ''}" data-action="profile-color" data-k="">Passend</button>
-        ${Object.entries(PROFILE_COLORS).map(([k, l]) => `<button class="${p.color === k ? 'on' : ''}" data-action="profile-color" data-k="${k}">${l}</button>`).join('')}
-      </div>
-      <p class="lbl">Darstellung</p>
-      <div class="seg three">${Object.entries(THEME_MODES).map(([k, l]) =>
-        `<button class="${((p.theme || '') === k) ? 'on' : ''}" data-action="profile-theme" data-k="${k}">${l}</button>`).join('')}
-      </div>
-      <p class="hint">„Automatisch“ folgt der Einstellung deines Handys (hell/dunkel), „Hell“ und „Dunkel“ gelten immer.
-        „Passend“ richtet die Farbe nach dem Geschlecht. Das Geschlecht bestimmt außerdem, welcher Klassiker im
-        Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan), und wird im Ernährungsrechner vorausgefüllt.</p>
+      <p class="hint">Das Geschlecht bestimmt, welcher Klassiker im Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan),
+        und wird im Ernährungsrechner vorausgefüllt.</p>
+    </div>`;
+}
+
+// Einmaliger Hinweis auf der Startseite: Farbwelten unter „Optionen“ (danach profile.colorHint)
+function colorHintCard() {
+  if (!data.profile || !data.profile.name || data.profile.colorHint) return '';
+  return `<div class="card color-hint">
+      <h2>🎨 Mach die App zu deiner</h2>
+      <p>Im Reiter <b>„Optionen“</b> kannst du die Farbwelt der App wählen – viele davon färben auch den Hintergrund ein –
+        und zwischen hell und dunkel wechseln.</p>
+      <div class="row"><button class="btn primary" data-action="color-hint" data-go="1">Farben ansehen</button>
+        <button class="btn" data-action="color-hint">Später</button></div>
     </div>`;
 }
 
@@ -4266,7 +4426,7 @@ function welcomeHtml() {
         <p class="lbl">Geschlecht</p>
         <div class="seg two" id="welcome-sex">${sexButtons(profileSex(), 'welcome-sex')}</div>
       </div>
-      ${two ? '' : '<p class="hint welcome-note">Du kannst beides später im Reiter „Sicherung“ unter „Profil“ ändern.</p>'}
+      ${two ? '' : '<p class="hint welcome-note">Du kannst beides später im Reiter „Optionen“ unter „Profil“ ändern.</p>'}
       <button class="btn primary" data-action="welcome-ok">${two ? 'Weiter' : 'Speichern'}</button>`;
   }
   const opt = (p, icon, label, text) => `<button class="split-opt cat ${welc.phase === p ? 'on' : ''}" data-action="welcome-phase" data-p="${p}">
@@ -4291,7 +4451,7 @@ function welcomeHtml() {
       ${welc.fresh ? `<ul class="welcome-tips">
         <li><b>Plan:</b> Mit dem Assistenten in wenigen Schritten deinen Trainingsplan erstellen.</li>
         <li><b>Training:</b> Trainingstag antippen und loslegen – die App schlägt Gewichte und Wiederholungen vor.</li>
-        <li><b>Sicherung:</b> Alles bleibt nur auf deinem Handy – sichere es ab und zu. Name und Geschlecht kannst du dort jederzeit ändern.</li>
+        <li><b>Optionen:</b> Farbwelt und hell/dunkel wählen, Name und Geschlecht ändern – und deine Daten sichern. Alles bleibt nur auf deinem Handy, sichere es ab und zu.</li>
       </ul>` : ''}
       <button class="btn primary" data-action="welcome-done">${welc.fresh ? "Los geht's 💪" : 'Speichern'}</button>`;
 }
@@ -4316,8 +4476,8 @@ function welcomeClose() {
 
 actions['welcome-sex'] = el => {
   el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
-  // Farbe gleich als Vorschau umstellen
-  document.documentElement.dataset.accent = el.dataset.k === 'f' ? 'berry' : 'blue';
+  // Farbe gleich als Vorschau umstellen (nur solange noch keine gewählt ist)
+  if (!(data.profile && data.profile.color)) document.documentElement.dataset.accent = el.dataset.k === 'f' ? 'berry' : 'blue';
 };
 
 actions['welcome-ok'] = () => {
@@ -4327,7 +4487,9 @@ actions['welcome-ok'] = () => {
   const on = box.querySelector('#welcome-sex button.on');
   if (!name) { alert('Bitte gib deinen Namen ein.'); return; }
   if (!on) { alert('Bitte wähle dein Geschlecht.'); return; }
-  data.profile = { ...(data.profile || {}), name, sex: on.dataset.k, color: (data.profile && data.profile.color) || null };
+  // Erste Farbwahl nach dem Geschlecht (Frau: Beere, sonst Blau) – danach nur noch unter „Optionen“ änderbar
+  data.profile = { ...(data.profile || {}), name, sex: on.dataset.k,
+    color: (data.profile && data.profile.color) || (on.dataset.k === 'f' ? 'berry' : 'blue') };
   if (!welcomeNeedsPhase()) data.welcomeSeen = true;
   saveData();
   applyTheme();
@@ -4372,8 +4534,13 @@ actions['profile-theme'] = el => {
   saveData(); applyTheme(); render();
 };
 actions['profile-color'] = el => {
-  data.profile = { ...(data.profile || {}), color: el.dataset.k || null };
+  data.profile = { ...(data.profile || {}), color: el.dataset.k, colorHint: true };
   saveData(); applyTheme(); render();
+};
+actions['color-hint'] = el => {
+  data.profile = { ...(data.profile || {}), colorHint: true };
+  saveData();
+  if (el.dataset.go) go('data'); else render();
 };
 fields['profile-name'] = el => {
   data.profile = { ...(data.profile || {}), name: el.value.trim() };

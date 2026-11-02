@@ -248,14 +248,6 @@ function nutActivityGuess() {
   return { lvl, avg, perWeek };
 }
 
-// Körperfett per Maßband (US-Navy-Formel, Angaben in cm)
-function navyBodyFat(sex, height, waist, neck, hip) {
-  const v = sex === 'm'
-    ? 495 / (1.0324 - 0.19077 * Math.log10(waist - neck) + 0.15456 * Math.log10(height)) - 450
-    : 495 / (1.29579 - 0.35004 * Math.log10(waist + hip - neck) + 0.221 * Math.log10(height)) - 450;
-  return isFinite(v) && v > 2 && v < 65 ? round1(v) : null;
-}
-
 /* ---------- Einrichtung ---------- */
 
 function nutInit(view) {
@@ -329,14 +321,6 @@ function renderNutBody() {
   const guess = nutActivityGuess();
   const guessText = guess ? [guess.perWeek ? `ca. ${fmtNum(round1(guess.perWeek))} Trainings pro Woche` : null,
     guess.avg != null ? `Ø ${deNum(Math.round(guess.avg / 100) * 100)} Schritte am Tag` : null].filter(Boolean).join(' und ') : '';
-  const navy = n.sex && n.height
-    ? `<div class="nut-navy">
-        <label class="row"><span>Bauch (auf Nabelhöhe)</span>${inp('waist', 'cm')}</label>
-        <label class="row"><span>Hals (unter dem Kehlkopf)</span>${inp('neck', 'cm')}</label>
-        ${n.sex === 'f' ? `<label class="row"><span>Hüfte (breiteste Stelle)</span>${inp('hip', 'cm')}</label>` : ''}
-        <div class="row"><button class="btn" data-action="nut-navy">Körperfett berechnen</button></div>
-      </div>`
-    : '<p class="hint">Trag zuerst Geschlecht und Größe ein.</p>';
   return `<div class="card wiz-q">
       ${d.flow === 'nutphase' ? nutStep(2, 3) : ''}
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📏</span><h2>Deine Angaben</h2></div>
@@ -348,11 +332,8 @@ function renderNutBody() {
       <label class="row"><span>Gewicht</span>${inp('kg', 'kg')}</label>
       <label class="row"><span>Körperfett <small class="hint">(optional)</small></span>${inp('bodyFat', '%')}</label>
       <p class="hint nut-small">Kennst du deinen Körperfettanteil (z. B. von einer Körperfettwaage), wird die Rechnung genauer.
-        Sonst einfach leer lassen.</p>
-      <details class="nut-more" ${d.navyOpen ? 'open' : ''}><summary>Körperfett mit dem Maßband schätzen</summary>
-        <p class="hint nut-small">Morgens, entspannt, Maßband waagerecht und ohne einzuschnüren messen.</p>
-        ${navy}
-      </details>
+        Sonst einfach leer lassen. Wenn du magst, kannst du ihn auch ungefähr anhand von Vergleichsbildern aus dem Internet
+        abschätzen (z. B. nach „Körperfettanteil Vergleichsbilder ${n.sex === 'f' ? 'Frauen' : 'Männer'}“ suchen).</p>
     </div>
     <div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🚶</span><h2>Wie aktiv bist du?</h2></div>
@@ -854,16 +835,6 @@ Object.assign(actions, {
   },
   'nut-sex': el => { nutDraft.sex = el.dataset.k; render(); },
   'nut-act': el => { nutDraft.activity = Number(el.dataset.k); render(); },
-  'nut-navy': () => {
-    const d = nutNumbers(nutDraft);
-    const [waist, neck, hip] = ['waist', 'neck', 'hip'].map(k => parseNum(nutDraft[k] || ''));
-    const bf = waist && neck && (d.sex === 'm' || hip) ? navyBodyFat(d.sex, d.height, waist, neck, hip) : null;
-    if (bf == null) { alert(`Bitte ${d.sex === 'f' ? 'Bauch, Hals und Hüfte' : 'Bauch und Hals'} in cm eintragen.`); return; }
-    nutDraft.bodyFat = fmtNum(bf);
-    nutDraft.navyOpen = true;
-    render();
-    toast(`Geschätzt: ca. ${fmtNum(bf)} % Körperfett`);
-  },
   'nut-body-next': () => {
     const err = nutBodyErrors(nutNumbers(nutDraft));
     if (err) { alert(err); return; }
