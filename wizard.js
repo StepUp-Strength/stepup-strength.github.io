@@ -630,7 +630,6 @@ function renderWizSplit() {
 // Schritt „Variante“: mehr Volumen mit mehr im Tank, ausgewogen oder weniger Volumen näher am Muskelversagen
 function renderWizStyle() {
   const tank = k => { const r = wizRirBase(VOL_STYLES[k]); return `${fmtNum(r[0])} → ${fmtNum(r[3])}`; };
-  const list = items => `<ul class="int-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>`;
   const opt = (k, title, body) => `<button class="split-opt freq-opt int-opt ${wiz.style === k ? 'on' : ''}" data-action="wiz-style" data-k="${k}">
       <b>${title}</b><small>${body}</small></button>`;
   return wizCard('🎚️', 'Mehr Volumen oder mehr Intensität?',
@@ -638,20 +637,13 @@ function renderWizStyle() {
       und die <b>Intensität</b> – wie nah du in jedem Satz ans Muskelversagen gehst, also wie viele Wiederholungen noch „im Tank“
       bleiben (RIR). Beides lässt sich gegeneinander tauschen: Mehr Sätze mit etwas mehr Luft wirken ähnlich wie weniger Sätze,
       die dafür härter sind. Wähle, was besser zu deiner Zeit, deiner Erholung und deinem Gefühl im Training passt.`,
-    opt('high', 'Mehr Volumen, mehr im Tank', `<strong>20 % mehr Sätze</strong> als der Mittelweg, Tank wie bisher (normale Übungen: ${tank('high')} von Intro bis Woche 4).
-        <b>Vorteile:</b>${list(['jeder einzelne Satz ist weniger hart – die Technik bleibt sauberer',
-          'schonender für Gelenke, Sehnen und Kopf, weil du seltener ans Limit gehst',
-          'du übst die Bewegungen öfter – gut für Einsteiger, Ältere und alle, die gern mehr trainieren'])}
-        <b>Nachteile:</b>${list(['die Trainings dauern länger (höchstens 30 statt 25 Sätze pro Training)',
-          'mehr Gesamtermüdung – Schlaf und Erholung werden wichtiger'])}`) +
+    opt('high', 'Mehr Volumen, mehr im Tank', `Jede Muskelgruppe bekommt <strong>20 % mehr Arbeitssätze</strong> als bei „Ausgewogen“.
+        Die Wiederholungen im Tank bleiben wie bei „Ausgewogen“ (normale Übungen: ${tank('high')} von Intro bis Woche 4).
+        Damit das Mehr nicht abgeschnitten wird, steigt die Obergrenze von 25 auf 30 Sätze pro Training.`) +
     opt('mid', 'Ausgewogen', `Sätze und Tank genau so, wie die App sie für deine Erfahrung berechnet (normale Übungen: Tank ${tank('mid')}) – der Mittelweg aus beiden Varianten.`) +
-    opt('low', 'Weniger Volumen, näher am Muskelversagen', `<strong>20 % weniger Sätze</strong>, dafür etwa <strong>1 Wdh. weniger im Tank</strong> (normale Übungen: ${tank('low')}, nie unter 0).
-        <b>Vorteile:</b>${list(['kürzere Trainings – ideal bei wenig Zeit',
-          'jeder Satz zählt richtig, weniger „Füllsätze“',
-          'gut für Erfahrene, die ihre Grenze sicher einschätzen können'])}
-        <b>Nachteile:</b>${list(['jeder Satz ist sehr anstrengend und mental fordernder',
-          'höheres Verletzungsrisiko, wenn die Technik am Limit nachlässt – vor allem bei Grundübungen',
-          'der Tank muss gut eingeschätzt werden – für Neulinge schwieriger'])}`),
+    opt('low', 'Weniger Volumen, näher am Muskelversagen', `Jede Muskelgruppe bekommt <strong>20 % weniger Arbeitssätze</strong> als bei „Ausgewogen“.
+        Dafür bleibt in jedem Satz etwa <strong>1 Wdh. weniger im Tank</strong> (normale Übungen: ${tank('low')} von Intro bis Woche 4, nie unter 0).
+        Die Obergrenze bleibt bei 25 Sätzen pro Training.`),
     true,
     `<p class="hint">Die genauen Sätze und Tank-Werte siehst du später in den Schritten „Volumen“ und „RIR“ und kannst sie dort noch
       selbst anpassen. Grundübungen behalten wie immer 1 Wdh. mehr im Tank, Assistenzübungen 1 weniger (nie unter 0).</p>`);

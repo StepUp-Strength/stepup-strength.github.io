@@ -788,13 +788,15 @@ function applyHealthText(text) {
     if (steps != null) saveSteps(date, steps);
     if (kg != null) saveBodyweight(date, kg);
   });
-  if (intake) saveIntake(date, intake, 'health');
+  // Tage mit Einträgen im Ernährungstagebuch behalten ihre eigene Summe
+  const foodDay = intake && data.foodLog.some(e => e.date === date);
+  if (intake && !foodDay) saveIntake(date, intake, 'health');
   saveData();
   chartState.pasteBox = false;
   render();
   const parts = [steps != null ? `${deNum(steps)} Schritte` : null, kg != null ? `${fmtNum(kg)} kg` : null,
-    intake && intake.kcal != null ? `${deNum(intake.kcal)} kcal` : intake ? 'Makros' : null].filter(Boolean);
-  toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ')}`);
+    intake && !foodDay ? (intake.kcal != null ? `${deNum(intake.kcal)} kcal` : 'Makros') : null].filter(Boolean);
+  toast(`Übernommen für ${fmtDate(date + 'T12:00:00')}: ${parts.join(', ') || 'nichts'}${foodDay ? ' (Ernährung kommt aus deinem Tagebuch)' : ''}`);
 }
 
 // Körpergewicht eintragen (Ernährungs-Reiter)

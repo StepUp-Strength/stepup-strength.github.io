@@ -1940,3 +1940,53 @@ nav button.active { font-weight: 700; }
 .ex-card .setgrid input { min-height: 48px; padding: 6px 4px; font-size: 22px; }
 .ex-card .set-btns { margin-top: 10px; }
 .ex-card .set-btns .btn { min-height: 44px; padding: 8px 12px; border-radius: 14px; font-size: 17px; }
+
+/* ---------- Ernährungstagebuch (food.js) ---------- */
+.nut-intake .btn.food-open { min-height: 52px; margin: 6px 0 0; font-size: 17px; }
+.food-date { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+.food-date b { flex: 1; font-size: 19px; text-align: center; }
+.food-date b small { display: block; font-size: 14px; font-weight: 500; color: var(--muted); }
+.food-date .icon-btn { min-width: 50px; height: 50px; margin: 0; padding: 0 0 3px; background: var(--card); box-shadow: var(--shadow); font-size: 28px; }
+.food-date .icon-btn:disabled { opacity: .3; }
+.food-meal { padding: 14px 14px 4px; }
+.food-meal-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 4px 6px; font-size: 18px; }
+.food-meal-head .hint { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.food-row { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line); }
+.food-pick { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; min-height: 54px; padding: 6px 4px;
+  border: 0; background: none; color: var(--text); font: inherit; font-size: 16.5px; text-align: left; }
+.food-pick span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.food-pick small { display: block; margin-top: 1px; font-size: 14px; color: var(--muted); }
+.food-pick b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-row .icon-btn { min-width: 40px; height: 40px; margin: 0; padding: 0; font-size: 15px; }
+.food-meal .row { margin-top: 4px; }
+.food-meal .row .btn { min-height: 46px; margin-bottom: 10px; font-size: 16px; }
+.food-sum span { flex: 1; text-align: center !important; }
+.food-sum b { font-size: 18px; }
+.food-tools { margin: 0 0 6px; }
+.food-tools .btn { min-height: 52px; font-size: 17px; }
+.food-sec { margin: 18px 4px 8px; font-size: 15px; font-weight: 700; color: var(--muted); }
+.food-sec small { font-weight: 500; }
+.card .food-sec { margin: 16px 0 4px; }
+.btn.food-hit { min-height: 62px; margin-bottom: 8px; padding: 9px 46px 9px 16px; font-size: 17px; }
+.food-hit small { font-size: 14px; }
+.food-amt-name { margin: 0 0 4px; font-size: 20px; }
+.food-amt-name small { display: block; font-size: 15px; font-weight: 500; color: var(--muted); }
+.food-amt .row > span { flex: 1; }
+.food-chips { margin: 12px 0 4px; }
+.food-chips .vchip, .food-meals .vchip { flex: 0 1 auto; min-height: 42px; padding: 0 12px; font-size: 15px; }
+.food-meals { margin: 0 0 14px; }
+.food-meals .vchip { flex: 1 1 40%; }
+.food-amt-more { margin: 0 0 12px; }
+.food-amt-more .btn { min-height: 50px; font-size: 16px; }
+.food-form .row > span { flex: 1; font-size: 17px; }
+.food-form .lbl { margin: 0 0 12px; }
+.inp.food-pl { width: 55%; margin-left: auto; font-size: 18px; }
+
+/* Barcode-Scanner: Kamera bildschirmfüllend */
+.scan { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: #000; }
+.scan video { flex: 1; width: 100%; min-height: 0; object-fit: cover; }
+.scan-frame { position: absolute; top: 34%; left: 9%; right: 9%; height: 20%; border: 3px solid rgba(255, 255, 255, .92);
+  border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .38); pointer-events: none; }
+.scan-msg { position: absolute; top: calc(34% - 54px); left: 0; right: 0; margin: 0; color: #fff; font-size: 18px; font-weight: 650; text-align: center; }
+.scan-btns { display: flex; gap: 10px; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); background: #000; }
+.scan-btns .btn { flex: 1; min-height: 54px; margin: 0; background: #26272e; color: #fff; box-shadow: none; font-size: 17px; text-align: center; }

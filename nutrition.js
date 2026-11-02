@@ -553,13 +553,14 @@ function nutIntakeCard(n, c) {
        ${nutIntakeBar('Eiweiß', t.p, c.protein, 'g', 0, c.pLo)}
        ${nutIntakeBar('Kohlenhydrate', t.c, c.carbs, 'g', 0.25)}
        ${nutIntakeBar('Fett', t.f, c.fat, 'g', 0.25)}
-       <p class="hint nut-small">${t.src === 'health' ? 'Aus Health übernommen' : 'Von Hand eingetragen'} · Grün = passt
+       <p class="hint nut-small">${t.src === 'food' ? 'Aus deinem Ernährungstagebuch' : t.src === 'health' ? 'Aus Health übernommen' : 'Von Hand eingetragen'} · Grün = passt
          (Kalorien ±10 %, Eiweiß ab der Untergrenze, Kohlenhydrate und Fett ±25 %).</p>`
-    : '<p class="hint nut-small">Heute ist noch nichts eingetragen. Füg die Werte aus deiner Ernährungs-App über Health ein – oder trag die Tagessummen von Hand ein.</p>';
+    : '<p class="hint nut-small">Heute ist noch nichts eingetragen. Trag ins Ernährungstagebuch ein, was du isst – oder füg die Werte aus deiner Ernährungs-App über Health ein bzw. trag die Tagessummen von Hand ein.</p>';
   return `<div class="card nut-intake">
       <p class="nut-intake-head"><b>🍽️ Heute gegessen</b></p>
       ${body}
-      ${nutIntakeForm ? nutIntakeFormHtml() : `<div class="row">
+      ${nutIntakeForm ? nutIntakeFormHtml() : `<button class="btn primary food-open" data-action="food-open">🍎 Ernährungstagebuch</button>
+      <div class="row">
         <button class="btn" data-action="health-paste">❤️ Aus Health</button>
         <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>`}
     </div>`;
@@ -587,7 +588,7 @@ function nutHistoryCard(n, c) {
   const rows = [...data.intake].filter(x => x.date >= days[0]).sort((a, b) => b.date.localeCompare(a.date)).map(x => `<li class="bw-row">
       <span>${fmtDate(x.date + 'T12:00:00')}<small class="hint">${x.p != null ? ` · E ${x.p}` : ''}${x.c != null ? ` · K ${x.c}` : ''}${x.f != null ? ` · F ${x.f}` : ''}</small></span>
       <b>${x.kcal != null ? nutKcal(x.kcal) + ' kcal' : '–'}</b>
-      <button class="icon-btn" data-action="nut-intake-open" data-date="${x.date}" aria-label="Bearbeiten">✎</button>
+      <button class="icon-btn" data-action="${x.src === 'food' ? 'food-open' : 'nut-intake-open'}" data-date="${x.date}" aria-label="Bearbeiten">${x.src === 'food' ? '🍎' : '✎'}</button>
       <button class="icon-btn danger" data-action="nut-intake-del" data-date="${x.date}" aria-label="Löschen">✕</button></li>`).join('');
   return `<div class="card nut-history">
       <p class="nut-intake-head"><b>📅 Letzte 14 Tage</b> <small class="hint">· Linie = Tagesziel ${nutKcal(c.kcal)} kcal</small></p>
@@ -790,6 +791,10 @@ function renderNutrition() {
       <p class="hint nut-small nut-disclaimer">Alle Werte sind Richtwerte für gesunde Erwachsene. Bei Vorerkrankungen, in
         Schwangerschaft und Stillzeit oder bei Essstörungen bitte vorher ärztlich abklären.</p>`;
   }
+  // Ernährungstagebuch auch ohne fertig eingerichtete Phase erreichbar
+  if (!n || !nutReady(n) || kg == null) {
+    h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>`;
+  }
   h += `<h2>Körpergewicht</h2>${bwCard()}${healthCard()}${rangeRow()}
     <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${bwList()}`;
   return h;
@@ -943,6 +948,10 @@ Object.assign(actions, {
   'nut-intake-cancel': () => { nutIntakeForm = null; render(); },
   'nut-intake-save': () => {
     const f = nutIntakeForm;
+    if (foodOn(f.date || todayISO()).length) {
+      alert('Für diesen Tag hast du Lebensmittel im Ernährungstagebuch eingetragen – die Tagessumme kommt automatisch von dort.');
+      return;
+    }
     const num = k => (String(f[k]).trim() === '' ? null : parseNum(f[k]));
     const v = { kcal: num('kcal'), p: num('p'), c: num('c'), f: num('f') };
     if (Object.values(v).some(x => x != null && (x < 0 || x > 15000))) { alert('Bitte nur Zahlen zwischen 0 und 15.000 eintragen.'); return; }
@@ -956,7 +965,10 @@ Object.assign(actions, {
     render();
   },
   'nut-intake-del': el => {
-    if (!confirm(`Eintrag vom ${fmtDate(el.dataset.date + 'T12:00:00')} löschen?`)) return;
+    const food = foodOn(el.dataset.date).length;
+    if (!confirm(food ? `Alle ${food} Lebensmittel vom ${fmtDate(el.dataset.date + 'T12:00:00')} aus dem Ernährungstagebuch löschen?`
+      : `Eintrag vom ${fmtDate(el.dataset.date + 'T12:00:00')} löschen?`)) return;
+    data.foodLog = data.foodLog.filter(x => x.date !== el.dataset.date);
     data.intake = data.intake.filter(x => x.date !== el.dataset.date);
     saveData(); render();
   },

@@ -72,7 +72,8 @@ function upgradeData(d) {
     d.activePlanId = p.id;
   }
   delete d.days; delete d.volume; delete d.rirPlan;
-  if (!d.plans.length) d.plans.push(newPlan('Mein Plan'));
+  // früher automatisch angelegter, leerer Platzhalter „Mein Plan“ (ohne Trainingstage) -> entfernen
+  d.plans = d.plans.filter(p => !(p.name === 'Mein Plan' && !p.own && !(p.days || []).length));
   for (const p of d.plans) {
     if (!Array.isArray(p.days)) p.days = [];
     p.days.forEach(day => day.exercises.forEach(withDefaults));
@@ -85,7 +86,7 @@ function upgradeData(d) {
     if (![1, 2].includes(p.perWeek)) p.perWeek = 1;  // wie oft jeder Trainingstag pro Woche absolviert wird
   }
   // null = bewusst kein Plan aktiv; fehlt die Angabe (ältere Daten) oder gibt es den Plan nicht mehr -> erster Plan
-  if (d.activePlanId !== null && !d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans[0].id;
+  if (d.activePlanId !== null && !d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans.length ? d.plans[0].id : null;
   bindPlanAccessors(d);
 
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
@@ -94,6 +95,8 @@ function upgradeData(d) {
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
+  if (!Array.isArray(d.foodLog)) d.foodLog = [];       // Ernährungstagebuch (food.js)
+  if (!d.foods || typeof d.foods !== 'object' || Array.isArray(d.foods)) d.foods = {};  // gemerkte Lebensmittel
   if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
   if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: Schlüssel aus PROFILE_COLORS } – beim ersten Öffnen gefragt
   // Farbe wird einmal nach dem Geschlecht vorbelegt (früher „Passend“ = color null) und folgt ihm danach nicht mehr
@@ -1868,8 +1871,9 @@ function renderStart() {
   if (!hasActivePlan()) {
     return h + `<div class="card no-plan">
         <div class="check-emoji" aria-hidden="true">🏁</div>
-        <h2>Kein Plan aktiv</h2>
-        <p class="hint">Erstelle einen neuen Plan oder aktiviere einen bisherigen im Reiter „Plan“. Deine Trainings und Erfolge bleiben erhalten.</p>
+        <h2>${data.plans.length ? 'Kein Plan aktiv' : 'Noch kein Plan'}</h2>
+        <p class="hint">${data.plans.length ? 'Erstelle einen neuen Plan oder aktiviere einen bisherigen im Reiter „Plan“. Deine Trainings und Erfolge bleiben erhalten.'
+          : 'Erstelle deinen ersten Trainingsplan – der Assistent führt dich Schritt für Schritt hindurch.'}</p>
         <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
         ${data.plans.length ? '<button class="btn center" data-action="tab" data-tab="plan">Bisherigen Plan aktivieren</button>' : ''}
       </div>`;
@@ -2162,7 +2166,8 @@ function renderPlan() {
   const libBtn = `<button class="btn nav lib-open-btn" data-action="lib">📖 Übungsbibliothek
     <small>Alle Übungen mit Animation, Ausführung und Tipps</small></button>`;
   if (!hasActivePlan()) {
-    return h + `<p class="hint">Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.</p>
+    return h + `<p class="hint">${data.plans.length ? 'Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.'
+      : 'Noch kein Plan vorhanden. Erstelle deinen ersten Plan.'}</p>
       <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
   }
   h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
@@ -3364,7 +3369,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -3839,10 +3844,7 @@ const actions = {
     if (!confirm(`Plan „${p.name}“ mit ${p.days.length} Trainingstagen löschen?`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.\n\nGespeicherte Trainings, Verlauf und Erfolge bleiben erhalten.')) return;
     data.plans = data.plans.filter(x => x !== p);
-    if (!data.plans.length) {
-      data.plans.push(newPlan('Mein Plan'));  // es gibt immer mindestens einen Plan
-      data.activePlanId = data.plans[0].id;
-    } else if (!data.plans.some(x => x.id === data.activePlanId)) {
+    if (!data.plans.some(x => x.id === data.activePlanId)) {
       data.activePlanId = null;  // aktiven Plan gelöscht -> kein Plan aktiv (nicht einfach einen anderen starten)
     }
     saveData(); render();
@@ -4085,7 +4087,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);
