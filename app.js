@@ -95,6 +95,7 @@ function upgradeData(d) {
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
+  if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: null | 'blue' | 'berry' } – beim ersten Öffnen gefragt
   if (!Array.isArray(d.customExercises)) d.customExercises = [];  // eigene Übungen: [{ name, kind, group, like, note }]
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
@@ -1805,7 +1806,7 @@ function hintsCard() {
 }
 
 function renderStart() {
-  let h = (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
+  let h = greeting() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -2847,7 +2848,7 @@ const readinessText = r => {
 };
 
 function renderData() {
-  return `<div class="card">
+  return profileCard() + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -3248,9 +3249,10 @@ function importData(file) {
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
       cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake,
-      customExercises: d.customExercises,
+      customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
+    applyTheme();
     saveData();
     toast('Sicherung importiert ✔');
     go('start');
@@ -3974,6 +3976,7 @@ const actions = {
     if (!confirm('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
     data = upgradeData(emptyData());
     registerCustomExercises();
+    applyTheme();
     saveData();
     draft = null; saveDraft();
     toast('App zurückgesetzt');
@@ -4160,34 +4163,119 @@ document.addEventListener('focusin', e => {
 /* ---------- Begrüßung beim allerersten Öffnen ---------- */
 
 // Nur für neue Nutzer (noch keine Trainings) und nur einmal – danach merkt sich die App das in data.welcomeSeen
+/* ---------- Profil: Name, Geschlecht, Farbe ---------- */
+
+const PROFILE_COLORS = { blue: 'Blau', berry: 'Beere' };
+const profileName = () => (data.profile && data.profile.name) || '';
+const profileSex = () => (data.profile && data.profile.sex) || null;
+// Farbe: selbst gewählt, sonst passend zum Geschlecht (Frau: Beere, sonst Blau)
+const profileColor = () => (data.profile && data.profile.color) || (profileSex() === 'f' ? 'berry' : 'blue');
+
+function applyTheme() {
+  document.documentElement.dataset.accent = profileColor();
+}
+
+// Diskopumper und Booty-Plan schließen sich aus: angezeigt wird nur der passende (ohne Angabe beide)
+function classicHidden(id) {
+  const sex = profileSex();
+  return sex === 'f' ? /^disko/.test(id) : sex === 'm' ? /^booty/.test(id) : false;
+}
+
+function greeting() {
+  const name = profileName();
+  if (!name) return '';
+  const hour = new Date().getHours();
+  const hi = hour < 5 ? 'Hallo' : hour < 11 ? 'Guten Morgen' : hour < 18 ? 'Hallo' : 'Guten Abend';
+  return `<p class="greeting">${hi}, <b>${esc(name)}</b> 👋</p>`;
+}
+
+const sexButtons = (cur, action) => [['m', 'Männlich'], ['f', 'Weiblich']].map(([k, l]) =>
+  `<button class="${cur === k ? 'on' : ''}" data-action="${action}" data-k="${k}">${l}</button>`).join('');
+
+function profileCard() {
+  const p = data.profile || {};
+  return `<div class="card profile-card">
+      <h2>Profil</h2>
+      <label class="lbl">Dein Name
+        <input class="inp" type="text" data-field="profile-name" autocomplete="given-name" placeholder="Vorname" value="${esc(p.name || '')}">
+      </label>
+      <p class="lbl">Geschlecht</p>
+      <div class="seg two">${sexButtons(p.sex, 'profile-sex')}</div>
+      <p class="lbl">Farbe der App</p>
+      <div class="seg three">
+        <button class="${!p.color ? 'on' : ''}" data-action="profile-color" data-k="">Passend</button>
+        ${Object.entries(PROFILE_COLORS).map(([k, l]) => `<button class="${p.color === k ? 'on' : ''}" data-action="profile-color" data-k="${k}">${l}</button>`).join('')}
+      </div>
+      <p class="hint">„Passend“ richtet die Farbe nach dem Geschlecht. Das Geschlecht bestimmt außerdem, welcher Klassiker im
+        Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan), und wird im Ernährungsrechner vorausgefüllt.</p>
+    </div>`;
+}
+
+// Erstes Öffnen: Begrüßung mit Name und Geschlecht. Wer die App schon nutzt, wird nur nach dem Profil gefragt.
 function showWelcome() {
-  if (data.welcomeSeen || data.sessions.length) return;
+  if (data.profile && data.profile.name && data.profile.sex) return;
+  const fresh = !data.welcomeSeen && !data.sessions.length;
   const el = document.createElement('div');
   el.className = 'welcome';
   el.innerHTML = `<div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
       <div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
         <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>
-      <h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
+      ${fresh ? `<h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
       <p>Schön, dass du auf StepUp Strength aufmerksam geworden bist! Viel Spaß auf deiner Reise – nimm dir ruhig
-        etwas Zeit, um dich mit den Möglichkeiten der App vertraut zu machen. 🙂</p>
-      <ul class="welcome-tips">
+        etwas Zeit, um dich mit den Möglichkeiten der App vertraut zu machen. 🙂</p>`
+      : `<h2 id="welcome-title">Etwas persönlicher</h2>
+      <p>Verrate der App kurz, wie du heißt – dann kann sie dich persönlich ansprechen und sich etwas mehr auf dich einstellen.</p>`}
+      <div class="welcome-form">
+        <label class="lbl">Wie heißt du?
+          <input class="inp" type="text" id="welcome-name" autocomplete="given-name" placeholder="Vorname" value="${esc(profileName())}">
+        </label>
+        <p class="lbl">Geschlecht</p>
+        <div class="seg two" id="welcome-sex">${sexButtons(profileSex(), 'welcome-sex')}</div>
+      </div>
+      ${fresh ? `<ul class="welcome-tips">
         <li><b>Plan:</b> Mit dem Assistenten in wenigen Schritten deinen Trainingsplan erstellen.</li>
         <li><b>Training:</b> Trainingstag antippen und loslegen – die App schlägt Gewichte und Wiederholungen vor.</li>
-        <li><b>Sicherung:</b> Alles bleibt nur auf deinem Handy – sichere es ab und zu.</li>
-      </ul>
-      <button class="btn primary" data-action="welcome-ok">Los geht's 💪</button>
+        <li><b>Sicherung:</b> Alles bleibt nur auf deinem Handy – sichere es ab und zu. Name und Geschlecht kannst du dort jederzeit ändern.</li>
+      </ul>` : '<p class="hint welcome-note">Du kannst beides später im Reiter „Sicherung“ unter „Profil“ ändern.</p>'}
+      <button class="btn primary" data-action="welcome-ok">${fresh ? "Los geht's 💪" : 'Speichern'}</button>
     </div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
 }
 
+actions['welcome-sex'] = el => {
+  el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+  // Farbe gleich als Vorschau umstellen
+  document.documentElement.dataset.accent = el.dataset.k === 'f' ? 'berry' : 'blue';
+};
+
 actions['welcome-ok'] = () => {
+  const box = document.querySelector('.welcome');
+  if (!box) return;
+  const name = box.querySelector('#welcome-name').value.trim();
+  const on = box.querySelector('#welcome-sex button.on');
+  if (!name) { alert('Bitte gib deinen Namen ein.'); return; }
+  if (!on) { alert('Bitte wähle dein Geschlecht.'); return; }
+  data.profile = { ...(data.profile || {}), name, sex: on.dataset.k, color: (data.profile && data.profile.color) || null };
   data.welcomeSeen = true;
   saveData();
-  const el = document.querySelector('.welcome');
-  if (!el) return;
-  el.classList.remove('show');
-  setTimeout(() => el.remove(), 350);
+  applyTheme();
+  box.classList.remove('show');
+  setTimeout(() => box.remove(), 350);
+  render();
+};
+
+actions['profile-sex'] = el => {
+  data.profile = { ...(data.profile || {}), sex: el.dataset.k };
+  saveData(); applyTheme(); render();
+};
+actions['profile-color'] = el => {
+  data.profile = { ...(data.profile || {}), color: el.dataset.k || null };
+  saveData(); applyTheme(); render();
+};
+fields['profile-name'] = el => {
+  data.profile = { ...(data.profile || {}), name: el.value.trim() };
+  saveData();
 };
 
 /* ---------- Start ---------- */
@@ -4195,6 +4283,7 @@ actions['welcome-ok'] = () => {
 // Erst zeichnen, wenn alle Skripte geladen sind (die Startseite nutzt z. B. nutrition.js) –
 // sonst bleibt die Seite beim Öffnen leer, bis man einen Reiter antippt.
 function boot() {
+  applyTheme();
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
   render();
   showWelcome();

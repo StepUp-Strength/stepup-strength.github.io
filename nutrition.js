@@ -255,7 +255,7 @@ function nutInit(view) {
   const n = data.nutrition;
   const level = data.plans.length && activePlan().level;
   nutDraft = n ? { ...n, kg: nutWeight() } : {
-    sex: null, age: null, ageYear: new Date().getFullYear(), height: null, bodyFat: null, activity: null,
+    sex: profileSex(), age: null, ageYear: new Date().getFullYear(), height: null, bodyFat: null, activity: null,
     phase: null, pace: null, goalKg: null, weeks: 4, kg: nutWeight(),
   };
   nutDraft.level = level;

@@ -447,7 +447,7 @@ function wizFlow() {
 }
 
 // Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
-const splitsFor = n => SPLITS.filter(s => s.days.length === n && (!wizLevel().tags || wizLevel().tags.includes(s.tag)));
+const splitsFor = n => SPLITS.filter(s => s.days.length === n && (!wizLevel().tags || wizLevel().tags.includes(s.tag)) && !classicHidden(s.id));
 const wizPrev = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) - 1] || 'cancel'; };
 const wizNext = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) + 1]; };
 

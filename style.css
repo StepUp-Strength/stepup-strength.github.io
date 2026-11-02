@@ -1430,3 +1430,80 @@ div.last { margin: 0 0 12px; font-size: 15px; color: var(--muted); }
 .libc-form .lbl { display: block; margin: 16px 0 8px; }
 .libc-form .lbl:first-child { margin-top: 0; }
 .libc-form .variants.plan .vchip { white-space: nowrap; }
+
+/* ---------- Profil, Begrüßung ---------- */
+.greeting { margin: 2px 4px 14px; font-size: 22px; letter-spacing: -.02em; color: var(--muted); }
+.greeting b { color: var(--text); font-weight: 750; }
+.profile-card .lbl { margin-bottom: 8px; }
+.profile-card .lbl .inp { margin-bottom: 8px; }
+.welcome-form { margin: 0 0 16px; text-align: left; }
+.welcome-form .lbl { margin: 0 0 8px; }
+.welcome-form .lbl .inp { margin: 6px 0 10px; }
+.welcome-form .seg { margin: 0; }
+.welcome-note { margin: 0 0 14px; font-size: 15px; }
+
+/* ---------- Farbwelten (nach Profil, data-accent am html-Element) ---------- */
+:root[data-accent="blue"] {
+  --accent: #2563eb;
+  --accent-2: #4f46e5;
+  --accent-soft: rgba(37, 99, 235, .1);
+  --accent-text: #1d4ed8;
+  --shadow-accent: 0 10px 24px -10px rgba(37, 99, 235, .6);
+}
+:root[data-accent="berry"] {
+  --accent: #d6336c;
+  --accent-2: #9c36b5;
+  --accent-soft: rgba(214, 51, 108, .1);
+  --accent-text: #b0255a;
+  --shadow-accent: 0 10px 24px -10px rgba(214, 51, 108, .6);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="blue"] {
+    --accent: #4f8bff;
+    --accent-2: #7c74ff;
+    --accent-soft: rgba(79, 139, 255, .17);
+    --accent-text: #93b4ff;
+    --shadow-accent: 0 10px 26px -12px rgba(79, 139, 255, .7);
+  }
+  :root[data-accent="berry"] {
+    --accent: #ff5c93;
+    --accent-2: #c770e8;
+    --accent-soft: rgba(255, 92, 147, .17);
+    --accent-text: #ff9cbf;
+    --shadow-accent: 0 10px 26px -12px rgba(255, 92, 147, .7);
+  }
+}
+
+/* ---------- Feinschliff Erscheinungsbild (nur Optik, keine Änderung an Aufbau oder Funktion) ---------- */
+:root {
+  --bg: #f3f4f8;
+  /* feine Kante + weicher, tiefer Schatten statt flächigem Grau */
+  --shadow: 0 0 0 1px rgba(16, 24, 40, .045), 0 1px 2px rgba(16, 24, 40, .05), 0 10px 28px -14px rgba(16, 24, 40, .14);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0c0f;
+    --card: #17181d;
+    /* dunkel: haarfeine helle Kante gibt den Karten Kontur */
+    --shadow: 0 0 0 1px rgba(255, 255, 255, .06);
+  }
+}
+body { text-rendering: optimizeLegibility; }
+/* Zahlen gleich breit: Gewichte, Wdh. und Tabellen stehen sauber untereinander */
+input, table, .setgrid, .target, .last, .compare, .round-status { font-variant-numeric: tabular-nums; }
+header { border-bottom-color: transparent; box-shadow: 0 1px 0 var(--line); }
+header h1 { letter-spacing: -.03em; }
+.card h2 { letter-spacing: -.022em; }
+.btn { transition: transform .12s ease, opacity .12s ease, box-shadow .2s ease; }
+.btn.primary { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%); font-weight: 700; letter-spacing: -.005em; }
+.btn.primary::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 55%);
+}
+/* Untere Leiste: aktiver Reiter mit dezenter Pille hinter dem Symbol */
+nav { box-shadow: 0 -1px 0 var(--line); border-top-color: transparent; }
+nav button svg { box-sizing: content-box; width: 26px; height: 26px; padding: 3px 14px; border-radius: 999px; transition: background .2s ease; }
+nav button.active svg { background: var(--accent-soft); }
+nav button.active { font-weight: 700; }
+.inp, .setgrid input { transition: border-color .15s, box-shadow .15s, background .15s; }
+.inp:focus, .setgrid input:focus { background: var(--card); }
