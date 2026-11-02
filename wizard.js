@@ -117,6 +117,19 @@ const WEEKLY_TARGET = {
 };
 const SESSION_CAP = 25;  // höchstens so viele Sätze pro Training – in jeder Woche des Zyklus
 
+// Volumen-Variante (direkt nach der Aufteilung gefragt): vol = Faktor auf die Sätze, rir = Verschiebung des Tank-Ziels
+// (vom User festgelegt: mehr Volumen = Tank wie bisher, weniger Volumen = etwa 1 Wdh. weniger im Tank, nie unter 0)
+const VOL_STYLES = {
+  high: { vol: 1.2, rir: 0, label: 'Mehr Volumen, mehr im Tank' },
+  mid: { vol: 1, rir: 0, label: 'Ausgewogen' },
+  low: { vol: 0.8, rir: -1, label: 'Weniger Volumen, näher am Muskelversagen' },
+};
+const wizStyle = () => VOL_STYLES[wiz.style] || VOL_STYLES.mid;
+// Obergrenze Sätze pro Training: bei „Mehr Volumen“ im selben Verhältnis höher (25 → 30), sonst würde sie das Mehr wieder kappen
+const sessionCap = () => Math.round(SESSION_CAP * Math.max(1, wizStyle().vol));
+// Tank-Ziel normaler Übungen (Intro…W4) für Erfahrung und Variante
+const wizRirBase = style => RIR_PLAN[4].map(v => Math.max(0, v + wizLevel().rir + style.rir));
+
 // Erfahrungsstufe: empfohlene Trainingstage pro Woche, Startvolumen (Anteil der Wochenziele), Tank-Ziel
 // (+ = weiter weg vom Muskelversagen) und – für Neulinge – nur einfache Aufteilungen
 const LEVELS = {
@@ -251,6 +264,7 @@ function wizStart() {
     newDay: { name: '', intensity: 'heavy', groups: [] },
     deload: 'auto',                   // Deload automatisch nach den Trainingswochen oder 'self' = selbst bestimmen
     progression: { volume: true, load: true },  // Grundeinstellung des neuen Plans
+    style: 'mid',                      // Volumen-Variante (VOL_STYLES): 'high' / 'mid' / 'low'
     perWeek: 1,                        // jeder Trainingstag 1× oder 2× pro Woche
     volDiv: 1,                         // Wochensätze auf so viele Durchgänge je Tag verteilen (siehe daysWith)
     weekWanted: {},                    // eingetippte Sätze pro Woche (Muskelgruppe -> [Intro…W4]), werden beim Speichern genau verteilt
@@ -265,7 +279,7 @@ function wizStart() {
 // Muskelgruppe. Hätte ein Tag in der Intro-Woche mehr als SESSION_CAP Sätze, wird anteilig gekürzt.
 function templateVolume(groups) {
   const vol = {};
-  const share = wizLevel().vol;  // Startvolumen je nach Erfahrung
+  const share = wizLevel().vol * wizStyle().vol;  // Startvolumen je nach Erfahrung und Volumen-Variante
   const tpl = SPLITS.find(s => s.id === wiz.split);  // Klassiker bringen eigene Wochenziele mit
   for (const g of groups) {
     const freq = Math.max(1, daysWith(g));
@@ -294,7 +308,7 @@ function capSessions(vol) {
     const free = d.groups.filter(g => vol[g] && !wiz.prio.includes(g));
     for (let w = 0; w < 4; w++) {
       const sum = gs => gs.reduce((a, g) => a + (vol[g] ? vol[g][w] : 0), 0);
-      let excess = sum(d.groups) - SESSION_CAP;
+      let excess = sum(d.groups) - sessionCap();
       if (excess <= 0) continue;
       const A = sum(free.filter(isAssist)), N = sum(free.filter(g => !isAssist(g)));
       const cutA = Math.min(excess, A * (1 - ASSIST_FLOOR)); excess -= cutA;
@@ -315,7 +329,7 @@ function capSessions(vol) {
     // frühere Wochen nie mehr Sätze als die Woche danach (die Verteilung kann nur hinzufügen)
     if (w < 3) for (const g of Object.keys(vol)) vol[g][w] = Math.min(vol[g][w], vol[g][w + 1]);
     for (let guard = 0; guard < 500; guard++) {
-      const over = wiz.days.find(d => d.groups.reduce((a, g) => a + (vol[g] ? vol[g][w] : 0), 0) > SESSION_CAP);
+      const over = wiz.days.find(d => d.groups.reduce((a, g) => a + (vol[g] ? vol[g][w] : 0), 0) > sessionCap());
       if (!over) break;
       const cands = over.groups.filter(g => vol[g] && vol[g][w] > 1);
       const free = cands.filter(g => !wiz.prio.includes(g));
@@ -338,14 +352,14 @@ function syncGroups() {
   const groups = wizGroups();
   const tv = templateVolume(groups);
   for (const g of groups) {
-    const key = `${daysWith(g)}|${focusAdj(g)}`;
+    const key = `${daysWith(g)}|${focusAdj(g)}|${wiz.style}`;
     if (!wiz.volume[g] || wiz.volKey[g] !== key) {
       wiz.volume[g] = tv[g];
       wiz.volKey[g] = key;
       delete wiz.weekWanted[g];  // neu vorgeschlagen -> eingetippte Wochenzahlen gelten nicht mehr
     }
     // Tank-Ziel je nach Erfahrung: Neulinge weiter weg vom Muskelversagen, Alte Hasen näher dran
-    if (!wiz.rir[g]) wiz.rir[g] = RIR_PLAN[4].map(v => Math.max(0, v + wizLevel().rir));
+    if (!wiz.rir[g]) wiz.rir[g] = wizRirBase(wizStyle());
     if (!wiz.picks[g]) wiz.picks[g] = existingFor(g);
   }
   for (const g of Object.keys(wiz.volume)) {
@@ -417,7 +431,7 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
+const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, style: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
   volume: 3, rir: 4, manual: 5, preview: 5, intq: 6, deloadq: 6, progq: 6 };
 const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
@@ -434,7 +448,7 @@ function wizFlow() {
   if (wiz.mode === 'own') return ['mode', 'sessions', 'ownday', 'ownname'];
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
-  const steps = ['mode', 'level', 'sessions', 'split'];
+  const steps = ['mode', 'level', 'sessions', 'split', 'style'];  // style: Volumen-Variante direkt nach der Aufteilung
   if (custom) steps.push('days', 'freq');
   else {
     if (tpl && tpl.pairs) steps.push('freq');
@@ -602,6 +616,36 @@ function renderWizSplit() {
       <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>`, false);
 }
 
+// Schritt „Variante“: mehr Volumen mit mehr im Tank, ausgewogen oder weniger Volumen näher am Muskelversagen
+function renderWizStyle() {
+  const tank = k => { const r = wizRirBase(VOL_STYLES[k]); return `${fmtNum(r[0])} → ${fmtNum(r[3])}`; };
+  const list = items => `<ul class="int-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>`;
+  const opt = (k, title, body) => `<button class="split-opt freq-opt int-opt ${wiz.style === k ? 'on' : ''}" data-action="wiz-style" data-k="${k}">
+      <b>${title}</b><small>${body}</small></button>`;
+  return wizCard('🎚️', 'Mehr Volumen oder mehr Intensität?',
+    `Muskeln wachsen über zwei Stellschrauben: das <b>Volumen</b> – wie viele Arbeitssätze eine Muskelgruppe pro Woche bekommt –
+      und die <b>Intensität</b> – wie nah du in jedem Satz ans Muskelversagen gehst, also wie viele Wiederholungen noch „im Tank“
+      bleiben (RIR). Beides lässt sich gegeneinander tauschen: Mehr Sätze mit etwas mehr Luft wirken ähnlich wie weniger Sätze,
+      die dafür härter sind. Wähle, was besser zu deiner Zeit, deiner Erholung und deinem Gefühl im Training passt.`,
+    opt('high', 'Mehr Volumen, mehr im Tank', `<strong>20 % mehr Sätze</strong> als der Mittelweg, Tank wie bisher (normale Übungen: ${tank('high')} von Intro bis Woche 4).
+        <b>Vorteile:</b>${list(['jeder einzelne Satz ist weniger hart – die Technik bleibt sauberer',
+          'schonender für Gelenke, Sehnen und Kopf, weil du seltener ans Limit gehst',
+          'du übst die Bewegungen öfter – gut für Einsteiger, Ältere und alle, die gern mehr trainieren'])}
+        <b>Nachteile:</b>${list(['die Trainings dauern länger (höchstens 30 statt 25 Sätze pro Training)',
+          'mehr Gesamtermüdung – Schlaf und Erholung werden wichtiger'])}`) +
+    opt('mid', 'Ausgewogen', `Sätze und Tank genau so, wie die App sie für deine Erfahrung berechnet (normale Übungen: Tank ${tank('mid')}) – der Mittelweg aus beiden Varianten.`) +
+    opt('low', 'Weniger Volumen, näher am Muskelversagen', `<strong>20 % weniger Sätze</strong>, dafür etwa <strong>1 Wdh. weniger im Tank</strong> (normale Übungen: ${tank('low')}, nie unter 0).
+        <b>Vorteile:</b>${list(['kürzere Trainings – ideal bei wenig Zeit',
+          'jeder Satz zählt richtig, weniger „Füllsätze“',
+          'gut für Erfahrene, die ihre Grenze sicher einschätzen können'])}
+        <b>Nachteile:</b>${list(['jeder Satz ist sehr anstrengend und mental fordernder',
+          'höheres Verletzungsrisiko, wenn die Technik am Limit nachlässt – vor allem bei Grundübungen',
+          'der Tank muss gut eingeschätzt werden – für Neulinge schwieriger'])}`),
+    true,
+    `<p class="hint">Die genauen Sätze und Tank-Werte siehst du später in den Schritten „Volumen“ und „RIR“ und kannst sie dort noch
+      selbst anpassen. Grundübungen behalten wie immer 1 Wdh. mehr im Tank, Assistenzübungen 1 weniger (nie unter 0).</p>`);
+}
+
 // Schritt „Häufigkeit“: jeden Tag 1× (mehr Abwechslung) oder halb so viele Tage je 2× (einfacher)
 function renderWizFreq() {
   const custom = wiz.cat === 'custom';
@@ -618,11 +662,21 @@ function renderWizFreq() {
   const tpl = SPLITS.find(s => s.id === wiz.split);
   const all = tpl.days.map(d => d[0]), half = halfNames(tpl.id);
   return wizCard('🔁', 'Abwechslung oder Wiederholung?',
-    `Beide Varianten haben <b>${all.length} Trainings pro Woche</b> und dasselbe Wochenvolumen – sie unterscheiden sich nur darin, wie viele verschiedene Trainingstage es gibt.`,
+    `Beide Varianten haben <b>${all.length} Trainings pro Woche</b> und dasselbe Wochenvolumen (gleich viele Sätze pro Muskelgruppe) – sie unterscheiden sich nur darin, wie viele <b>verschiedene</b> Trainingstage es gibt.`,
     opt(1, `Mehr Abwechslung – ${all.length} verschiedene Tage`,
-      `${all.join(' · ')}<br>Jeder Tag 1× pro Woche. Die zweite Hälfte ist eine eigene Variante (leichter, eigene Übungen möglich) – ideal, wenn du gern etwas Abwechslung zwischen den Einheiten hast.`) +
+      `${all.join(' · ')}<br>Jeder Tag kommt 1× pro Woche dran. <strong>Was ist an den Tagen gleich?</strong> Zusammengehörige Tage – z. B. ${esc(all[0])} und ${esc(all[half.length] || all[1])} –
+        trainieren dieselben Muskelgruppen mit gleich vielen Sätzen – die App setzt anfangs auch dieselben Übungen ein.
+        <strong>Was ist anders?</strong> Es sind zwei eigenständige Trainingstage:
+        <ul class="int-list"><li><strong>andere Übungen möglich:</strong> Am zweiten Tag kannst du Übungen austauschen – z. B. am ersten Bankdrücken mit
+          der Langhantel, am zweiten Schrägbankdrücken mit Kurzhanteln (in der Übungsvorschau mit „⇄ Ersetzen“ oder später im Plan)</li>
+        <li><strong>schwer und leicht:</strong> Am Ende kannst du festlegen, dass ein Tag schwer (weniger Wdh., mehr Gewicht) und der andere
+          leicht ist (mehr Wdh., weniger Gewicht)</li>
+        <li><strong>eigener Verlauf:</strong> Die App merkt sich für jeden Tag getrennt, was du geschafft hast, und steigert jeden Tag für sich</li></ul>`) +
     opt(2, `Unkompliziert – ${half.length} Tag${half.length === 1 ? '' : 'e'}, je 2× pro Woche`,
-      `${half.join(' · ')}<br>Dieselben Trainings wiederholen sich der Reihe nach – du trainierst deinen Plan strukturiert durch und musst dir weniger merken. Einzelne Übungen kannst du trotzdem jederzeit austauschen und alles nach Belieben anpassen.`));
+      `${half.join(' · ')}<br>Es gibt nur halb so viele Trainingstage, jeder kommt <strong>2× pro Woche</strong> dran – beide Male mit denselben
+        Übungen, Sätzen und demselben Wiederholungsbereich. Du trainierst die Tage der Reihe nach durch und musst dir weniger merken.
+        Beim 2. Mal in der Woche richtet sich die App nach deinem 1. Training dieser Woche. Einzelne Übungen kannst du trotzdem
+        jederzeit austauschen und alles nach Belieben anpassen.`));
 }
 
 // Schritt „Trainingstage“: Vorlage prüfen bzw. eigene Tage zusammenstellen
@@ -799,7 +853,7 @@ function renderWizFocus(kind) {
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
-  const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, freq: renderWizFreq, days: renderWizDays,
+  const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, style: renderWizStyle, freq: renderWizFreq, days: renderWizDays,
     basics: renderWizBasics, intq: renderWizInt, deloadq: renderWizDeload, progq: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
@@ -815,7 +869,8 @@ function renderWizard() {
           Die Tabelle zeigt die Sätze <b>pro Woche</b> für jede Woche des Zyklus – von der Intro-Woche bis Woche 4. Von Woche zu
           Woche kommen Sätze dazu, damit der Trainingsreiz wächst; in der Deload-Woche wird halbiert, damit du dich erholst.
           Darunter steht, auf wie viele Trainings pro Woche sich die Sätze verteilen. Die Werte hat die App aus deiner Erfahrung,
-          deinen Trainingstagen und dem Fokus berechnet (⭐ Priorität = +2 Sätze pro Woche, 😌 Low = −2).</p>
+          deinen Trainingstagen und dem Fokus berechnet (⭐ Priorität = +2 Sätze pro Woche, 😌 Low = −2).
+          Gewählte Variante: <b>${wizStyle().label}</b>${wiz.style === 'high' ? ' (+20 % Sätze)' : wiz.style === 'low' ? ' (−20 % Sätze)' : ''}.</p>
         <table class="rir vol view">${weekHead()}`;
       for (const g of groups) {
         h += `<tr class="vol-g"><td colspan="5"><b>${MUSCLES[g]}</b>${focusBadge(g)}</td></tr>
@@ -852,7 +907,7 @@ function renderWizard() {
           dein Ziel je Muskelgruppe und Woche: Von Woche zu Woche wird der Tank kleiner – du trainierst näher am Versagen, der Zyklus
           wird intensiver. Die Werte gelten für <b>normale</b> Übungen; bei Grundübungen (z. B. Kniebeugen, Bankdrücken) bleibt
           1 Wdh. mehr im Tank, bei Assistenzübungen (z. B. Curls, Seitheben) 1 weniger – nie unter 0. In der Deload-Woche
-          immer mindestens ${DELOAD_RIR}.</p>
+          immer mindestens ${DELOAD_RIR}. Gewählte Variante: <b>${wizStyle().label}</b>${wiz.style === 'low' ? ' (etwa 1 Wdh. weniger im Tank)' : ''}.</p>
         <table class="rir vol view">${weekHead()}`;
       for (const g of groups) h += `<tr><td>${MUSCLES[g]}</td>${wiz.rir[g].map(v => `<td>${fmtNum(v)}</td>`).join('')}</tr>`;
       return h + `</table>
@@ -1121,6 +1176,11 @@ Object.assign(actions, {
     go('wizard');
   },
   // Vorlage wählen: Tage neu setzen, Volumen/RIR/Übungen werden danach neu vorgeschlagen
+  // Volumen-Variante: Volumen und Tank werden danach neu vorgeschlagen
+  'wiz-style': el => {
+    if (wiz.style !== el.dataset.k) { wiz.style = el.dataset.k; wiz.rir = {}; wiz.volKey = {}; }
+    render();
+  },
   'wiz-split': el => {
     wiz.split = el.dataset.id;
     wiz.cat = SPLITS.find(s => s.id === wiz.split).tag;

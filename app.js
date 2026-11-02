@@ -1897,9 +1897,11 @@ function renderTraining() {
       <div class="ex-head">
         <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
-        <button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
-          data-ei="${ei}" aria-label="Kommentar">💬</button>
-        <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
+        <div class="ex-tools">
+          <button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
+            data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>
+          <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
+        </div>
       </div>`;
     if (en.added) {
       h += `<div class="added-row"><span>Heute zusätzlich</span>
@@ -4171,8 +4173,19 @@ const profileSex = () => (data.profile && data.profile.sex) || null;
 // Farbe: selbst gewählt, sonst passend zum Geschlecht (Frau: Beere, sonst Blau)
 const profileColor = () => (data.profile && data.profile.color) || (profileSex() === 'f' ? 'berry' : 'blue');
 
+const THEME_MODES = { '': 'Automatisch', light: 'Hell', dark: 'Dunkel' };
+
+// Farbe und Hell/Dunkel: data-accent bzw. data-theme am html-Element (ohne data-theme folgt die App dem Handy)
 function applyTheme() {
-  document.documentElement.dataset.accent = profileColor();
+  const root = document.documentElement;
+  root.dataset.accent = profileColor();
+  const mode = (data.profile && data.profile.theme) || '';
+  if (mode) root.dataset.theme = mode; else delete root.dataset.theme;
+  // Statusleiste des Handys passend einfärben
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    if (!m.dataset.auto) m.dataset.auto = m.getAttribute('content');
+    m.setAttribute('content', mode === 'dark' ? '#0b0c0f' : mode === 'light' ? '#f3f4f8' : m.dataset.auto);
+  });
 }
 
 // Diskopumper und Booty-Plan schließen sich aus: angezeigt wird nur der passende (ohne Angabe beide)
@@ -4206,7 +4219,12 @@ function profileCard() {
         <button class="${!p.color ? 'on' : ''}" data-action="profile-color" data-k="">Passend</button>
         ${Object.entries(PROFILE_COLORS).map(([k, l]) => `<button class="${p.color === k ? 'on' : ''}" data-action="profile-color" data-k="${k}">${l}</button>`).join('')}
       </div>
-      <p class="hint">„Passend“ richtet die Farbe nach dem Geschlecht. Das Geschlecht bestimmt außerdem, welcher Klassiker im
+      <p class="lbl">Darstellung</p>
+      <div class="seg three">${Object.entries(THEME_MODES).map(([k, l]) =>
+        `<button class="${((p.theme || '') === k) ? 'on' : ''}" data-action="profile-theme" data-k="${k}">${l}</button>`).join('')}
+      </div>
+      <p class="hint">„Automatisch“ folgt der Einstellung deines Handys (hell/dunkel), „Hell“ und „Dunkel“ gelten immer.
+        „Passend“ richtet die Farbe nach dem Geschlecht. Das Geschlecht bestimmt außerdem, welcher Klassiker im
         Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan), und wird im Ernährungsrechner vorausgefüllt.</p>
     </div>`;
 }
@@ -4267,6 +4285,10 @@ actions['welcome-ok'] = () => {
 
 actions['profile-sex'] = el => {
   data.profile = { ...(data.profile || {}), sex: el.dataset.k };
+  saveData(); applyTheme(); render();
+};
+actions['profile-theme'] = el => {
+  data.profile = { ...(data.profile || {}), theme: el.dataset.k || null };
   saveData(); applyTheme(); render();
 };
 actions['profile-color'] = el => {
