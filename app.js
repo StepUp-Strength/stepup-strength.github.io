@@ -115,6 +115,16 @@ function upgradeData(d) {
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
   d.cycle.buildWeeks = Math.min(5, Math.max(4, d.cycle.buildWeeks));  // 4–5 Trainingswochen
   if (d.cycle.week == null) upgradeCycle(d);
+  // „schwer“/„leicht“ im Tagesnamen einmalig in den Wiederholungsbereich umbenennen (nur der Name – Inhalt bleibt;
+  // Trainings hängen über die dayId am Tag). User-Wunsch 2026-11-02.
+  if (!d.renamedInt) {
+    const ren = n => typeof n === 'string'
+      ? n.replace(/\s*\b(schwer|leicht)\b/i, (m, w) => ` – ${w.toLowerCase() === 'schwer' ? 'niedrige' : 'hohe'} Wdh.`) : n;
+    for (const p of d.plans) for (const day of p.days) day.name = ren(day.name);
+    for (const t of d.dayTemplates) t.name = ren(t.name);
+    for (const s of d.sessions || []) s.dayName = ren(s.dayName);
+    d.renamedInt = true;
+  }
   return d;
 }
 
@@ -157,7 +167,13 @@ function saveData() {
 }
 
 function loadDraft() {
-  try { return JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { return null; }
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
+    // laufendes Training: Tagesname wie im Plan (z. B. nach der Umbenennung „schwer“/„leicht“ in upgradeData)
+    const day = d && data.plans.flatMap(p => p.days).find(x => x.id === d.dayId);
+    if (day && day.name.trim()) d.dayName = day.name;
+    return d;
+  } catch (e) { return null; }
 }
 
 function saveDraft() {
@@ -768,8 +784,8 @@ function defaultVolume() {
 }
 
 const DAY_TYPES = {
-  'upper-heavy': 'Oberkörper schwer', 'upper-light': 'Oberkörper leicht',
-  'lower-heavy': 'Unterkörper schwer', 'lower-light': 'Unterkörper leicht',
+  'upper-heavy': 'Oberkörper – niedrige Wdh.', 'upper-light': 'Oberkörper – hohe Wdh.',
+  'lower-heavy': 'Unterkörper – niedrige Wdh.', 'lower-light': 'Unterkörper – hohe Wdh.',
 };
 const DAY_GROUPS = {
   upper: ['brust', 'lat', 'trapez', 'schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps'],
@@ -2378,11 +2394,12 @@ function renderDay({ id }) {
   let h = `<label class="lbl">Name des Trainingstags
       <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}">
     </label>
-    <div class="variants plan daytype"><span>Intensität</span>${Object.entries({ heavy: 'Schwer', light: 'Leicht', '': 'Frei' }).map(([t, label]) =>
+    <div class="variants plan daytype"><span>Wiederholungsbereich</span>${Object.entries({ heavy: 'Niedrig', light: 'Hoch', '': 'Frei' }).map(([t, label]) =>
       `<button class="vchip ${(dayIntensity(day) || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
     </div>
     <p class="hint">${dayIntensity(day)
-      ? 'Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.'
+      ? `${{ heavy: 'Niedrig: mehr Gewicht, weniger Wiederholungen', light: 'Hoch: weniger Gewicht, mehr Wiederholungen' }[dayIntensity(day)]} – beides sind intensive Trainingstage, nur mit unterschiedlicher Belastung.
+        Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.`
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
     ${volumeSummary(day)}
     <h2>Übungen</h2>`;

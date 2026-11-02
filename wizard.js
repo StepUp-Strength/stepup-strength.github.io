@@ -33,7 +33,7 @@ const TL_NOTE = 'Torso = Brust, Rücken, Schultern, Bauch · Limbs = Beine und A
 // pairs: die zweite Hälfte der Tage wiederholt die erste als B- bzw. leichte Variante – dann kann man stattdessen
 // nur die erste Hälfte nehmen und jeden Tag 2× pro Woche trainieren (gleich viele Trainings, weniger Tage).
 // note: Hinweis unter der Vorlage, z. B. wenn eine Hälfte eines 2er-Splits öfter drankommt.
-// 2er-Splits mit 3, 5 oder 6 Tagen: die beiden Hälften wechseln sich ab (A/C schwer, B leicht).
+// 2er-Splits mit 3, 5 oder 6 Tagen: die beiden Hälften wechseln sich ab (A/C niedrige Wdh., B hohe Wdh.).
 // Diskopumper: nur Oberkörper, Brust und Arme betont
 const DISKO_WEEKLY = {
   brust: [12, 12, 14, 16], bizeps: [6, 8, 8, 10], trizeps: [6, 8, 8, 10], schulter_seite: [6, 8, 8, 10],
@@ -87,11 +87,11 @@ const SPLITS = [
   { id: 'ppl', tag: '3er-Split', label: 'Push/Pull/Beine', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
   // 4
-  { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper schwer', 'heavy', G_UPPER], ['Unterkörper schwer', 'heavy', G_LOWER],
-    ['Oberkörper leicht', 'light', G_UPPER], ['Unterkörper leicht', 'light', G_LOWER]] },
+  { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper – niedrige Wdh.', 'heavy', G_UPPER], ['Unterkörper – niedrige Wdh.', 'heavy', G_LOWER],
+    ['Oberkörper – hohe Wdh.', 'light', G_UPPER], ['Unterkörper – hohe Wdh.', 'light', G_LOWER]] },
   { id: 'fbpp4', tag: '2er-Split', label: 'Ganzkörper Push/Pull', pairs: true, days: FBPP(4) },
-  { id: 'tl', tag: '2er-Split', label: 'Torso/Limbs', note: TL_NOTE, pairs: true, days: [['Torso schwer', 'heavy', G_TORSO], ['Limbs schwer', 'heavy', G_LIMBS],
-    ['Torso leicht', 'light', G_TORSO], ['Limbs leicht', 'light', G_LIMBS]] },
+  { id: 'tl', tag: '2er-Split', label: 'Torso/Limbs', note: TL_NOTE, pairs: true, days: [['Torso – niedrige Wdh.', 'heavy', G_TORSO], ['Limbs – niedrige Wdh.', 'heavy', G_LIMBS],
+    ['Torso – hohe Wdh.', 'light', G_TORSO], ['Limbs – hohe Wdh.', 'light', G_LIMBS]] },
   // 5
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Oberkörper', 'light', G_UPPER], ['Unterkörper', 'light', G_LOWER]] },
@@ -221,9 +221,14 @@ function autoPicks(g) {
 
 const splitDays = id => SPLITS.find(s => s.id === id).days.map(([name, intensity, groups]) => ({ name, intensity, groups: [...groups] }));
 
-// 2× pro Woche bei einer Vorlage mit Paaren: nur die erste Hälfte der Tage, ohne „A“ bzw. „schwer“ im Namen
+// 2× pro Woche bei einer Vorlage mit Paaren: nur die erste Hälfte der Tage, ohne „A“ bzw. den Wdh.-Bereich im Namen
 const halfDays = id => splitDays(id).slice(0, SPLITS.find(s => s.id === id).days.length / 2)
-  .map(d => ({ ...d, name: d.name.replace(/ (A|schwer)$/, '') }));
+  .map(d => ({ ...d, name: d.name.replace(INT_NAME_RE, '').replace(/ A$/, '') }));
+
+// Wiederholungsbereich im Tagesnamen (früher „schwer“/„leicht“, das klang nach mehr oder weniger Anstrengung)
+const INT_NAME = { heavy: 'niedrige Wdh.', light: 'hohe Wdh.' };
+const INT_NAME_RE = /\s*(–\s*(niedrige|hohe) Wdh\.|\b(schwer|leicht)\b)/i;
+const INT_LABEL = { heavy: 'niedriger Wdh.-Bereich', light: 'hoher Wdh.-Bereich' };
 const halfNames = id => halfDays(id).map(d => d.name);
 
 // Muskelgruppen eines vorhandenen Trainingstags (neue Tage haben groups, ältere ggf. nur Übungen)
@@ -377,9 +382,9 @@ function syncGroups() {
 
 // Trainingstage aus dem Entwurf: Übungen der Muskelgruppen des Tages, sortiert Grund → Normal → Assistenz
 // wiz.swaps[Tag] = { ursprüngliche Übung (nameKey) -> Ersatz }: in der Vorschau nur an diesem Tag ausgetauscht
-// Schwer/leicht im fertigen Plan (Frage am Ende, wiz.intMode): 'alt' = abwechselnd, 'heavy' / 'light' = alle Tage gleich.
-// Abwechselnd: Vorlagen mit schweren und leichten Tagen behalten ihre Einteilung; sonst wechseln sich Tage mit
-// gemeinsamen Muskelgruppen ab (schwer, leicht, schwer …).
+// Wdh.-Bereich im fertigen Plan (Frage am Ende, wiz.intMode): 'alt' = abwechselnd, 'heavy' (niedrige Wdh.) /
+// 'light' (hohe Wdh.) = alle Tage gleich. Abwechselnd: Vorlagen mit beiden Bereichen behalten ihre Einteilung; sonst
+// wechseln sich Tage mit gemeinsamen Muskelgruppen ab (niedrig, hoch, niedrig …).
 function wizAltIntensities() {
   const tpl = wiz.cat !== 'custom' ? wiz.days.map(d => d.intensity) : null;
   if (tpl && tpl.includes('heavy') && tpl.includes('light')) return tpl;
@@ -396,13 +401,14 @@ const wizAltPossible = () => { const a = wizAltIntensities(); return a.includes(
 const wizIntMode = () => wiz.intMode && (wiz.intMode !== 'alt' || wizAltPossible()) ? wiz.intMode : wizAltPossible() ? 'alt' : 'heavy';
 const wizDayIntensities = () => wizIntMode() === 'alt' ? wizAltIntensities() : wiz.days.map(() => wizIntMode());
 
-// Tagesnamen passend dazu: „schwer“/„leicht“ im Namen anpassen; alle gleich -> Wort weglassen, doppelte Namen A, B …
+// Tagesnamen passend dazu: Wdh.-Bereich im Namen anpassen bzw. anhängen; alle gleich -> weglassen, doppelte Namen A, B …
 function wizDayNames() {
   const ints = wizDayIntensities();
   const same = wizIntMode() !== 'alt';
   const names = wiz.days.map((d, i) => {
     const n = d.name.trim() || 'Trainingstag';
-    return same ? n.replace(/\s*\b(schwer|leicht)\b/i, '').trim() || n : n.replace(/\b(schwer|leicht)\b/i, ints[i] === 'heavy' ? 'schwer' : 'leicht');
+    if (same) return n.replace(INT_NAME_RE, '').trim() || n;
+    return INT_NAME_RE.test(n) ? n.replace(INT_NAME_RE, ` – ${INT_NAME[ints[i]]}`) : n;
   });
   if (!same) return names;
   const count = {}, seen = {};
@@ -672,8 +678,8 @@ function renderWizFreq() {
         <strong>Was ist anders?</strong> Es sind zwei eigenständige Trainingstage:
         <ul class="int-list"><li><strong>andere Übungen möglich:</strong> Am zweiten Tag kannst du Übungen austauschen – z. B. am ersten Bankdrücken mit
           der Langhantel, am zweiten Schrägbankdrücken mit Kurzhanteln (in der Übungsvorschau mit „⇄ Ersetzen“ oder später im Plan)</li>
-        <li><strong>schwer und leicht:</strong> Am Ende kannst du festlegen, dass ein Tag schwer (weniger Wdh., mehr Gewicht) und der andere
-          leicht ist (mehr Wdh., weniger Gewicht)</li>
+        <li><strong>Wiederholungsbereich:</strong> Am Ende kannst du festlegen, dass ein Tag im niedrigen Wdh.-Bereich (weniger Wdh., mehr
+          Gewicht) und der andere im hohen Wdh.-Bereich trainiert wird (mehr Wdh., weniger Gewicht)</li>
         <li><strong>eigener Verlauf:</strong> Die App merkt sich für jeden Tag getrennt, was du geschafft hast, und steigert jeden Tag für sich</li></ul>`) +
     opt(2, `Unkompliziert – ${half.length} Tag${half.length === 1 ? '' : 'e'}, je 2× pro Woche`,
       `${half.join(' · ')}<br>Es gibt nur halb so viele Trainingstage, jeder kommt <strong>2× pro Woche</strong> dran – beide Male mit denselben
@@ -711,8 +717,8 @@ function renderWizDays() {
   const freq = wiz.perWeek > 1 ? ' Jeder Tag wird 2× pro Woche trainiert.' : '';
   return wizCard('📋', custom ? 'Deine Trainingstage' : 'Passen die Trainingstage?',
     (custom
-      ? 'Tippe vorhandene Tage an oder erstelle neue. Für jeden Tag legst du fest, welche Muskelgruppen trainiert werden. Ob die Tage schwer oder leicht sind, fragt die App am Ende, wenn dein Plan fertig ist.'
-      : 'So sieht dein Plan aus. Du kannst Namen und Muskelgruppen jedes Tages ändern – oder einfach weiter. Ob die Tage schwer oder leicht sind, fragt die App am Ende, wenn dein Plan fertig ist.') + freq,
+      ? 'Tippe vorhandene Tage an oder erstelle neue. Für jeden Tag legst du fest, welche Muskelgruppen trainiert werden. In welchem Wiederholungsbereich die Tage trainiert werden, fragt die App am Ende, wenn dein Plan fertig ist.'
+      : 'So sieht dein Plan aus. Du kannst Namen und Muskelgruppen jedes Tages ändern – oder einfach weiter. In welchem Wiederholungsbereich die Tage trainiert werden, fragt die App am Ende, wenn dein Plan fertig ist.') + freq,
     body, true, days);
 }
 
@@ -724,7 +730,7 @@ function renderWizBasics() {
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>`);
 }
 
-// Am Ende (Plan ist fertig): schwere und leichte Tage abwechseln oder alle Tage gleich?
+// Am Ende (Plan ist fertig): niedrigen und hohen Wdh.-Bereich abwechseln oder alle Tage gleich?
 function renderWizInt() {
   const mode = wizIntMode();
   const alt = wizAltPossible();
@@ -734,40 +740,39 @@ function renderWizInt() {
   const opt = (m, title, body, disabled = false) => `<button class="split-opt freq-opt int-opt ${mode === m ? 'on' : ''}" data-action="wiz-int" data-m="${m}" ${disabled ? 'disabled' : ''}>
       <b>${title}</b><small>${body}</small></button>`;
   const altDays = wizAltIntensities();
-  const pattern = wiz.days.map((d, i) => `${esc(d.name.replace(/\s*\b(schwer|leicht)\b/i, '') || 'Tag ' + (i + 1))}: <b>${altDays[i] === 'heavy' ? 'schwer' : 'leicht'}</b>`).join(' · ');
+  const pattern = wiz.days.map((d, i) => `${esc(d.name.replace(INT_NAME_RE, '').trim() || 'Tag ' + (i + 1))}: <b>${INT_NAME[altDays[i]]}</b>`).join(' · ');
   return `<div class="card wiz-q">
-      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">⚖️</span><h2>Schwere und leichte Tage abwechseln?</h2></div>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">⚖️</span><h2>Niedrige und hohe Wiederholungen abwechseln?</h2></div>
       <p class="hint wiz-q-explain">Dein Plan ist fertig – jetzt geht es darum, in welchem <b>Wiederholungsbereich</b> du trainierst.
-        An <b>schweren</b> Tagen nimmst du mehr Gewicht für weniger Wiederholungen (${reps('heavy')}), an <b>leichten</b> Tagen
-        weniger Gewicht für mehr Wiederholungen (${reps('light')}). Sätze und Wiederholungen im Tank sind an beiden Tagen gleich –
-        es ändert sich nur, wie schwer und wie lang ein Satz ist. Beides baut Muskeln auf, solange du nah genug ans Muskelversagen gehst.</p>
-      ${opt('alt', `Abwechselnd schwer und leicht${alt ? ' (empfohlen)' : ''}`, alt
-        ? `Muskelgruppen, die mehrmals pro Woche dran sind, bekommen einmal einen schweren und einmal einen leichten Tag.
+        Im <b>niedrigen Wdh.-Bereich</b> nimmst du mehr Gewicht für weniger Wiederholungen (${reps('heavy')}), im <b>hohen
+        Wdh.-Bereich</b> weniger Gewicht für mehr Wiederholungen (${reps('light')}). <b>Intensiv sind beide Tage:</b> Sätze und
+        Wiederholungen im Tank sind in beiden Bereichen dieselben, du gehst also jedes Mal nah ans Muskelversagen. Die Belastung ist
+        aber eine andere – mehr Gewicht und kürzere Sätze auf der einen Seite, mehr Brennen im Muskel und längere Sätze auf der
+        anderen. Beides baut Muskeln auf.</p>
+      ${opt('alt', `Abwechselnd niedrige und hohe Wdh.${alt ? ' (empfohlen)' : ''}`, alt
+        ? `Muskelgruppen, die mehrmals pro Woche dran sind, trainierst du einmal im niedrigen und einmal im hohen Wdh.-Bereich.
           <span class="int-days">${pattern}</span>
-          <b>Vorteile:</b>${list(['ideal, wenn du gerne schwere Gewichte bewegst und näher an deiner Maximalkraft arbeiten möchtest – ohne dass jedes Training so belastend ist',
-            'Gelenke, Sehnen und Nervensystem erholen sich besser, weil nicht jedes Training mit schweren Gewichten läuft',
-            'weniger Verletzungsrisiko durch geringere Dauerbelastung',
-            'mehr Abwechslung – die schweren Tage fühlen sich frischer an'])}
+          <b>Vorteile:</b>${list(['du trainierst beide Bereiche: mit mehr Gewicht für die Kraft und mit mehr Wiederholungen für die Ausdauer im Muskel',
+            'ideal, wenn du gerne mit schweren Gewichten arbeitest, aber nicht bei jedem Training',
+            'mehr Abwechslung – Gewichte und Wiederholungen wechseln von Tag zu Tag'])}
           <b>Nachteile:</b>${list(['du arbeitest pro Übung mit zwei verschiedenen Gewichten (die App rechnet sie dir aus)',
-            'leichte Tage sind auf andere Art anstrengend: mehr Brennen im Muskel, mehr Puste, Sätze dauern länger',
+            'Tage mit hohen Wdh. fühlen sich anders an: mehr Brennen im Muskel, mehr Puste, Sätze dauern länger',
             'wirkt nur bei Muskelgruppen, die mindestens 2× pro Woche trainiert werden'])}`
         : 'Geht bei deinem Plan nicht: Jede Muskelgruppe ist nur an einem Tag pro Woche dran. Abwechseln lohnt sich erst, wenn eine Muskelgruppe mehrmals pro Woche trainiert wird.', !alt)}
-      ${opt('heavy', 'Alle Tage schwer', `${reps('heavy')}
+      ${opt('heavy', 'Alle Tage niedrige Wdh.', `${reps('heavy')}
         <b>Vorteile:</b>${list(['größter Fokus auf Kraft – besonders bei den Grundübungen',
           'kürzere Sätze, weniger Brennen und Puste',
           'ein einziger Gewichtsbereich pro Übung – einfach zu merken'])}
-        <b>Nachteile:</b>${list(['höhere Belastung für Gelenke, Sehnen und Nervensystem – Ermüdung sammelt sich schneller, der Deload wird wichtiger',
-          'höheres Verletzungsrisiko bei unsauberer Technik',
-          'für Neulinge, Wiedereinsteiger und Ältere eher weniger geeignet',
+        <b>Nachteile:</b>${list(['bei wenigen Wiederholungen mit viel Gewicht kommt es besonders auf saubere Technik an – für Neulinge und Wiedereinsteiger eher weniger geeignet',
           'weniger Abwechslung'])}`)}
-      ${opt('light', 'Alle Tage leicht', `${reps('light')}
-        <b>Vorteile:</b>${list(['gelenk- und sehnenschonend, weil weniger Gewicht bewegt wird',
-          'ideal, um die Technik zu lernen – gut für Neulinge, Ältere und nach Verletzungen',
-          'Muskelaufbau klappt genauso gut, solange du nah ans Muskelversagen gehst'])}
+      ${opt('light', 'Alle Tage hohe Wdh.', `${reps('light')}
+        <b>Vorteile:</b>${list(['ideal, um die Technik zu lernen – gut für Neulinge und Wiedereinsteiger',
+          'Muskelaufbau klappt genauso gut, solange du nah ans Muskelversagen gehst',
+          'ein einziger Gewichtsbereich pro Übung – einfach zu merken'])}
         <b>Nachteile:</b>${list(['die Maximalkraft steigt langsamer',
           'Sätze dauern länger, mehr Brennen und Puste – das Training ist etwas zeitaufwendiger',
           'bei sehr vielen Wiederholungen ist schwerer einzuschätzen, wie viele noch im Tank sind'])}`)}
-      <p class="hint">Lässt sich später für jeden Trainingstag einzeln im Plan-Reiter ändern (Intensität: Schwer / Leicht).</p>
+      <p class="hint">Lässt sich später für jeden Trainingstag einzeln im Plan-Reiter ändern (Wdh.-Bereich: Niedrig / Hoch).</p>
     </div>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="preview">Zurück</button>
       <button class="btn primary" data-action="wiz-step" data-to="deloadq">Weiter</button></div>`;
@@ -1003,7 +1008,7 @@ function renderWizard() {
   return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
     <div class="row"><button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>
     <button class="btn primary" data-action="wiz-step" data-to="intq">Weiter</button></div>
-    <p class="hint">Zum Schluss noch drei kurze Fragen: schwere/leichte Tage, Deload und Steigerung.</p>`;
+    <p class="hint">Zum Schluss noch drei kurze Fragen: Wiederholungsbereich, Deload und Steigerung.</p>`;
 }
 
 /* --- Aktionen & Felder --- */

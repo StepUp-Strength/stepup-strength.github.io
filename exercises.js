@@ -267,7 +267,7 @@ const EXERCISES = EXERCISE_LIST.map(([name]) => name);
 const EXERCISE_KINDS = new Map(EXERCISE_LIST.map(([name, kind]) => [name.trim().toLowerCase(), kind]));
 const EXERCISE_GROUPS = new Map(EXERCISE_LIST.map(([name, , group]) => [name.trim().toLowerCase(), group]));
 
-// Standard-Plan: 2 × Oberkörper, 2 × Unterkörper (schwer/leicht mit denselben Übungen)
+// Standard-Plan: 2 × Oberkörper, 2 × Unterkörper (niedrige/hohe Wdh. mit denselben Übungen)
 const TEMPLATE_UPPER = [
   'Bankdrücken Flachbank (Langhantel)',
   'Latziehen breit',
@@ -292,8 +292,8 @@ const TEMPLATE_LOWER = [
   'Abduktoren Maschine',
 ];
 const TEMPLATE_DAYS = [
-  { name: 'Oberkörper schwer', type: 'upper-heavy', exercises: TEMPLATE_UPPER },
-  { name: 'Unterkörper schwer', type: 'lower-heavy', exercises: TEMPLATE_LOWER },
-  { name: 'Oberkörper leicht', type: 'upper-light', exercises: TEMPLATE_UPPER },
-  { name: 'Unterkörper leicht', type: 'lower-light', exercises: TEMPLATE_LOWER },
+  { name: 'Oberkörper – niedrige Wdh.', type: 'upper-heavy', exercises: TEMPLATE_UPPER },
+  { name: 'Unterkörper – niedrige Wdh.', type: 'lower-heavy', exercises: TEMPLATE_LOWER },
+  { name: 'Oberkörper – hohe Wdh.', type: 'upper-light', exercises: TEMPLATE_UPPER },
+  { name: 'Unterkörper – hohe Wdh.', type: 'lower-light', exercises: TEMPLATE_LOWER },
 ];
