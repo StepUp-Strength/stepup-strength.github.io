@@ -97,6 +97,14 @@ function upgradeData(d) {
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.foodLog)) d.foodLog = [];       // Ernährungstagebuch (food.js)
   if (!d.foods || typeof d.foods !== 'object' || Array.isArray(d.foods)) d.foods = {};  // gemerkte Lebensmittel
+  if (!Array.isArray(d.foodMeals)) d.foodMeals = [];  // gespeicherte Mahlzeiten (Schnellauswahl)
+  if (!d.foodClosed || typeof d.foodClosed !== 'object') {
+    // abgeschlossene Tagebuch-Tage; beim Einführen gelten alle bisherigen Tage vor heute als abgeschlossen
+    d.foodClosed = {};
+    const today = new Date().toLocaleDateString('sv-SE');
+    for (const e of d.foodLog) if (e.date < today) d.foodClosed[e.date] = true;
+  }
+  if (d.mcal && !Array.isArray(d.mcal.starts)) d.mcal.starts = [];  // Zykluskalender (menstrual.js)
   if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
   if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: Schlüssel aus PROFILE_COLORS } – beim ersten Öffnen gefragt
   // Farbe wird einmal nach dem Geschlecht vorbelegt (früher „Passend“ = color null) und folgt ihm danach nicht mehr
@@ -1357,6 +1365,17 @@ function proposeSet(en, i, v) {
     const cap = { weight: f.weight, reps: f.reps };
     if (cap.reps != null && (!p || lighterSet(cap, p))) { p = cap; rule = 'week'; }
   }
+  // Training an die Diät angepasst: kein höheres Gewicht als beim letzten Mal (Vorwoche, sonst letzter Zyklus) –
+  // stattdessen höchstens 1 Wdh. mehr, soweit es das Tank-Ziel hergibt (User-Regel 2026-11-02)
+  if (t.noLoadUp && p && p.weight != null && rule !== 'brake') {
+    const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v), cmpV = ofVariant(en.compare && en.compare.sets, v);
+    const ref = prevV.length ? refAt(prevV, k) : cmpV.length ? refAt(cmpV, k) : null;
+    if (ref && ref.weight != null && ref.reps != null && p.weight > ref.weight) {
+      const cap = ref.reps + (ref.rir != null ? ref.rir : t.rir);
+      p = { weight: ref.weight, reps: Math.max(ref.reps, Math.min(ref.reps + 1, Math.floor(cap - t.rir + 1e-9))) };
+      rule = 'diet';
+    }
+  }
   if (!p) {
     const b = en.base[Math.min(i, en.base.length - 1)];
     p = { weight: parseNum(b.weight), reps: parseNum(b.reps) };
@@ -1714,6 +1733,7 @@ function go(view, params = {}) {
 }
 
 function render() {
+  if (typeof nutSync === 'function') nutSync();  // Ernährung: Erhaltungswoche im Deload, Minicut-Abschnitte (nutrition.js)
   const v = views[current.view];
   $title.textContent = typeof v.title === 'function' ? v.title(current.params) : v.title;
   $back.hidden = !v.back;
@@ -2023,6 +2043,8 @@ function renderTraining() {
           ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden – Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
           : en.rule === 'week'
             ? 'Heute: begrenzt durch das 1. Training dieser Woche'
+          : en.rule === 'diet'
+            ? 'Diät: Gewicht wie zuletzt – höchstens 1 Wdh. mehr, dafür näher am Muskelversagen'
             : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
       const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
       const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.sets }];
@@ -2914,7 +2936,7 @@ const readinessText = r => {
 };
 
 function renderData() {
-  return appearanceCard() + profileCard() + `<div class="card">
+  return appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -3014,6 +3036,7 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   const exercises = day.exercises.filter(e => e.name.trim());
   if (!exercises.length) return;
 
+  if (typeof nutSync === 'function') nutSync();  // z. B. Minicut vorbei -> Deload beginnt (nutrition.js)
   const ci = trainingRound(id);
   const own = ownPlan();
   skipRoundFor = null;
@@ -3069,6 +3092,7 @@ function draftEntries(day) {
     const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw, adapt);
     const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) };
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
+    if (adapt) target.noLoadUp = true;  // Diät/Minicut angepasst: Gewicht nicht steigern, höchstens 1 Wdh. mehr
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
     setupEntry(en, target, () => ex.variant);
     return en;
@@ -3369,7 +3393,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4087,7 +4111,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, complaints: [], hintsDismissed: {}, cycleShift: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);

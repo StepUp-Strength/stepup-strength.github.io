@@ -1990,3 +1990,68 @@ nav button.active { font-weight: 700; }
 .scan-msg { position: absolute; top: calc(34% - 54px); left: 0; right: 0; margin: 0; color: #fff; font-size: 18px; font-weight: 650; text-align: center; }
 .scan-btns { display: flex; gap: 10px; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); background: #000; }
 .scan-btns .btn { flex: 1; min-height: 54px; margin: 0; background: #26272e; color: #fff; box-shadow: none; font-size: 17px; text-align: center; }
+
+/* Tagesziel selbst ändern */
+.nut-kcal-row { display: flex; align-items: center; gap: 10px; }
+.nut-kcal-row .nut-kcal { flex: 1; }
+.card .btn.nut-kcal-btn { width: auto; min-height: 42px; margin: 0; padding: 8px 14px; background: var(--accent-soft); color: var(--accent-text); font-size: 16px; white-space: nowrap; }
+.nut-kcal-editor { margin: 12px 0 4px; padding: 12px; border-radius: 16px; background: var(--fill); }
+.nut-kcal-editor .row { margin-top: 0; }
+.nut-kcal-editor .row > span { flex: 1; font-size: 17px; font-weight: 600; }
+.nut-kcal-editor .inp { background: var(--card); }
+.nut-kcal-editor .variants { margin: 10px 0 4px; }
+.nut-kcal-editor .vchip { min-height: 42px; background: var(--card); font-size: 16px; }
+.nut-kcal-editor .row .btn { min-height: 48px; margin: 4px 0 0; font-size: 16px; }
+.nut-kcal-editor .row .btn:not(.primary) { background: var(--card); }
+.card .btn.nut-kcal-reset { min-height: 44px; margin: 10px 0 0; font-size: 15px; text-align: center; }
+
+/* Ernährungs-Hinweise aus: neutrale Balken; Lücken nachtragen */
+.nut-ib.neutral .nut-ib-bar div { background: var(--accent); }
+.nut-hist rect.neutral { fill: var(--accent); opacity: .75; }
+.nut-gaps { margin: 4px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.nut-gaps .btn { min-height: 48px; margin: 6px 0 0; font-size: 16px; text-align: center; }
+.nut-hints-card .seg { margin: 4px 0 10px; }
+
+/* Tagebuch: Tag abschließen, gespeicherte Mahlzeiten */
+.food-close p, .food-closed p, .food-opencard p { margin: 0 0 10px; }
+.food-close .btn, .food-opencard .btn { min-height: 50px; margin-bottom: 8px; font-size: 16.5px; text-align: center; }
+.food-closed { display: flex; align-items: center; gap: 10px; box-shadow: inset 0 0 0 2px var(--success), var(--shadow); }
+.food-closed p { flex: 1; margin: 0; }
+.card .btn.food-reopen, .food-closed .btn { width: auto; min-height: 44px; margin: 0; padding: 8px 14px; font-size: 15px; }
+.food-opencard { box-shadow: inset 0 0 0 2px var(--warn), var(--shadow); }
+.food-miss { padding: 8px 12px; border-radius: 12px; background: var(--warn-soft); color: var(--warn-text); font-size: 15.5px; }
+.food-fill { background: linear-gradient(var(--fill), var(--fill)), var(--card); }
+.food-fill p { margin: 0 4px 10px; }
+.food-savedmeal { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.food-savedmeal .btn.food-hit { flex: 1; margin: 0; padding-right: 12px; }
+.food-savedmeal .icon-btn { min-width: 40px; height: 44px; margin: 0; padding: 0; font-size: 16px; }
+
+/* Zykluskalender (menstrual.js) */
+.mc-card p { margin: 0 0 8px; }
+.mc-card .row .btn { min-height: 46px; font-size: 15.5px; }
+.mc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.mc-head b { font-size: 18px; text-transform: capitalize; }
+.mc-head .icon-btn { min-width: 44px; height: 44px; margin: 0; font-size: 24px; }
+.mc-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.mc-wd span { font-size: 12px; font-weight: 700; text-align: center; color: var(--muted); }
+.mc-day { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 10px; background: var(--fill); color: var(--text);
+  font: inherit; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mc-day.mc-mens { background: #e5484d; color: #fff; }
+.mc-day.mc-mens.pred { background: transparent; box-shadow: inset 0 0 0 2px #e5484d; color: #e5484d; }
+.mc-day.mc-foll { background: rgba(23, 163, 74, .14); }
+.mc-day.mc-ovu { background: rgba(124, 92, 255, .28); }
+.mc-day.mc-lut { background: rgba(242, 163, 19, .18); }
+.mc-day.mc-late { background: var(--fill); color: var(--muted); }
+.mc-day.pred:not(.mc-mens) { opacity: .6; }
+.mc-day.start { font-weight: 800; box-shadow: inset 0 0 0 2px var(--text); }
+.mc-day.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mc-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+.mc-legend span::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 5px; border-radius: 4px; vertical-align: -1px; background: var(--fill); }
+.mc-legend .mc-mens::before { background: #e5484d; }
+.mc-legend .mc-mens.pred::before { background: transparent; box-shadow: inset 0 0 0 2px #e5484d; }
+.mc-legend .mc-foll::before { background: rgba(23, 163, 74, .3); }
+.mc-legend .mc-ovu::before { background: rgba(124, 92, 255, .45); }
+.mc-legend .mc-lut::before { background: rgba(242, 163, 19, .35); }
+.mc-cal .btn.primary { margin: 8px 0 0; }
+.mc-help p { font-size: 16px; line-height: 1.5; }
+.mc-list .bw-row span { flex: 1; }

@@ -3,7 +3,10 @@
    (Nährwerte werden pro Eintrag mitgespeichert – spätere Änderungen am Lebensmittel ändern alte Tage nicht).
    data.foods = { key: Lebensmittel } – gemerkte Lebensmittel (zuletzt gegessen, Favoriten, eigene, aus Open Food Facts);
    bei Lebensmitteln der Grundliste nur { fav, last }.
-   Die Tagessumme landet als data.intake-Eintrag mit src 'food' (Ist ↔ Soll, 14 Tage, gemessener Bedarf). */
+   Die Tagessumme landet als data.intake-Eintrag mit src 'food' (Ist ↔ Soll, 14 Tage, gemessener Bedarf).
+   data.foodClosed = { Datum: true } – abgeschlossene Tage (nur sie zählen für den gemessenen Bedarf);
+   „Rest auffüllen“ legt einen Eintrag mit key 'fill' (meal 'f') an.
+   data.foodMeals = [{ id, name, items: [{ key, name, brand, g, per }] }] – gespeicherte Mahlzeiten (Schnellauswahl). */
 
 // Grundliste: [Name, kcal, Eiweiß, Kohlenhydrate, Fett] je 100 g, optional [Portion, Gramm]. Durchschnittswerte.
 const FOOD_BASE = [
@@ -315,6 +318,100 @@ function foodSync(date) {
   }
 }
 
+const FOOD_FILL = 'fill';  // Eintrag „Nicht erfasst (aufgefüllt)“
+const foodClosed = date => !!data.foodClosed[date];
+
+// Änderung an einem abgeschlossenen Tag: wieder öffnen (Auffüllung passt dann nicht mehr) – true, wenn er zu war
+function foodReopen(date) {
+  if (!foodClosed(date)) return false;
+  delete data.foodClosed[date];
+  data.foodLog = data.foodLog.filter(e => !(e.date === date && e.key === FOOD_FILL));
+  return true;
+}
+const foodReopenToast = () => toast('Tag wieder geöffnet – schließ ihn am Ende neu ab');
+
+// Rest bis zum Tagesziel (null ohne Ziel oder wenn nichts fehlt)
+function foodRest(date) {
+  const c = foodGoal();
+  if (!c) return null;
+  const t = foodTotals(foodOn(date).filter(e => e.key !== FOOD_FILL));
+  const r = { kcal: Math.round(c.kcal - t.kcal), p: Math.max(0, Math.round(c.protein - t.p)), c: Math.max(0, Math.round(c.carbs - t.c)), f: Math.max(0, Math.round(c.fat - t.f)) };
+  return r.kcal >= 50 ? r : null;
+}
+
+// Mahlzeiten, die an diesem Tag leer sind, aber sonst fast immer eingetragen werden (letzte 14 Tage mit Einträgen)
+function foodUsualMissing(date) {
+  const days = [];
+  for (let i = 1; i <= 14; i++) { const d = addDaysISO(date, -i); const l = foodOn(d); if (l.length) days.push(l); }
+  if (days.length < 5) return [];
+  const today = foodOn(date);
+  return Object.keys(MEALS).filter(k => !today.some(e => e.meal === k)
+    && days.filter(l => l.some(e => e.meal === k)).length / days.length >= 0.8).map(k => MEALS[k][1]);
+}
+
+// Tag abschließen (fill: Rest mit dem Tagesziel auffüllen)
+function foodCloseDay(date, fill) {
+  foodReopen(date);
+  const r = fill ? foodRest(date) : null;
+  if (r) data.foodLog.push({ id: uid(), date, meal: 'f', key: FOOD_FILL, name: 'Nicht erfasst (aufgefüllt)', brand: '', g: 100, per: [r.kcal, r.p, r.c, r.f] });
+  data.foodClosed[date] = true;
+  foodSync(date);
+}
+
+// vergangene Tage (letzte 7) mit Einträgen, die noch nicht abgeschlossen sind – neueste zuerst
+function foodOpenDays() {
+  const out = [];
+  for (let i = 1; i <= 7; i++) { const d = addDaysISO(todayISO(), -i); if (!foodClosed(d) && foodOn(d).length) out.push(d); }
+  return out;
+}
+
+// Karte „Tag noch nicht abgeschlossen“ (Ernährungs-Reiter und Tagebuch)
+function foodOpenCard() {
+  const open = foodOpenDays();
+  if (!open.length) return '';
+  const d = open[0];
+  const label = d === addDaysISO(todayISO(), -1) ? 'Gestern' : new Date(d + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'numeric' });
+  const t = foodTotals(foodOn(d));
+  const rest = foodRest(d);
+  const miss = foodUsualMissing(d);
+  return `<div class="card food-opencard">
+      <p><b>📋 ${label} ist noch nicht abgeschlossen</b></p>
+      <p class="hint nut-small">Eingetragen: ${nutKcal(t.kcal)} kcal.${miss.length ? ` ${miss.join(' und ')} ${miss.length > 1 ? 'sind' : 'ist'} leer – sonst trägst du ${miss.length > 1 ? 'sie' : 'es'} fast immer ein.` : ''}
+        Erst abgeschlossene Tage zählen für den gemessenen Bedarf.${open.length > 1 ? ` Noch ${open.length - 1} weitere${open.length > 2 ? '' : 'r'} Tag${open.length > 2 ? 'e' : ''} offen.` : ''}</p>
+      <button class="btn primary" data-action="food-close" data-date="${d}" data-fill="0">✔ Alles eingetragen</button>
+      ${rest ? `<button class="btn" data-action="food-close" data-date="${d}" data-fill="1">➕ Rest mit Tagesziel auffüllen (+${nutKcal(rest.kcal)} kcal)</button>` : ''}
+      <button class="btn center" data-action="food-open" data-date="${d}">Tag ansehen</button>
+    </div>`;
+}
+
+let foodCloseAsk = null;  // Datum, für das die Frage „Alles eingetragen?“ offen ist
+
+function foodCloseHtml(date, list) {
+  const real = list.filter(e => e.key !== FOOD_FILL);
+  if (foodClosed(date)) {
+    const fill = list.find(e => e.key === FOOD_FILL);
+    return `<div class="card food-closed">
+        <p><b>✔ Tag abgeschlossen</b>${fill ? ` · Rest aufgefüllt (${nutKcal(fill.per[0])} kcal)` : ''}</p>
+        <button class="btn" data-action="food-reopen">Wieder öffnen</button></div>`;
+  }
+  if (foodCloseAsk !== date) {
+    return `<button class="btn primary" data-action="food-close-ask">✔ Tag abschließen</button>`;
+  }
+  const rest = foodRest(date);
+  const miss = foodUsualMissing(date);
+  const c = foodGoal();
+  return `<div class="card food-close">
+      <p><b>Hast du ${date === todayISO() ? 'heute' : 'an diesem Tag'} alles eingetragen?</b></p>
+      ${miss.length ? `<p class="food-miss">⚠️ ${miss.join(' und ')} ${miss.length > 1 ? 'sind' : 'ist'} leer – sonst trägst du ${miss.length > 1 ? 'sie' : 'es'} fast immer ein.</p>` : ''}
+      <p class="hint nut-small">Eingetragen: ${nutKcal(foodTotals(real).kcal)} kcal${c ? ` · Tagesziel ${nutKcal(c.kcal)} kcal` : ''}.</p>
+      ${real.length ? '<button class="btn primary" data-action="food-close" data-fill="0">✔ Ja, alles eingetragen</button>' : ''}
+      ${rest ? `<button class="btn" data-action="food-close" data-fill="1">➕ Rest mit Tagesziel auffüllen (+${nutKcal(rest.kcal)} kcal)</button>
+        <p class="hint nut-small">Für Tage, an denen du nicht alles aufgeschrieben hast: Die App ergänzt, was bis zu deinem Tagesziel fehlt
+          (auch Eiweiß, Kohlenhydrate und Fett). So bleibt der gemessene Bedarf genau, statt durch fehlende Einträge zu niedrig zu werden.</p>` : ''}
+      <button class="btn center" data-action="food-close-cancel">Abbrechen</button>
+    </div>`;
+}
+
 const foodNum = v => fmtNum(round1(v));
 const foodKcal = v => deNum(Math.round(v || 0));
 function foodDayLabel(date) {
@@ -354,7 +451,8 @@ function renderFood(p) {
       <b>${foodDayLabel(date)}</b>
       <button class="icon-btn" data-action="food-day" data-d="1" ${date >= todayISO() ? 'disabled' : ''} aria-label="Nächster Tag">›</button>
     </div>
-    <div class="card nut-intake">${foodSumHtml(t, foodGoal())}</div>`;
+    <div class="card nut-intake">${foodSumHtml(t, foodGoal())}</div>
+    ${date === todayISO() ? foodOpenCard() : ''}`;
   for (const [k, [icon, label]] of Object.entries(MEALS)) {
     const items = list.filter(e => e.meal === k);
     const kcal = foodTotals(items).kcal;
@@ -369,9 +467,18 @@ function renderFood(p) {
         <div class="row">
           <button class="btn" data-action="food-add" data-meal="${k}">＋ Hinzufügen</button>
           ${!items.length && prev.length ? `<button class="btn" data-action="food-copy" data-meal="${k}">↺ Wie gestern</button>` : ''}
+          ${items.length ? `<button class="btn" data-action="food-meal-save" data-meal="${k}">💾 Speichern</button>` : ''}
         </div>
       </div>`;
   }
+  const fill = list.find(e => e.key === FOOD_FILL);
+  if (fill) {
+    const [kc, pr, ca, fa] = fill.per;
+    h += `<div class="card food-meal food-fill">
+        <div class="food-meal-head"><b>➕ Aufgefüllt bis zum Tagesziel</b><span class="hint">${nutKcal(kc)} kcal</span></div>
+        <p class="hint nut-small">Nicht erfasst – geschätzt: Eiweiß ${pr} g · Kohlenhydrate ${ca} g · Fett ${fa} g</p></div>`;
+  }
+  h += foodCloseHtml(date, list);
   return h + `<p class="hint nut-small">Die Tagessumme zählt automatisch für „Heute gegessen“, die letzten 14 Tage und den gemessenen
     Bedarf. Werte der Grundliste sind Durchschnittswerte – bei Markenprodukten ist der Barcode genauer.</p>`;
 }
@@ -398,21 +505,33 @@ function foodSearch(q) {
   return hits.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length).slice(0, 40).map(x => x[1]);
 }
 
+function foodMealRow(m) {
+  const kcal = foodTotals(m.items).kcal;
+  return `<div class="food-savedmeal">
+      <button class="btn food-hit" data-action="food-meal-add" data-id="${m.id}">
+        <span class="lib-txt">🍽️ ${esc(m.name)}<small>${m.items.length} Lebensmittel · ${nutKcal(kcal)} kcal · antippen zum Hinzufügen</small></span></button>
+      <button class="icon-btn" data-action="food-meal-rename" data-id="${m.id}" aria-label="Umbenennen">✎</button>
+      <button class="icon-btn danger" data-action="food-meal-delete" data-id="${m.id}" aria-label="Löschen">✕</button>
+    </div>`;
+}
+
 function foodResults() {
   const q = foodQuery.trim();
+  const meals = data.foodMeals.filter(m => !q || norm(m.name).includes(norm(q)));
+  const mealsHtml = meals.length ? `<p class="food-sec">🍽️ Gespeicherte Mahlzeiten</p>${meals.map(foodMealRow).join('')}` : '';
   if (!q) {
     const known = Object.keys(data.foods).map(foodGet).filter(f => f && (f.last || f.fav));
     const favs = known.filter(f => f.fav).sort((a, b) => a.name.localeCompare(b.name, 'de'));
     const recent = known.filter(f => !f.fav).sort((a, b) => b.last - a.last).slice(0, 25);
     if (!favs.length && !recent.length) {
-      return `<p class="hint">Tipp den Namen ein, z. B. „Haferflocken“ oder „Skyr“. Die App sucht zuerst in ihrer Grundliste mit
+      return mealsHtml + `<p class="hint">Tipp den Namen ein, z. B. „Haferflocken“ oder „Skyr“. Die App sucht zuerst in ihrer Grundliste mit
         über 200 Lebensmitteln, auf Wunsch auch online in Open Food Facts (viele Markenprodukte). Oder scanne den Barcode auf der Verpackung.</p>`;
     }
-    return (favs.length ? `<p class="food-sec">⭐ Favoriten</p>${favs.map(foodHit).join('')}` : '')
+    return mealsHtml + (favs.length ? `<p class="food-sec">⭐ Favoriten</p>${favs.map(foodHit).join('')}` : '')
       + (recent.length ? `<p class="food-sec">🕘 Zuletzt gegessen</p>${recent.map(foodHit).join('')}` : '');
   }
   const hits = foodSearch(q);
-  let h = hits.length ? hits.map(foodHit).join('') : `<p class="hint">„${esc(q)}“ ist nicht in der Grundliste.</p>`;
+  let h = mealsHtml + (hits.length ? hits.map(foodHit).join('') : `<p class="hint">„${esc(q)}“ ist nicht in der Grundliste.</p>`);
   const on = foodOnline && foodOnline.q === q ? foodOnline : null;
   h += '<p class="food-sec">🌐 Open Food Facts (online)</p>';
   if (!on) {
@@ -715,10 +834,11 @@ Object.assign(actions, {
   'food-copy': el => {
     const date = current.params.date || todayISO();
     const prev = foodOn(addDaysISO(date, -1)).filter(e => e.meal === el.dataset.meal);
+    const reopened = foodReopen(date);
     prev.forEach(e => data.foodLog.push({ ...e, id: uid(), date }));
     foodSync(date);
     saveData();
-    toast(`${prev.length} Lebensmittel übernommen`);
+    if (reopened) foodReopenToast(); else toast(`${prev.length} Lebensmittel übernommen`);
     render();
   },
   'food-online': () => { const q = foodQuery.trim(); if (q) foodSearchOnline(q); },
@@ -734,7 +854,8 @@ Object.assign(actions, {
     const { e, f } = foodAmtFood(p);
     const g = parseNum(foodAmt.g);
     if (g == null || g <= 0 || g > 5000) { alert('Bitte eine Menge zwischen 1 und 5.000 g eintragen.'); return; }
-    const date = p.date || todayISO();
+    const date = e ? e.date : p.date || todayISO();
+    const reopened = foodReopen(date);
     if (e) {
       Object.assign(e, { g: round1(g), meal: foodAmt.meal });
     } else {
@@ -747,16 +868,78 @@ Object.assign(actions, {
     foodAmt = null;
     foodQuery = '';
     foodOnline = null;
-    toast(e ? 'Gespeichert ✔' : `${f.name} hinzugefügt ✔`);
+    if (reopened) foodReopenToast(); else toast(e ? 'Gespeichert ✔' : `${f.name} hinzugefügt ✔`);
     go('food', { date });
   },
   'food-del': el => {
     const e = data.foodLog.find(x => x.id === el.dataset.id);
     if (!e || !confirm(`„${e.name}“ entfernen?`)) return;
+    const reopened = foodReopen(e.date);
     data.foodLog = data.foodLog.filter(x => x !== e);
     foodSync(e.date);
     saveData();
+    if (reopened) foodReopenToast();
     go('food', { date: e.date });
+  },
+  // Tag abschließen
+  'food-close-ask': () => { foodCloseAsk = current.params.date || todayISO(); render(); },
+  'food-close-cancel': () => { foodCloseAsk = null; render(); },
+  'food-close': el => {
+    const date = el.dataset.date || current.params.date || todayISO();
+    const fill = el.dataset.fill === '1';
+    foodCloseDay(date, fill);
+    foodCloseAsk = null;
+    saveData();
+    toast(fill ? 'Tag abgeschlossen – Rest aufgefüllt ✔' : 'Tag abgeschlossen ✔');
+    render();
+  },
+  'food-reopen': () => {
+    const date = current.params.date || todayISO();
+    if (!confirm('Tag wieder öffnen?' + (data.foodLog.some(e => e.date === date && e.key === FOOD_FILL) ? '\n\nDie Auffüllung bis zum Tagesziel wird dabei entfernt.' : ''))) return;
+    foodReopen(date);
+    foodSync(date);
+    saveData();
+    render();
+  },
+  // Mahlzeit speichern / aus der Schnellauswahl hinzufügen
+  'food-meal-save': el => {
+    const date = current.params.date || todayISO();
+    const k = el.dataset.meal;
+    const items = foodOn(date).filter(e => e.meal === k).map(({ key, name, brand, g, per }) => ({ key, name, brand, g, per }));
+    if (!items.length) return;
+    const name = prompt(`Name für diese Mahlzeit (${items.length} Lebensmittel):`, MEALS[k][1]);
+    if (!name || !name.trim()) return;
+    data.foodMeals.push({ id: uid(), name: name.trim(), items });
+    saveData();
+    toast(`„${name.trim()}“ gespeichert – beim Hinzufügen ganz oben`);
+  },
+  'food-meal-add': el => {
+    const m = data.foodMeals.find(x => x.id === el.dataset.id);
+    if (!m) return;
+    const date = current.params.date || todayISO(), meal = current.params.meal || 's';
+    const reopened = foodReopen(date);
+    m.items.forEach(it => data.foodLog.push({ ...it, id: uid(), date, meal }));
+    foodSync(date);
+    saveData();
+    foodQuery = '';
+    foodOnline = null;
+    if (reopened) foodReopenToast(); else toast(`${m.name} hinzugefügt ✔`);
+    go('food', { date });
+  },
+  'food-meal-rename': el => {
+    const m = data.foodMeals.find(x => x.id === el.dataset.id);
+    const name = m && prompt('Neuer Name:', m.name);
+    if (!name || !name.trim()) return;
+    m.name = name.trim();
+    saveData();
+    foodRefresh();
+  },
+  'food-meal-delete': el => {
+    const m = data.foodMeals.find(x => x.id === el.dataset.id);
+    if (!m || !confirm(`Gespeicherte Mahlzeit „${m.name}“ löschen?\n\nSchon eingetragene Tage bleiben, wie sie sind.`)) return;
+    data.foodMeals = data.foodMeals.filter(x => x !== m);
+    saveData();
+    foodRefresh();
   },
   'food-fav': () => {
     const { f } = foodAmtFood(current.params);
