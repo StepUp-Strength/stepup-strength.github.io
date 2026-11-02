@@ -95,6 +95,7 @@ function upgradeData(d) {
   if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.intake)) d.intake = [];          // gegessen pro Tag: [{ date, kcal, p, c, f, src: 'health' | 'hand' }]
+  if (!Array.isArray(d.customExercises)) d.customExercises = [];  // eigene Übungen: [{ name, kind, group, like, note }]
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
@@ -296,6 +297,9 @@ const repFactor = n => Math.max(0.5, 1 - 0.025 * (n - 10));
 
 const DUMBBELL = /kurzhantel|konzentrationscurls|arnold press|goblet/;
 const stepFor = ex => ex.step != null ? ex.step : (DUMBBELL.test(norm(ex.name)) ? 2 : 2.5);
+const STEP_OPTIONS = [1.25, 2, 2.5, 5];
+const MAX_UNKNOWN_HINT = 'Du weißt dein Max. bei 10 Wdh. nicht? Kein Problem – lass das Feld leer und taste dich mit den ersten Sätzen an ein Gewicht heran, das sich passend anfühlt. Trag ein, was du geschafft hast (Gewicht, Wdh. und Tank): Die App errechnet daraus den Wert und die weitere Steigerung.';  // wählbare Gewichtssprünge pro Übung
+const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben) – gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen.';
 
 const round2 = x => Math.round(x * 100) / 100;
 const roundTo = (w, step, fn = Math.round) => round2(fn(w / step) * step);
@@ -1627,6 +1631,8 @@ const views = {
   week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
   library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
   // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
+  libadd:   { title: p => p.name ? 'Eigene Übung bearbeiten' : 'Eigene Übung', tab: 'plan',
+    back: p => p.name ? ['libex', { name: p.name }] : ['library', {}], render: renderLibAdd },
   libex:    { title: p => p.name, tab: p => p.tab || 'plan', back: p => [p.from || 'library', p.fromParams || {}], render: renderLibEx },
   // aus der Wochenansicht geöffnet: params.week = roundKey dieser Woche
   session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
@@ -1925,11 +1931,13 @@ function renderTraining() {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
       const t = en.target;
-      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank` +
-        (t.max10 != null ? `<br><small>Max. bei 10 Wdh.: ${fmtNum(t.max10)} kg</small>` : '') + '</p>';
-      if (t.max10 == null && !last && !body) {
-        h += `<p class="first-max-hint">🆕 Erstes Mal: Wähle ein Gewicht, das sich passend anfühlt, und trag ein, was du geschafft hast –
-          Gewicht, Wdh. und Tank. Das Max. bei 10 Wdh. wird danach berechnet.</p>`;
+      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank</p>`;
+      if (!body) {
+        h += `<label class="row max-row"><span>Max. kg bei 10 Wdh.</span>
+          <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
+            data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>`;
+        if (t.max10 == null) h += `<p class="first-max-hint">${last ? '' : '🆕 Erstes Mal: '}${MAX_UNKNOWN_HINT}</p>`;
+        h += stepPicker(en, ei);
       }
     }
     if (en.weekFirst) {
@@ -2039,6 +2047,7 @@ function renderReplace(en, ei) {
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
         data-field="rep-max" data-ei="${ei}" placeholder="kg">
     </label>
+    <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
     ${t ? `<p class="hint">Übernimmt das Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank. Der Plan bleibt unverändert.</p>` : ''}
     <div class="row">
       <button class="btn" data-action="rep-cancel" data-ei="${ei}">Abbrechen</button>
@@ -2058,6 +2067,7 @@ function renderAddExercise() {
       <span>Max. kg bei 10 Wdh.</span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="rep-max" placeholder="kg">
     </label>
+    <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
     <label class="row"><span>Sätze</span>
       <select class="inp sel" id="add-sets">${[1, 2, 3, 4, 5, 6].map(n =>
         `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n}</option>`).join('')}</select>
@@ -2332,12 +2342,8 @@ function renderDay({ id }) {
           autocomplete="off" data-field="ex-max" data-i="${i}" placeholder="kg"
           value="${ex.max10 == null ? '' : fmtNum(ex.max10)}">
       </label>
-      <div class="row">
-        <span>Steigerung${ex.step == null ? ' <small class="hint">(auto)</small>' : ''}</span>
-        <div class="stepper">
-          ${[2, 2.5].map(v => `<button class="toggle ${stepFor(ex) === v ? 'on' : ''}"
-            data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
-        </div>
+      <div class="variants plan"><span>Steigerung${ex.step == null ? ' <small class="hint">(auto)</small>' : ''}</span>${STEP_OPTIONS.map(v =>
+        `<button class="vchip ${stepFor(ex) === v ? 'on' : ''}" data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
       </div>`}
       <div class="row">
         <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
@@ -2348,7 +2354,7 @@ function renderDay({ id }) {
   });
   h += `<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint">Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – antippen zum Ändern.</p>
+    <p class="hint">Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 kg. ${STEP_HINT}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
   return h;
@@ -2413,7 +2419,7 @@ const libOpenGroups = new Set();  // aufgeklappte Muskelgruppen
 function libRow(name) {
   const kind = KINDS[kindOf({ name })];
   return `<button class="btn nav lib-row" data-action="lib-open" data-name="${esc(name)}">
-    <span class="lib-thumb">${libFigure(name, false)}</span>
+    <span class="lib-thumb">${libFigure(name, false) || '<span class="lib-own" aria-hidden="true">★</span>'}</span>
     <span class="lib-txt">${esc(name)}<small>${kind}</small></span></button>`;
 }
 
@@ -2429,7 +2435,16 @@ function renderLibrary() {
       spellcheck="false" placeholder="Übung suchen, z. B. Rudern …" value="${esc(libQuery)}">
     <div id="lib-results">${libResults()}</div>
     <div id="lib-groups" ${libQuery.trim() ? 'hidden' : ''}>
-    <p class="hint">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>`;
+    <p class="hint">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>
+    <button class="btn outline lib-add-btn" data-action="libc-new">＋ Eigene Übung hinzufügen</button>
+    <p class="hint">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an – danach kannst du sie
+      jederzeit wieder aufrufen: im Plan, im Plan-Assistenten und beim Ersetzen oder Hinzufügen im Training.</p>`;
+  if (data.customExercises.length) {
+    const open = libOpenGroups.has('own');
+    h += `<details class="award-cat lib-group" ${open ? 'open' : ''}>
+      <summary data-action="lib-toggle" data-g="own">★ Eigene Übungen <small class="hint">(${data.customExercises.length})</small></summary>
+      ${open ? data.customExercises.map(c => libRow(c.name)).join('') : ''}</details>`;
+  }
   for (const g of Object.keys(MUSCLES)) {
     const list = EXERCISE_LIST.filter(e => e[2] === g);
     if (!list.length) continue;
@@ -2443,6 +2458,8 @@ function renderLibrary() {
 
 function renderLibEx({ name }) {
   const e = libEntry(name);
+  const c = customExercise(name);
+  if (c) return renderCustomEx(c, e);
   if (!e) return `<p class="hint">Für „${esc(name)}“ gibt es noch keine Erklärung in der Bibliothek.</p>`;
   const t = FIG_TEXT[e.pattern] || {};
   const kind = KINDS[kindOf(planExercise(name) || { name })];
@@ -2460,6 +2477,109 @@ function renderLibEx({ name }) {
     ${trained ? `<button class="btn nav" data-action="open-exercise" data-name="${esc(name)}">Deine Einträge zu dieser Übung</button>` : ''}
     ${['neuling', 'einsteiger'].includes(activePlan().level) ? coachNote()
       : '<p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>'}`;
+}
+
+/* ---------- Eigene Übungen ---------- */
+
+// data.customExercises: [{ name, kind, group, like, note }] – werden beim Start in die Übungsliste übernommen
+// (Vorschläge, Plan-Assistent, Ersetzen, Bibliothek). like = ähnliche Übung, deren Figur und Tipps gezeigt werden.
+const customKeys = new Set();
+const customExercise = name => data.customExercises.find(c => nameKey(c.name) === nameKey(name)) || null;
+const builtinExercise = name => EXERCISE_KINDS.has(nameKey(name)) && !customKeys.has(nameKey(name));
+
+function registerCustomExercises() {
+  for (const k of customKeys) {
+    for (let i = EXERCISE_LIST.length - 1; i >= 0; i--) if (nameKey(EXERCISE_LIST[i][0]) === k) EXERCISE_LIST.splice(i, 1);
+    for (let i = EXERCISES.length - 1; i >= 0; i--) if (nameKey(EXERCISES[i]) === k) EXERCISES.splice(i, 1);
+    EXERCISE_KINDS.delete(k);
+    EXERCISE_GROUPS.delete(k);
+    const lib = LIB_INDEX.get(k);
+    if (lib && lib.custom) LIB_INDEX.delete(k);
+  }
+  customKeys.clear();
+  for (const c of data.customExercises) {
+    const k = nameKey(c.name);
+    if (EXERCISE_KINDS.has(k)) continue;  // Name gibt es schon in der Liste
+    EXERCISE_LIST.push([c.name, c.kind, c.group]);
+    EXERCISES.push(c.name);
+    EXERCISE_KINDS.set(k, c.kind);
+    EXERCISE_GROUPS.set(k, c.group);
+    const like = c.like && LIB_INDEX.get(nameKey(c.like));
+    if (like && !LIB_INDEX.has(k)) LIB_INDEX.set(k, { ...like, note: c.note || '', custom: true });
+    customKeys.add(k);
+  }
+}
+
+function renderCustomEx(c, e) {
+  const t = e ? FIG_TEXT[e.pattern] || {} : {};
+  const trained = data.sessions.some(s => s.entries.some(en => nameKey(en.name) === nameKey(c.name)));
+  let h = e ? `<div class="card lib-fig">${libFigure(c.name, true)}</div>` : '';
+  h += `<div class="lib-chips"><span class="lib-chip">★ Eigene Übung</span><span class="lib-chip">${KINDS[c.kind]}</span>
+      <span class="lib-chip">${MUSCLES[c.group] || ''}</span></div>
+    ${c.note ? `<p class="lib-note">${esc(c.note)}</p>` : ''}`;
+  if (e) {
+    h += `<div class="card">
+      <h2>Ausführung</h2>
+      <p class="hint">Figur und Tipps von der ähnlichen Übung „${esc(c.like)}“.</p>
+      <ol class="lib-steps">${(t.steps || []).map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+      ${t.tips && t.tips.length ? `<h2>Darauf achten</h2><ul class="lib-tips">${t.tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  } else {
+    h += `<p class="hint">Zu dieser Übung gibt es keine Figur. Wenn du unter „Bearbeiten“ eine ähnliche Übung auswählst,
+      zeigt die Bibliothek deren Ausführung und Tipps.</p>`;
+  }
+  return h + `${trained ? `<button class="btn nav" data-action="open-exercise" data-name="${esc(c.name)}">Deine Einträge zu dieser Übung</button>` : ''}
+    <button class="btn" data-action="libc-edit" data-name="${esc(c.name)}">✎ Bearbeiten</button>
+    <button class="btn danger" data-action="libc-del" data-name="${esc(c.name)}">Eigene Übung löschen</button>`;
+}
+
+let libForm = null;  // Eingaben im Formular „Eigene Übung“
+
+function renderLibAdd(p) {
+  if (!libForm) {
+    const c = p.name && customExercise(p.name);
+    libForm = c ? { ...c, orig: c.name } : { name: '', kind: 'normal', group: '', like: '', note: '', orig: null };
+  }
+  const f = libForm;
+  const chip = (action, key, val, label) => `<button class="vchip ${f[key] === val ? 'on' : ''}" data-action="${action}" data-v="${val}">${label}</button>`;
+  const kindInfo = {
+    compound: 'große, schwere Mehrgelenkübung, meist mit Langhantel (z. B. Kniebeugen, Bankdrücken) – mit mehreren Aufwärmsätzen und 1 Wdh. mehr im Tank',
+    normal: 'die meisten Maschinen-, Kabel- und Kurzhantelübungen – 1 Aufwärmsatz, Tank wie geplant',
+    assist: 'kleine Isolationsübung (z. B. Seitheben, Curls, Waden) – ohne Aufwärmen und 1 Wdh. näher am Muskelversagen',
+  };
+  return `${p.name ? '' : `<div class="card">
+      <h2>So legst du eine eigene Übung an</h2>
+      <ol class="lib-steps">
+        <li><b>Name:</b> so, wie du die Übung wiedererkennst – z. B. „Rudermaschine Gym80 einarmig“.</li>
+        <li><b>Muskelgruppe:</b> Aus ihr bekommt die Übung ihre Sätze im Wochenvolumen deines Plans.</li>
+        <li><b>Übungsart:</b> bestimmt das Aufwärmen und wie nah du ans Muskelversagen gehst.</li>
+        <li><b>Ähnliche Übung</b> (freiwillig): Dann zeigt die Bibliothek deren Figur und Tipps zur Ausführung.</li>
+        <li><b>Notiz</b> (freiwillig): z. B. Sitzhöhe, Griff oder Einstellung am Gerät.</li>
+      </ol>
+      <p class="hint">Danach ist die Übung dauerhaft gespeichert und du kannst sie einfach immer wieder abrufen: in der Bibliothek
+        (unter „★ Eigene Übungen“ und bei ihrer Muskelgruppe), bei der Übungsauswahl im Plan und im Plan-Assistenten sowie beim
+        „⇄ Ersetzen“ und „+ Übung hinzufügen“ im Training – einfach die ersten Buchstaben eintippen, dann erscheint sie in den Vorschlägen.
+        Sie ist auch in deiner Sicherung enthalten. Steigerung und Max. bei 10 Wdh. rechnet die App wie bei jeder anderen Übung.</p>
+    </div>`}
+    <div class="card libc-form">
+      <label class="lbl" for="libc-name">Name der Übung</label>
+      <input class="inp" id="libc-name" type="text" data-field="libc-name" autocomplete="off" autocorrect="off"
+        placeholder="z. B. Rudermaschine einarmig" value="${esc(f.name)}">
+      <p class="lbl">Muskelgruppe</p>
+      <div class="variants plan">${Object.entries(MUSCLES).map(([g, label]) => chip('libc-group', 'group', g, label)).join('')}</div>
+      <p class="lbl">Übungsart</p>
+      <div class="variants plan">${Object.entries(KINDS).map(([k, label]) => chip('libc-kind', 'kind', k, label)).join('')}</div>
+      <p class="hint">${KINDS[f.kind]}: ${kindInfo[f.kind]}.</p>
+      <label class="lbl" for="libc-like">Ähnliche Übung <small class="hint">(freiwillig)</small></label>
+      <input class="inp" id="libc-like" type="text" data-field="libc-like" autocomplete="off" autocorrect="off" spellcheck="false"
+        placeholder="z. B. Rudern Kabelzug eng" value="${esc(f.like || '')}">
+      <div class="suggest" hidden></div>
+      <label class="lbl" for="libc-note">Notiz <small class="hint">(freiwillig)</small></label>
+      <textarea class="inp comment" id="libc-note" rows="2" data-field="libc-note"
+        placeholder="z. B. Sitzhöhe 4, neutraler Griff">${esc(f.note || '')}</textarea>
+    </div>
+    <button class="btn primary" data-action="libc-save">✔ Übung speichern</button>
+    <button class="btn" data-action="libc-cancel">Abbrechen</button>`;
 }
 
 // Alle Wochen (Durchläufe) zum Blättern: mit Trainings und die des aktuellen Zyklus, in zeitlicher Reihenfolge
@@ -2971,6 +3091,20 @@ function knownMax10(name) {
   return last && last.result && last.result.max10 != null ? last.result.max10 : null;
 }
 
+// Gewichtssprung der Übung im Training: kleiner Knopf, aufgeklappt die Auswahl 1,25 / 2 / 2,5 / 5 kg
+function stepPicker(en, ei) {
+  const cur = en.target.step || 2.5;
+  if (!en.stepOpen) {
+    return `<button class="step-chip" data-action="tr-step-open" data-ei="${ei}">Steigerung: <b>${fmtNum(cur)} kg</b> <span aria-hidden="true">✎</span></button>`;
+  }
+  return `<div class="step-pick">
+      <div class="variants plan"><span>Steigerung</span>${STEP_OPTIONS.map(v =>
+        `<button class="vchip ${cur === v ? 'on' : ''}" data-action="tr-step" data-ei="${ei}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
+      </div>
+      <p class="hint">${STEP_HINT} Die Auswahl wird im Plan gespeichert und gilt auch für alle weiteren Trainings dieser Übung.</p>
+    </div>`;
+}
+
 // Übung im laufenden Training gegen eine andere tauschen (Plan bleibt unverändert)
 function replaceExercise(en, name, max10) {
   const original = en.replacedFrom || en.name;
@@ -3114,7 +3248,9 @@ function importData(file) {
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
       cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake,
+      customExercises: d.customExercises,
     });
+    registerCustomExercises();
     saveData();
     toast('Sicherung importiert ✔');
     go('start');
@@ -3189,6 +3325,25 @@ function fillReplaceMax(input) {
   const m = knownMax10(input.value);
   maxInput.value = m != null ? fmtNum(m) : '';
   maxInput.classList.toggle('missing', m == null);
+  const hint = input.closest('.replace').querySelector('.rep-max-hint');
+  if (hint) hint.hidden = m != null || !input.value.trim();
+}
+
+// Max. bei 10 Wdh. im Training geändert: im Plan speichern; ist noch kein Satz erledigt, Vorschlag neu berechnen
+function applyTrainingMax(el) {
+  const en = draft.entries[el.dataset.ei];
+  const v = parseNum(el.value);
+  if (!en || !en.target || v === en.target.max10) return;
+  const ex = planExercise(en.name);
+  if (ex) { ex.max10 = v; saveData(); }
+  if (!en.sets.some(isDone) && en.plan) {
+    const variants = en.sets.map(variantOf);
+    setupEntry(en, { ...en.plan, max10: v }, i => variants[Math.min(i, variants.length - 1)]);
+  } else {
+    en.target.max10 = v;
+    if (en.plan) en.plan.max10 = v;
+  }
+  saveDraft(); render();
 }
 
 function moveExercise(day, i, dir) {
@@ -3213,6 +3368,51 @@ const actions = {
     if (y != null) window.scrollTo(0, y);
   },
   lib: () => go('library'),
+  'libc-new': () => { libForm = null; go('libadd', {}); },
+  'libc-edit': el => { libForm = null; go('libadd', { name: el.dataset.name }); },
+  'libc-cancel': () => {
+    const name = libForm && libForm.orig;
+    libForm = null;
+    if (name) go('libex', { name }); else go('library');
+  },
+  'libc-group': el => { libForm.group = el.dataset.v; render(); },
+  'libc-kind': el => { libForm.kind = el.dataset.v; render(); },
+  'libc-save': () => {
+    const f = libForm;
+    const name = f.name.trim().replace(/\s+/g, ' ');
+    if (!name) { alert('Bitte gib der Übung einen Namen.'); return; }
+    if (!f.group) { alert('Bitte wähle die Muskelgruppe – aus ihr bekommt die Übung ihre Sätze.'); return; }
+    const renamed = f.orig && nameKey(f.orig) !== nameKey(name);
+    if ((!f.orig || renamed) && (builtinExercise(name) || customExercise(name))) {
+      alert(`„${name}“ gibt es schon in der Bibliothek. Such sie einfach dort – oder wähle einen anderen Namen.`);
+      return;
+    }
+    const like = (f.like || '').trim();
+    const c = { name, kind: f.kind, group: f.group, like: like && builtinExercise(like) ? like : '', note: (f.note || '').trim() };
+    if (f.orig) {
+      const i = data.customExercises.findIndex(x => nameKey(x.name) === nameKey(f.orig));
+      data.customExercises[i] = c;
+      // Umbenannt: auch in allen Plänen umbenennen (der Verlauf behält den alten Namen)
+      if (renamed) data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => {
+        if (nameKey(e.name) === nameKey(f.orig)) e.name = name;
+      })));
+    } else data.customExercises.push(c);
+    registerCustomExercises();
+    saveData();
+    libForm = null;
+    if (like && !c.like) toast('Ähnliche Übung nicht gefunden – bitte aus den Vorschlägen wählen');
+    else toast(f.orig ? 'Übung gespeichert ✔' : `${name} angelegt ✔`);
+    libOpenGroups.add('own');
+    go('libex', { name });
+  },
+  'libc-del': el => {
+    const name = el.dataset.name;
+    if (!confirm(`„${name}“ aus deinen eigenen Übungen löschen?\n\nIn deinen Plänen und im Verlauf bleibt sie erhalten – sie erscheint nur nicht mehr in der Bibliothek und in den Vorschlägen.`)) return;
+    data.customExercises = data.customExercises.filter(c => nameKey(c.name) !== nameKey(name));
+    registerCustomExercises();
+    saveData();
+    go('library');
+  },
   // data-name, im Trainingstag data-i (der Name kann sich beim Tippen geändert haben)
   'lib-open': el => {
     const v = views[current.view];
@@ -3293,6 +3493,29 @@ const actions = {
     e.commentHidden = true;
     saveData(); render();
   },
+  'tr-step-open': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.stepOpen = !en.stepOpen;
+    saveDraft(); render();
+  },
+  // Neuer Gewichtssprung: im Plan speichern; ist bei der Übung noch nichts erledigt, Vorschlag neu berechnen
+  'tr-step': el => {
+    const en = draft.entries[el.dataset.ei];
+    const v = Number(el.dataset.v);
+    const ex = planExercise(en.name);
+    if (ex) { ex.step = v; saveData(); }
+    en.stepOpen = false;
+    if (en.target.step !== v) {
+      if (!en.sets.some(isDone) && en.plan) {
+        const variants = en.sets.map(variantOf);
+        setupEntry(en, { ...en.plan, step: v }, i => variants[Math.min(i, variants.length - 1)]);
+      } else {
+        en.target.step = v;
+        if (en.plan) en.plan.step = v;
+      }
+    }
+    saveDraft(); render();
+  },
   'comment-toggle': el => {
     const en = draft.entries[el.dataset.ei];
     en.commentOpen = !en.commentOpen;
@@ -3372,6 +3595,8 @@ const actions = {
       wizAddPick(el.dataset.name);
     } else if (input.dataset.field === 'own-name') {
       wizOwnPick(input, el.dataset.name);
+    } else if (input.dataset.field === 'libc-like') {
+      libForm.like = el.dataset.name;
     } else if (input.dataset.field === 'wiz-swap-name') {
       // Plan-Assistent, Ersetzen in der Vorschau: Name steht im Feld, bestätigt wird mit „Ersetzen“
     } else {
@@ -3748,6 +3973,7 @@ const actions = {
     if (!confirm('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte und Einstellungen werden entfernt.')) return;
     if (!confirm('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
     data = upgradeData(emptyData());
+    registerCustomExercises();
     saveData();
     draft = null; saveDraft();
     toast('App zurückgesetzt');
@@ -3829,6 +4055,13 @@ const fields = {
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
+  'libc-name': el => { libForm.name = el.value; },
+  'libc-note': el => { libForm.note = el.value; },
+  'libc-like': el => {
+    libForm.like = el.value;
+    showSuggestions(el, EXERCISE_LIST.map(([n]) => n).filter(n => !customKeys.has(nameKey(n))));
+  },
+  'tr-max': el => { el.classList.toggle('missing', parseNum(el.value) == null); },
   'tr-weight': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.weight = el.value;
@@ -3898,6 +4131,7 @@ document.addEventListener('change', e => {
     fields[e.target.dataset.field](e.target);
     return;
   }
+  if (e.target.dataset && e.target.dataset.field === 'tr-max') { applyTrainingMax(e.target); return; }
   if (e.target.id === 'import-file' && e.target.files[0]) {
     importData(e.target.files[0]);
     e.target.value = '';
@@ -3912,7 +4146,7 @@ document.addEventListener('pointerdown', e => {
 // Vorschläge schließen, wenn man das Feld verlässt
 document.addEventListener('focusout', e => {
   const f = e.target.dataset && e.target.dataset.field;
-  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name' || f === 'wiz-add') {
+  if (f === 'ex-name' || f === 'rep-name' || f === 'chart-name' || f === 'add-name' || f === 'wiz-add' || f === 'libc-like') {
     const box = suggestBoxFor(e.target);
     setTimeout(() => { box.hidden = true; }, 200);
   }
@@ -3958,8 +4192,15 @@ actions['welcome-ok'] = () => {
 
 /* ---------- Start ---------- */
 
-render();
-showWelcome();
+// Erst zeichnen, wenn alle Skripte geladen sind (die Startseite nutzt z. B. nutrition.js) –
+// sonst bleibt die Seite beim Öffnen leer, bis man einen Reiter antippt.
+function boot() {
+  registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
+  render();
+  showWelcome();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else setTimeout(boot);
 
 if ('serviceWorker' in navigator) {
   // Neue Version übernommen (neuer Service Worker hat die Kontrolle) -> einmal neu laden, damit sie sofort sichtbar ist.
