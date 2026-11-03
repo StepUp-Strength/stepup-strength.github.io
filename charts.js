@@ -648,16 +648,21 @@ function stepsList() {
 /* ---------- Apple Health über die Zwischenablage ---------- */
 
 // Ein Kurzbefehl kopiert z. B. „Datum: 2026-10-23 Schritte: 8.432 Gewicht: 89,4 kg“ in die Zwischenablage.
+// Nur noch im Ernährungs-Reiter, solange es dort die Karte „Heute gegessen“ (mit eigenem Health-Knopf) nicht gibt –
+// es gibt in der App nur einen Health-Knopf (User-Wunsch 2026-11-03)
 function healthCard() {
   return `<div class="card health">
     <button class="btn primary" data-action="health-paste">❤️ Aus Health einfügen</button>
     <p class="hint">Übernimmt Schritte, Gewicht und – wenn eingerichtet – Kalorien, Eiweiß, Kohlenhydrate und Fett, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
-    ${chartState.pasteBox ? `<textarea class="inp comment" id="health-text" rows="3"
-        placeholder="Hier lange drücken → Einsetzen"></textarea>
-      <div class="row"><button class="btn" data-action="health-apply">Übernehmen</button></div>` : ''}
+    ${healthPasteBox()}
     ${healthGuide()}
   </div>`;
 }
+
+// Feld zum Einsetzen, falls die Zwischenablage nicht gelesen werden durfte (steht direkt beim Health-Knopf)
+const healthPasteBox = () => !chartState.pasteBox ? '' : `<textarea class="inp comment" id="health-text" rows="3"
+    placeholder="Hier lange drücken → Einsetzen"></textarea>
+  <div class="row"><button class="btn" data-action="health-apply">Übernehmen</button></div>`;
 
 // Anleitung (iPhone): Kurzbefehl, der Schritte, Gewicht und (optional) Ernährungswerte aus Health in die
 // Zwischenablage kopiert, und eine Automation, die ihn jeden Tag von selbst ausführt
@@ -699,7 +704,7 @@ const healthGuide = () => `<details class="health-guide">
     <p><b>2. Täglich automatisch ausführen</b> – in „Kurzbefehle“ unten „Automation“, <b>+</b>, „Tageszeit“ wählen und „Täglich“.
       Mit Ernährungswerten am besten <b>spät am Abend</b> (z. B. 22:00 Uhr), wenn alle Mahlzeiten eingetragen sind. „Sofort
       ausführen“ einstellen, dann „Weiter“ und den Kurzbefehl „StepUp Health“ auswählen.</p>
-    <p><b>3. In die App übernehmen</b> – StepUp öffnen und auf „❤️ Aus Health einfügen“ tippen (ggf. „Einsetzen“ erlauben).</p>
+    <p><b>3. In die App übernehmen</b> – StepUp öffnen und im Reiter Ernährung auf „❤️ Aus Health“ tippen (ggf. „Einsetzen“ erlauben).</p>
     <p><b>Gut zu wissen:</b></p>
     <ul>
       <li>Du kannst den Kurzbefehl so oft ausführen und einfügen, wie du willst – die Werte eines Tages werden jedes Mal
@@ -823,7 +828,8 @@ function renderCharts() {
   if (s.mode === 'awards') return h + renderAwards();
 
   if (s.mode === 'steps') {
-    h += healthCard() + `<div class="card">
+    h += (feat('nut-health') ? `<p class="hint">❤️ Schritte aus Apple Health holst du im Reiter <b>Ernährung</b> mit „Aus Health“ –
+      zusammen mit Gewicht und Kalorien.</p>` : '') + `<div class="card">
       <label class="row"><span>Schritte</span>
         <input class="inp kg" id="steps-n" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="8500"></label>
       <label class="row"><span>Datum</span>

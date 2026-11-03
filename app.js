@@ -698,7 +698,7 @@ function startDeloadNow() {
   data.cycle.deloadAt = w;
 }
 
-const DELOAD_WEIGHT = 0.8;  // Deload: 20 % weniger Gewicht
+const DELOAD_WEIGHT = 0.85;  // Deload: 15 % weniger Gewicht als in der letzten Trainingswoche (User-Regel 2026-11-03, vorher 20 %)
 
 // Progression, getrennt schaltbar: volume = mehr Sätze von Woche zu Woche, load = Gewicht/Wdh. steigern.
 // Grundeinstellung des Plans (ganzer Zyklus) -> Abweichung einer Woche (Schlüssel: roundKey) ->
@@ -1096,7 +1096,7 @@ function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
   return res;
 }
 
-// Deload: Volumen halbieren (Sätze), Gewicht −20 %, nie schwerer als DELOAD_RIR im Tank.
+// Deload: Volumen halbieren (Sätze), Gewicht −15 %, nie schwerer als DELOAD_RIR im Tank.
 // base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
 const deloadSets = sets => Math.max(1, Math.round(sets / 2));
 // Sätze pro Woche: Start in der Intro-Woche, Steigerung erst am Zyklusende –
@@ -1108,10 +1108,13 @@ function setsForWeek(ex, week, buildWeeks, half = false) {
   return ex.sets + Math.max(0, diff - (buildWeeks - week));
 }
 
-function deloadTarget(t) {
-  const normal = targetWeight(t);
+// ref: erster normaler Satz der letzten Trainingswoche (lastWorkSet) – Bezug für Gewicht und Wdh. (User-Regel
+// 2026-11-03); ohne Training mit Gewicht wie bisher aus „Max. bei 10 Wdh.“
+function deloadTarget(t, ref) {
+  const normal = ref ? ref.weight : targetWeight(t);
   return {
     ...t,
+    ...(ref ? { reps: Math.max(MIN_REPS, ref.reps) } : {}),
     sets: t.fixedSets ? t.sets : deloadSets(t.sets),  // automatisch verteilt: schon halbiert
     rir: Math.max(t.rir, DELOAD_RIR),
     weight: normal != null ? roundTo(normal * DELOAD_WEIGHT, t.step) : null,
@@ -1154,7 +1157,7 @@ function findWeekEntry(name, dayId, match, occ = 1) {
       || b.s.date.localeCompare(a.s.date));
   for (const { s, c } of cands) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, week: c.week, occ: s.dayId === dayId ? sessionOccurrence(s) : null,
+    if (e) return { date: s.date, cycleStart: c.cycleStart, week: c.week, occ: s.dayId === dayId ? sessionOccurrence(s) : null,
       sets: e.sets, planned: e.planned, target: e.target };
   }
   return null;
@@ -1174,11 +1177,31 @@ function prevExtension(cycleStart) {
 const cycleShift = start => { const s = data.cycleShift[start]; return s && s.by ? s : null; };
 
 // Vergleichswoche. Mit Verschiebung: Woche + by im verlängerten Zyklus davor (fehlt sie, wie gewohnt dieselbe Woche).
+// plus: so viele Wdh. darf ein Satz gegenüber der Vergleichswoche zulegen (wächst mit dem Abstand, siehe cmpPlus)
 function comparisonEntry(name, dayId, ci) {
   const sh = cycleShift(ci.cycleStart);
   const e = sh && findWeekEntry(name, dayId, c => c.cycleStart === sh.from && c.week === ci.week + sh.by, ci.occurrence || 1);
-  return e ? { ...e, shifted: true } : sameWeekEntry(name, dayId, ci);
+  const c = e ? { ...e, shifted: true } : sameWeekEntry(name, dayId, ci);
+  return c && { ...c, plus: cmpPlus(cmpGap(c, ci)) };
 }
+
+// Abstand der Vergleichswoche zur Woche ci in Aufbauwochen (Deloads zählen nicht, die Woche ci zählt mit):
+// trainierte Wochen des alten Zyklus nach der Vergleichswoche + Zyklen dazwischen + Wochen 1 … ci.week
+function cmpGap(cmp, ci) {
+  const weeksOf = cs => new Set(data.sessions.filter(s => s.cycleStart === cs && !s.deload).map(s => s.week));
+  let gap = [...weeksOf(cmp.cycleStart)].filter(w => w > cmp.week).length + ci.week;
+  const between = new Set(data.sessions.map(s => s.cycleStart).filter(cs => cs && cs > cmp.cycleStart && cs < ci.cycleStart));
+  for (const cs of between) gap += weeksOf(cs).size;
+  return gap;
+}
+
+// +1 Wdh. je n Wochen Abstand (n nach Erfahrung des Plans), mindestens 1 – Einsteiger z. B. 4-Wochen-Zyklus +1,
+// 10 Wochen +3; Fortgeschrittene und alte Hasen werden langsamer stärker (10 Wochen: weiter +1). Vorher immer +1: bei
+// langen Zyklen blieben Einsteiger hinter ihrer echten Kraft zurück (User-Regel 2026-11-03, Simulation sim4).
+// Die Vorwoche bremst weiter: es gilt der niedrigere Vorschlag aus beiden (refProposal).
+const CMP_WEEKS_PER_REP = { neuling: 4, einsteiger: 4, fortgeschritten: 8, hase: 12 };
+const cmpWeeksPerRep = () => CMP_WEEKS_PER_REP[(hasActivePlan() && activePlan().level) || ''] || 8;  // ohne Angabe: wie Fortgeschritten
+const cmpPlus = gap => Math.max(1, Math.round(gap / cmpWeeksPerRep()));
 
 // Vergleichswoche ohne Verschiebung: dieselbe Woche (und derselbe Durchgang) im vorherigen Zyklus
 // Erklärung bei versetztem Vergleich (leer ohne Verschiebung)
@@ -1239,10 +1262,17 @@ function missed(prev, v, k) {
 // (nach k Sätzen Ermüdung) klappen – in Steigerungsschritten nach unten, nie schwerer als w
 function weightForGoal(cap, w, t, k, goal) {
   const repsAt = x => Math.floor(capacityAt(cap, w, x) - t.rir - FATIGUE * k + 1e-9);
+  // Leichtes Gewicht (eine Stufe ist ein großer Sprung): erst die Wdh. senken, solange es höchstens 3 unter dem
+  // Ziel und mind. MIN_REPS sind – statt zwischen zwei Gewichten hin- und herzuspringen (User-Regel 2026-11-03)
+  if (bigStep(w, t.step) && repsAt(w) >= Math.max(MIN_REPS, goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
   let wt = w;
   while (repsAt(wt) < goal && wt - t.step > 0) wt = round2(wt - t.step);
   return { weight: wt, reps: Math.max(MIN_REPS, Math.min(goal, repsAt(wt))) };
 }
+
+// Großer Gewichtssprung: eine Stufe ist mehr als BIG_STEP des Gewichts (z. B. 2,5 kg bei unter 25 kg)
+const BIG_STEP = 0.1;
+const bigStep = (w, step) => w != null && w > 0 && step > 0 && step / w > BIG_STEP;
 
 // Ist Vorschlag a leichter als b? Zuerst nach Gewicht, bei gleichem Gewicht nach Wdh.
 function lighterSet(a, b) {
@@ -1272,7 +1302,9 @@ function refAt(list, k) {
 // Weniger im Tank als geplant: auf das Tank-Ziel der neuen Woche umrechnen (gerundet) – mehr Wdh. mit weniger Tank
 // sind keine Mehrleistung. Boden: nie weniger Wdh. als im Bezugssatz geschafft (User-Regel 2026-11-01); deutlich
 // verfehlte Sätze laufen vorher über die Bremse (refProposal/missed).
-function fromRef(src, target, plusOne, i, srcRir) {
+// plus: so viele Wdh. Steigerung (true = 1, false = bestätigen); ab 2 zählt das Mehr auch für die nächste Gewichtsstufe.
+function fromRef(src, target, plus, i, srcRir) {
+  plus = +plus || 0;
   let weight = src.weight;
   let base = src.reps;
   if (src.reps != null && src.rir != null && srcRir != null) {
@@ -1280,10 +1312,10 @@ function fromRef(src, target, plusOne, i, srcRir) {
       ? Math.round(src.reps + src.rir - (target.rir != null ? target.rir : srcRir))
       : Math.floor(src.reps + src.rir - srcRir + 1e-9);
   }
-  let reps = base != null ? base + (plusOne ? 1 : 0) : goalReps(target, i);
+  let reps = base != null ? base + plus : goalReps(target, i);
   if (src.reps != null) reps = Math.max(reps, src.reps);
   if (src.reps != null && src.weight != null) {
-    const cap = src.reps + (src.rir != null ? src.rir : target.rir);
+    const cap = src.reps + (src.rir != null ? src.rir : target.rir) + Math.max(0, plus - 1);
     const up = stepUp(cap, src.weight, { step: 2.5, ...target }, 0, goalReps(target, i));
     if (up) ({ weight, reps } = up);
   }
@@ -1294,10 +1326,10 @@ function fromRef(src, target, plusOne, i, srcRir) {
 // kommt von dort, Wdh. und Tank wie in der aktuellen Woche. Mit der damaligen Leistung (+1 Wdh. Steigerung) wird
 // das Gewicht gesucht, mit dem die Ziel-Wdh. beim heutigen Tank-Ziel klappen: in Stufen runter, wenn es nicht reicht,
 // eine Stufe hoch, wenn die Leistung schon dafür reicht.
-function shiftedRef(src, target, i, srcRir) {
+function shiftedRef(src, target, i, srcRir, plus = 1) {
   const goal = goalReps(target, i);
   if (src.weight == null || src.reps == null) return { weight: src.weight, reps: goal };
-  const cap = src.reps + (src.rir != null ? src.rir : srcRir != null ? srcRir : target.rir) + 1;
+  const cap = src.reps + (src.rir != null ? src.rir : srcRir != null ? srcRir : target.rir) + plus;
   const t = { step: 2.5, ...target };
   return stepUp(cap, src.weight, t, 0, goal) || weightForGoal(cap, src.weight, t, 0, goal);
 }
@@ -1398,8 +1430,9 @@ function lastVariantSets(name, v) {
 
 // Vorschlag aus Vorwoche (prev = { sets, planned, target }) und Vergleichswoche (cmp) für Satz i,
 // den k-ten Satz der Variante v; t = Ziel der neuen Woche. p = null, wenn es keinen Bezug gibt.
-// Vorwoche: Satz 1 +1 Wdh., Rest bestätigen (reicht die Leistung, nächste Gewichtsstufe); Vergleichswoche: +1 je Satz;
-// gibt es beide, gilt der niedrigere. Satz in der Vorwoche deutlich verfehlt -> Gewicht runter, Wdh. wie damals geplant.
+// Vorwoche: Satz 1 +1 Wdh., Rest bestätigen (reicht die Leistung, nächste Gewichtsstufe); Vergleichswoche: +cmp.plus
+// je Satz (+1 je 4 Wochen Abstand); gibt es beide, gilt der niedrigere. Satz in der Vorwoche deutlich verfehlt ->
+// Gewicht runter, Wdh. wie damals geplant (leichte Gewichte: erst weniger Wdh., siehe weightForGoal).
 function refProposal(t, prev, cmp, i, k, v) {
   const cmpV = ofVariant(cmp && cmp.sets, v);
   const prevV = ofVariant(prev && prev.sets, v);
@@ -1417,7 +1450,8 @@ function refProposal(t, prev, cmp, i, k, v) {
   }
   const rirOf = e => e && e.target && e.target.rir != null ? e.target.rir : null;  // damaliges Tank-Ziel
   const a = !cmpV.length ? null
-    : cmp.shifted ? shiftedRef(refAt(cmpV, k), t, i, rirOf(cmp)) : fromRef(refAt(cmpV, k), t, true, i, rirOf(cmp));
+    : cmp.shifted ? shiftedRef(refAt(cmpV, k), t, i, rirOf(cmp), cmp.plus || 1)
+    : fromRef(refAt(cmpV, k), t, cmp.plus || 1, i, rirOf(cmp));
   const b = prevV.length ? fromRef(refAt(prevV, k), t, k === 0, i, rirOf(prev)) : null;
   if (a && b) {
     if (!lighterSet(a, b)) return { p: b, rule: 'lower', fromCmp: false };
@@ -1893,9 +1927,9 @@ window.addEventListener('popstate', () => {
 });
 
 // action = Wochen antippbar: 'week-open' (Trainings der Woche ansehen) oder
-// 'cycle-jump' (Plan-Reiter: diese Woche als die gewählte Zykluswoche zählen)
+// 'cycle-jump' („Zyklus anpassen“ an der Zykluskarte: diese Woche als die gewählte Zykluswoche zählen)
 // Deload „selbst bestimmen“: Wochen bis zur aktuellen (auch über die Aufbauwochen hinaus); die Deload-Pille gibt es
-// beim Ansehen nur, wenn gerade Deload ist – im Plan-Reiter (cycle-jump) legt sie den Deload ein.
+// beim Ansehen nur, wenn gerade Deload ist – unter „Zyklus anpassen“ (cycle-jump) legt sie den Deload ein.
 function cyclePills(ci, action = null) {
   const self = selfDeload();
   const weeks = !self ? ci.buildWeeks : ci.deload ? Math.max(1, ci.week - 1) : Math.max(ci.buildWeeks, ci.week);
@@ -1937,14 +1971,14 @@ function cycleCard(ci) {
     : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ci.extra ? ' · Verlängerung' : ` von ${ci.buildWeeks}`}`;
   const self = selfDeload();
   const sub = ci.deload
-    ? `Halbe Sätze, 20 % weniger Gewicht, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
+    ? `Halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
     : shiftText(ci.cycleStart, ci.week) && !ci.extra
       ? `${ci.intro ? 'Start-Sätze laut Plan. ' : ''}${shiftText(ci.cycleStart, ci.week)}`
     : ci.intro
-      ? 'Start-Sätze laut Plan. Werte der letzten Intro-Woche, je +1 Wdh.'
+      ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
       : ci.extra
         ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche – Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
-        : 'Werte derselben Woche im letzten Zyklus, je +1 Wdh.';
+        : `Werte derselben Woche im letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`;
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
@@ -2077,10 +2111,10 @@ function renderTraining() {
   let h = draft.own
     ? '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>'
     : draft.deload
-    ? `<p class="deload-note">Deload-Woche: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
+    ? `<p class="deload-note">Deload-Woche: halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
     : draft.intro
       ? `<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
-        || 'Vergleich ist die Intro-Woche des letzten Zyklus, je +1 Wdh.'}</p>`
+        || `Vergleich ist die Intro-Woche des letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`}</p>`
       : '';
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
@@ -2196,7 +2230,7 @@ function renderTraining() {
             ? 'Heute: begrenzt durch das 1. Training dieser Woche'
           : en.rule === 'diet'
             ? 'Diät: Gewicht wie zuletzt – höchstens 1 Wdh. mehr, dafür näher am Muskelversagen'
-            : 'Heute: je Satz +1 Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt';
+            : `Heute: je Satz +${en.compare.plus || 1} Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt`;
       const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
       const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.sets }];
       if (en.prevWeek) cols.push({ label: `Vorwoche<small>${weekLabel(en.prevWeek.week)} · ${fmtDate(en.prevWeek.date)}</small>`, sets: en.prevWeek.sets });
@@ -2445,11 +2479,20 @@ function cycleAdjustHtml(ci) {
         <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche – z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
         ${ci.deload ? '' : `<button class="btn" data-action="cyc-end" data-m="newdl">🩹 Neuer Zyklus – mit der Deload-Woche starten</button>
         <p class="hint">Nach Krankheit oder längerer Pause: Du steigst ab sofort mit der leichten Deload-Woche wieder ein (halbe Sätze,
-          20 % weniger Gewicht), danach geht es mit der Intro-Woche weiter.</p>`}
+          15 % weniger Gewicht), danach geht es mit der Intro-Woche weiter.</p>`}
         <button class="btn center" data-action="cyc-end-cancel">Abbrechen</button>
       </div>`;
   }
+  // Woche wechseln und Zykluslänge (Standard für alle Zyklen) stehen mit im Panel – früher im Plan-Reiter
+  // unter Periodisierung (User-Wunsch 2026-11-03)
+  const jump = !feat('plan-week-jump') ? '' : `<p><b>Mit welcher Woche weitermachen?</b></p>
+      ${cyclePills(ci, 'cycle-jump')}
+      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause
+        direkt mit der Deload-Woche oder wieder mit der Intro-Woche. Bisherige Trainings bleiben gespeichert.</p>
+      <hr class="cyc-sep">`;
   return `<div class="cyc-adjust">
+      ${jump}
+      ${feat('cycle-len') ? cycleLenSlider() + '<hr class="cyc-sep">' : ''}
       <p><b>Diesen Zyklus anpassen</b> <small class="hint">· z. B. wegen Urlaub</small></p>
       <div class="row cyc-adj-row">
         <button class="icon-btn" data-action="cyc-adj" data-d="-1" ${len <= min ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
@@ -2466,24 +2509,20 @@ function cycleAdjustHtml(ci) {
 
 // Periodisierung im Plan-Reiter – Teile je nach Modus (Wochen/Deload, Woche wechseln, Progression, RIR, Volumen)
 function periodCard(c, active) {
-  const cfg = feat('plan-cycle-settings'), jump = feat('plan-week-jump'), len = feat('cycle-len');
-  if (!cfg && !jump && !len && !feat('plan-volume')) return '';
+  // Woche wechseln, Zykluslänge und „Zyklus anpassen“ stehen im Trainings-Reiter an der Zykluskarte (cycleAdjustHtml)
+  const cfg = feat('plan-cycle-settings');
+  if (!cfg && !feat('cycle-adjust') && !feat('plan-volume')) return '';
   let h = '<h2>Periodisierung</h2><div class="card">';
-  if (len) h += cycleLenSlider() + cycleAdjustHtml(cycleInfo());
+  if (feat('cycle-adjust')) h += '<p class="hint">Woche wechseln, Zykluslänge, Verlängern/Verkürzen und „Zyklus beenden“ findest du im Reiter Training an der Zykluskarte unter „⚙️ Zyklus anpassen“.</p>';
   if (cfg) {
     h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
       <p class="lbl chips-title">Deload</p>
       <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
         `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
       <p class="hint">${selfDeload()
-        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm oder hier über „Deload“.'
+        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm, z. B. unter „⚙️ Zyklus anpassen“ über „Deload“.'
         : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
-        Deload: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
-  }
-  if (jump) {
-    h += `<p class="lbl chips-title" ${cfg ? '' : 'style="margin-top:0"'}>Aktuelle Woche</p>
-      ${cyclePills(cycleInfo(), 'cycle-jump')}
-      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause direkt mit der Deload-Woche oder wieder mit der Intro-Woche.</p>`;
+        Deload: halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
   }
   if (feat('plan-week-prog')) h += progressionTable();
   if (feat('plan-rir')) h += rirTable(c.buildWeeks);
@@ -2545,7 +2584,7 @@ function planCompare(ex, day) {
   const cmp = comparisonEntry(ex.name, day.id, ci);
   if (!cmp) return '';
   return `<p class="compare">Diese Woche (${weekLabel(ci.week)}) – Vergleich letzter Zyklus:<br>
-    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +1 Wdh. bzw. nächste Gewichtsstufe – ab Woche 2 höchstens Vorwoche mit Satz 1 +1 Wdh.</b></p>`;
+    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +${cmp.plus || 1} Wdh. bzw. nächste Gewichtsstufe – ab Woche 2 höchstens Vorwoche mit Satz 1 +1 Wdh.</b></p>`;
 }
 
 // Kontrolle im Plan: Sätze pro Muskelgruppe und Woche für diesen Trainingstag
@@ -3167,7 +3206,7 @@ function renderCycleChoice({ id, by }) {
       <p class="hint wiz-q-explain">Dein letzter Zyklus wurde um <b>${wk(by)}</b> verlängert (bis Woche ${bw + by}). Soll sich der neue Zyklus
         Woche für Woche nach dem alten richten – oder die Verlängerung mit berücksichtigen?</p>
       ${opt(1, 'Verlängerung berücksichtigen', `Der Vergleich verschiebt sich um ${wk(by)}: ${pairs}. Das Gewicht kommt aus der versetzten Woche, Wiederholungen und Tank bleiben so, wie sie für die jeweilige Woche vorgesehen sind.`)}
-      ${opt(0, 'Woche für Woche wie im letzten Zyklus', 'Intro ↔ Intro, W2 ↔ W2 … – jede Woche wird mit derselben Woche des letzten Zyklus verglichen, je +1 Wdh.')}
+      ${opt(0, 'Woche für Woche wie im letzten Zyklus', `Intro ↔ Intro, W2 ↔ W2 … – jede Woche wird mit derselben Woche des letzten Zyklus verglichen, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand`)}
     </div>
     <p class="hint">Gilt für den ganzen neuen Zyklus.</p>`;
 }
@@ -3442,7 +3481,7 @@ function setupEntry(en, target, variantFor = () => '') {
   target = body ? { ...target, bodyweight: true, max10: null } : (({ bodyweight, ...t }) => t)(target);
   const strip = e => body ? withoutWeight(e) : e;
   en.plan = target;
-  if (draft.deload) target = deloadTarget(target);
+  if (draft.deload) target = deloadTarget(target, body ? null : lastWorkSet(en.name, draft.dayId));
   else if (draft.intro) target = { ...target, intro: true };
   // ohne Gewichtsprogression (hold) keine Bezugswochen – es gelten die Werte vom letzten Mal
   const cmp = draft.deload || target.hold ? null : strip(comparisonEntry(en.name, draft.dayId, draft));
@@ -3462,6 +3501,13 @@ function setupEntry(en, target, variantFor = () => '') {
   en.note = null;
   en.warmup = null;  // Aufwärmen wird beim Anzeigen passend zum ersten Arbeitssatz vorgeschlagen
   en.warmupEdited = false;
+}
+
+// Deload mit Gewicht: erster normaler Satz (mit Gewicht) im letzten Training ohne Deload – bevorzugt neuester Zyklus
+// und derselbe Trainingstag (null ohne Training)
+function lastWorkSet(name, dayId) {
+  const e = findWeekEntry(name, dayId, () => true);
+  return (e && ofVariant(e.sets, '').find(s => s.weight != null && s.reps != null)) || null;
 }
 
 // Eigengewicht im Deload: Wdh. + Tank des ersten Satzes im letzten Training ohne Deload (null ohne Training)
@@ -4338,7 +4384,7 @@ const actions = {
   'deload-now': () => {
     const ci = cycleInfo();
     if (ci.deload) return;
-    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 20 % weniger Gewicht, mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
+    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht, mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
     startDeloadNow();
     saveData(); render();
     toast('Deload-Woche eingelegt');

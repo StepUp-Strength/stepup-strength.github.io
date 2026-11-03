@@ -2126,3 +2126,19 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .np-sum { margin: 0 0 10px; font-size: 15.5px; }
 .np-plan-hint { margin: 2px 4px 4px; }
 .np-assign .vchip { flex: 1 1 45%; min-height: 48px; }
+
+/* Heute gegessen: Plan-Import mit Abstand zu „Aus Health“ / „Von Hand“, Health-Einsetzfeld und Anleitung in der Karte */
+.nut-intake .np-open-btn { margin-top: 12px; }
+.nut-intake textarea { margin-top: 10px; }
+.nut-intake .health-guide { margin-top: 6px; }
+/* Zyklus anpassen: Zykluslänge oben, Trennlinie zum laufenden Zyklus */
+.cyc-sep { border: 0; border-top: 1px solid var(--line-strong); margin: 4px 0 14px; }
+/* Panel auf der blauen Zykluskarte: eigene (dunkle) Schriftfarbe statt Weiß der Karte */
+.card.cycle .cyc-adjust { position: relative; color: var(--text); }
+.card.cycle .cyc-adjust .hint { color: var(--muted); }
+/* Wochen-Auswahl im Panel „Zyklus anpassen“ (helle Fläche auf der blauen Karte): normale Pillen-Farben */
+.cycle .cyc-adjust .pill { background: var(--card); color: var(--muted); }
+.cycle .cyc-adjust .pill.past { background: var(--line-strong); color: var(--text); }
+.cycle .cyc-adjust .pill.now { background: var(--accent); color: #fff; }
+.cycle .cyc-adjust .pill.dl.now { background: var(--warn); color: #1a1200; }
+.cycle .cyc-adjust button.pill { min-height: 46px; }

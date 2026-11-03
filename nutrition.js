@@ -428,7 +428,14 @@ function renderNutBody() {
   const guess = nutActivityGuess();
   const guessText = guess ? [guess.perWeek ? `ca. ${fmtNum(round1(guess.perWeek))} Trainings pro Woche` : null,
     guess.avg != null ? `Ø ${deNum(Math.round(guess.avg / 100) * 100)} Schritte am Tag` : null].filter(Boolean).join(' und ') : '';
-  return `<div class="card wiz-q">
+  // Gerade Diät/Minicut gewählt: kurzer Hinweis, dass sich das Defizit aufs Training auswirkt (User-Wunsch 2026-11-03)
+  const cut = d.flow === 'nutphase' && (d.phase === 'diet' || d.phase === 'minicut');
+  const cutNote = !cut ? '' : `<p class="deload-note">🏋️ <b>Gut zu wissen:</b> Im Kaloriendefizit erholst du dich schlechter.
+      Kraft und Wiederholungen können eine Zeit lang stagnieren oder leicht sinken, und ein Satz geht öfter mal knapp
+      daneben – das ist normal und kein Rückschritt. ${feat('nut-train-q')
+        ? 'Im letzten Schritt kannst du festlegen, ob die App dein Training daran anpasst.'
+        : 'Die App passt dein Training deshalb automatisch an (weniger zusätzliche Sätze, Gewichte halten).'}</p>`;
+  return `${cutNote}<div class="card wiz-q">
       ${d.flow === 'nutphase' ? nutStep(2, 3) : ''}
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📏</span><h2>Deine Angaben</h2></div>
       <p class="hint wiz-q-explain">Daraus schätzt die App deinen Kalorienbedarf. Die Daten bleiben nur auf deinem Handy.</p>
@@ -723,6 +730,7 @@ function nutIntakeCard(n, c) {
       <div class="row" ${feat('nut-health') ? '' : 'hidden'}>
         <button class="btn" data-action="health-paste">❤️ Aus Health</button>
         <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>
+      ${feat('nut-health') ? healthPasteBox() + healthGuide() : ''}
       ${nutPlanActive() ? '' : NP_OPEN_BTN}`}
     </div>`;
 }
@@ -1096,7 +1104,9 @@ function renderNutrition() {
   if (!planOn && (!n || !nutReady(n) || kg == null)) {
     h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>${NP_OPEN_BTN}`;
   }
-  h += `<h2>Körpergewicht</h2>${bwCard()}${feat('nut-health') ? healthCard() : ''}${rangeRow()}
+  // Nur ein Health-Knopf: steht in „Heute gegessen“; ohne diese Karte (Ernährung nicht eingerichtet) hier beim Gewicht
+  const intakeShown = planOn || (n && nutReady(n) && kg != null);
+  h += `<h2>Körpergewicht</h2>${bwCard()}${feat('nut-health') && !intakeShown ? healthCard() : ''}${rangeRow()}
     <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${bwList()}`;
   return h;
 }
