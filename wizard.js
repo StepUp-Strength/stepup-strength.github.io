@@ -84,7 +84,6 @@ const SPLITS = [
     days: [['Ganzkörper Push A', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL], ['Ganzkörper Push B', 'light', G_FB_PUSH]] },
   { id: 'ul3', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 2×, Unterkörper 1× pro Woche',
     days: [['Oberkörper A', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER], ['Oberkörper B', 'light', G_UPPER]] },
-  { id: 'ppl', tag: '3er-Split', label: 'Push/Pull/Beine', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
   // 4
   { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper – niedrige Wdh.', 'heavy', G_UPPER], ['Unterkörper – niedrige Wdh.', 'heavy', G_LOWER],
@@ -92,11 +91,15 @@ const SPLITS = [
   { id: 'fbpp4', tag: '2er-Split', label: 'Ganzkörper Push/Pull', pairs: true, days: FBPP(4) },
   { id: 'tl', tag: '2er-Split', label: 'Torso/Limbs', note: TL_NOTE, pairs: true, days: [['Torso – niedrige Wdh.', 'heavy', G_TORSO], ['Limbs – niedrige Wdh.', 'heavy', G_LIMBS],
     ['Torso – hohe Wdh.', 'light', G_TORSO], ['Limbs – hohe Wdh.', 'light', G_LIMBS]] },
+  { id: 'ppl4', tag: '3er-Split', label: 'Push/Pull/Beine + Ganzkörper', note: 'Der Ganzkörper-Tag sorgt dafür, dass jeder große Muskel 2× pro Woche dran ist',
+    days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER], ['Ganzkörper', 'light', G_FULL]] },
   // 5
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Oberkörper', 'light', G_UPPER], ['Unterkörper', 'light', G_LOWER]] },
   { id: 'ppltl', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Torso/Limbs', note: TL_NOTE, days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Torso', 'light', G_TORSO], ['Limbs', 'light', G_LIMBS]] },
+  { id: 'ppl5', tag: '3er-Split', label: 'Push/Pull/Beine', note: 'Push und Pull 2×, Beine 1× pro Woche',
+    days: [['Push A', 'heavy', G_PUSH], ['Pull A', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER], ['Push B', 'light', G_PUSH], ['Pull B', 'light', G_PULL]] },
   { id: 'ul5', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 3×, Unterkörper 2× pro Woche', days: UL(5) },
   { id: 'fbpp5', tag: '2er-Split', label: 'Ganzkörper Push/Pull', note: 'Push 3×, Pull 2× pro Woche', days: FBPP(5) },
   // 6
@@ -537,7 +540,9 @@ const needsCoach = () => wiz.level === 'neuling' || wiz.level === 'einsteiger';
 
 // Schritt „Erfahrung“: bestimmt empfohlene Tage, Vorlagen, Startvolumen und Tank-Ziel
 function renderWizLevel() {
-  const opts = Object.entries(LEVELS).map(([k, l]) => `<button class="split-opt cat ${wiz.level === k ? 'on' : ''}" data-action="wiz-level" data-k="${k}">
+  // Erfahrung je Modus: Einfach („ideal für Neulinge“) Neuling/Einsteiger, Standard ohne Neuling, Experte alle
+  const allowed = { e: ['neuling', 'einsteiger'], s: ['einsteiger', 'fortgeschritten', 'hase'], x: ['fortgeschritten', 'hase'] }[appMode()];
+  const opts = Object.entries(LEVELS).filter(([k]) => !allowed || allowed.includes(k)).map(([k, l]) => `<button class="split-opt cat ${wiz.level === k ? 'on' : ''}" data-action="wiz-level" data-k="${k}">
       <span class="cat-icon">${l.icon}</span><b>${l.label}</b><small>${l.desc}</small></button>`).join('');
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🎓</span><h2>Wie viel Trainingserfahrung hast du?</h2></div>
@@ -612,29 +617,48 @@ function renderWizSessions() {
           data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small></button>`).join('')}</div>
       </div>${navRow(wizPrev(), null)}`;
   }
-  const [lo, hi] = wizLevel().days;
+  // Experte: keine Empfehlung – wer so lange trainiert, weiß selbst, wie oft es passt
+  const [lo, hi] = appMode() === 'x' ? [0, -1] : wizLevel().days;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📆</span><h2>Wie viele Tage pro Woche möchtest du trainieren?</h2></div>
-      <p class="hint wiz-q-explain">Danach schlägt dir die App passende Pläne vor. Als ${wizLevel().label} sind <b>${lo}–${hi} Trainings
-        pro Woche</b> ideal (markiert). Wähle lieber eine Zahl, die du auch auf Dauer schaffst.</p>
+      <p class="hint wiz-q-explain">Danach schlägt dir die App passende Pläne vor.${hi >= lo ? ` Als ${wizLevel().label} sind <b>${lo}–${hi} Trainings
+        pro Woche</b> ideal (markiert).` : ''} Wähle lieber eine Zahl, die du auch auf Dauer schaffst.</p>
       <div class="sessions-grid">${[1, 2, 3, 4, 5, 6].map(n => `<button class="sessions-opt ${wiz.sessions === n ? 'on' : ''} ${n >= lo && n <= hi ? 'rec' : ''}"
         data-action="wiz-sessions" data-n="${n}"><b>${n}</b><small>${n === 1 ? 'Tag' : 'Tage'}</small>${n >= lo && n <= hi ? '<em>empfohlen</em>' : ''}</button>`).join('')}</div>
     </div>${needsCoach() ? coachNote() : ''}${navRow('level', null)}`;
 }
 
+// Wie oft kommen die großen Muskelgruppen pro Woche dran? (Brust, Rücken, Schultern, Beine)
+const MAIN_REGIONS = [['Brust', ['brust']], ['Rücken', ['lat']], ['Schultern', ['schulter_seite']], ['Beine', ['quadrizeps', 'beinbeuger']]];
+function splitFreq(s) {
+  const per = (g) => s.days.filter(d => d[2].includes(g)).length;
+  const low = [];
+  for (const [label, gs] of MAIN_REGIONS) {
+    const present = gs.filter(g => s.days.some(d => d[2].includes(g)));
+    if (present.length && Math.min(...present.map(per)) < 2) low.push(label);
+  }
+  return low;
+}
+
 // Schritt „Vorlage“: passende Vorlagen zur Zahl der Trainings, dazu „Eigene Aufteilung“
 function renderWizSplit() {
   const n = wiz.sessions;
-  const list = splitsFor(n);
+  // Vorlagen, bei denen jeder große Muskel mind. 2× pro Woche dran ist, zuerst
+  const list = splitsFor(n).map((s, i) => [s, i]).sort((a, b) => (splitFreq(a[0]).length > 0) - (splitFreq(b[0]).length > 0) || a[1] - b[1]).map(x => x[0]);
+  const freqLine = s => { const low = splitFreq(s);
+    return low.length ? `<span class="freq-bad">1× pro Woche: ${low.join(', ')}</span>` : '<span class="freq-ok">✓ jeder große Muskel 2× pro Woche</span>'; };
   const catOf = s => SPLIT_CATS.find(c => c.tag === s.tag) || {};
   const simpleOnly = wizLevel().tags
     ? `<p class="hint">Für den Anfang schlägt die App nur Ganzkörper-Pläne, 2er-Splits und die Klassiker vor – damit lernst du die Übungen am schnellsten.${list.length ? '' : ` Für ${n} Trainings pro Woche gibt es dafür keine Vorlage – wähle eine andere Zahl oder stelle deine Tage selbst zusammen.`}</p>`
     : '';
   return wizCard('🗂️', `Pläne für ${n} Training${n === 1 ? '' : 's'} pro Woche`,
-    'Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.',
+    `Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.
+      <br><b>💡 Tipp:</b> Am meisten bringt es, jeden Muskel <b>mindestens 2× pro Woche</b> zu trainieren. Gerade wenn du nicht so oft ins Training
+      gehen kannst, sind deshalb Pläne besser, bei denen jeder Muskel an mehreren Tagen dran ist (z. B. Ganzkörper oder Ober-/Unterkörper) –
+      statt Pläne, bei denen jede Muskelgruppe nur einen eigenen Tag hat. Solche Vorlagen stehen oben.`,
     simpleOnly + list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
       <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
-      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}</small>
+      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}<br>${freqLine(s)}</small>
     </button>`).join('') +
     (feat('wiz-custom') ? `<button class="split-opt cat" data-action="wiz-custom">
       <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>` : ''), false);

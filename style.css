@@ -2086,3 +2086,14 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .cyc-adj-row span small { display: block; font-size: 13.5px; color: var(--muted); }
 .cyc-adj-row .icon-btn { min-width: 52px; height: 52px; margin: 0; font-size: 26px; background: var(--card); }
 .cyc-adj-row .icon-btn:disabled { opacity: .35; }
+
+/* Übung im Plan ersetzen */
+.btn.plan-swap-btn { min-height: 46px; margin: 10px 0 4px; font-size: 16px; }
+.plan-ex-name { flex: 1; margin: 0; font-size: 19px; line-height: 1.3; }
+
+/* Plan-Assistent: Häufigkeit der großen Muskeln je Vorlage; Ersetzen: vorherige Übung */
+.split-opt small .freq-ok { color: var(--success); font-weight: 650; }
+.split-opt small .freq-bad { color: var(--warn-text); font-weight: 650; }
+.split-opt.on small .freq-ok, .split-opt.on small .freq-bad { color: inherit; }
+.quick-picks .vchip.swap-prev { background: var(--accent-soft); color: var(--accent-text); }
+.quick-picks .vchip.swap-prev small { display: block; font-size: 12px; font-weight: 600; opacity: .8; }

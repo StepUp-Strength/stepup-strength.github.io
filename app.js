@@ -2558,6 +2558,50 @@ function bodyweightRow(ex, i) {
       : 'Eigengewichtsübung: kein Gewicht, Steigerung nur über die Wiederholungen, kein Aufwärmsatz.'}</p>`;
 }
 
+// Übung im Plan ersetzen: Schnellauswahl ähnlicher Übungen oder Suche (alle Modi)
+let planSwap = null;  // { day, i } – geöffnetes „Ersetzen“ im Trainingstag
+
+function planSwapHtml(day, ex, i) {
+  if (!planSwap || planSwap.day !== day.id || planSwap.i !== i) {
+    return `<button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Übung ersetzen</button>`;
+  }
+  // die zuletzt ersetzte Übung immer als Erstes (zum schnellen Zurücktauschen)
+  const prev = ex.replacedFrom && nameKey(ex.replacedFrom) !== nameKey(ex.name)
+    && !day.exercises.some(e => nameKey(e.name) === nameKey(ex.replacedFrom)) ? ex.replacedFrom : null;
+  const related = ex.name.trim() ? relatedExercises(ex.name, 6, day.exercises.map(e => e.name)) : [];
+  const quick = [...(prev ? [prev] : []), ...related.filter(q => !prev || nameKey(q) !== nameKey(prev))].slice(0, 6);
+  return `<div class="replace">
+      <p class="lbl">${ex.name.trim() ? `„${esc(ex.name)}“ ersetzen` : 'Übung wählen'}</p>
+      ${quick.length ? `<p class="hint quick-title">Schnellauswahl – ähnliche Übungen (antippen tauscht sofort):</p>
+        <div class="quick-picks">${quick.map(q => `<button class="vchip ${q === prev ? 'swap-prev' : ''}" data-action="plan-swap-pick" data-i="${i}" data-name="${esc(q)}">${q === prev ? '↩ ' : ''}${esc(q)}${q === prev ? '<small>vorher im Plan</small>' : ''}</button>`).join('')}</div>
+        <p class="hint quick-title">… oder selbst suchen:</p>` : ''}
+      <input class="inp" type="text" data-field="plan-swap-name" data-i="${i}" autocomplete="off" autocorrect="off" spellcheck="false"
+        placeholder="Übung eintippen, z. B. Rudern …">
+      <div class="suggest" hidden></div>
+      <div class="row"><button class="btn" data-action="plan-swap-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="plan-swap-ok" data-i="${i}">⇄ Ersetzen</button></div>
+      <p class="hint">Die neue Übung übernimmt den Platz im Plan mit denselben Sätzen. Gespeicherte Trainings bleiben, wie sie sind;
+        das Startgewicht kommt aus früheren Trainings mit dieser Übung oder wird beim ersten Mal ermittelt.</p>
+    </div>`;
+}
+
+// Übung tauschen: Name, Art und Muskelgruppe neu (automatisch), Max. aus früheren Trainings; Platz und Sätze bleiben
+function planReplaceExercise(day, i, name) {
+  const ex = day.exercises[i];
+  name = String(name || '').trim();
+  if (!name) { alert('Bitte eine Übung wählen oder eintippen.'); return false; }
+  if (nameKey(name) === nameKey(ex.name)) { planSwap = null; return true; }
+  const oldGroup = groupOf(ex);
+  if (ex.name.trim()) ex.replacedFrom = ex.name.trim();  // für die Schnellauswahl (zurücktauschen)
+  Object.assign(ex, { name, kind: null, variant: '', step: null, max10: knownMax10(name) });
+  // unbekannte Übung: Muskelgruppe der alten behalten, damit das Wochenvolumen stimmt
+  ex.group = EXERCISE_GROUPS.has(nameKey(name)) ? null : oldGroup;
+  planSwap = null;
+  saveData();
+  toast(`Ersetzt durch „${name}“ ✔`);
+  return true;
+}
+
 // Übung im Trainingstag eines eigenen Plans: nur Sätze × Wdh., Startgewicht und Ausführung
 function ownExerciseCard(ex, i) {
   return `<div class="card">
@@ -2569,6 +2613,7 @@ function ownExerciseCard(ex, i) {
         ${libEntry(ex.name) ? '' : 'hidden'}>i</button>
     </div>
     <div class="suggest" hidden></div>
+    ${planSwapHtml(findDay(current.params.id), ex, i)}
     ${stepperRow('Sätze', 'sets', i, ex.sets)}
     ${stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}
     ${bodyweightRow(ex, i)}
@@ -2620,13 +2665,14 @@ function renderDay({ id }) {
     const isAuto = autoDeload.has(ex.id);
     h += `<div class="card">
       <div class="ex-name-row">
-        <input class="inp" type="text" data-field="ex-name" data-i="${i}"
+        ${feat('plan-add-ex') || !ex.name.trim() ? `<input class="inp" type="text" data-field="ex-name" data-i="${i}"
           autocomplete="off" autocorrect="off" spellcheck="false"
-          value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
+          value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">` : `<h3 class="plan-ex-name">${esc(ex.name)}</h3>`}
         <button class="info-btn" data-action="lib-open" data-i="${i}" aria-label="Ausführung ansehen"
           ${libEntry(ex.name) ? '' : 'hidden'}>i</button>
       </div>
       <div class="suggest" hidden></div>
+      ${planSwapHtml(day, ex, i)}
       ${feat('tr-compare') ? planCompare(ex, day) : ''}
       ${feat('ex-kind-group') ? `<label class="row"><span>Muskelgruppe</span>
         <select class="inp sel" data-field="ex-group" data-i="${i}">
@@ -4110,6 +4156,13 @@ const actions = {
     saveDraft(); render();
     toast(`Ersetzt durch ${name}`);
   },
+  'plan-swap-open': el => { planSwap = { day: current.params.id, i: Number(el.dataset.i) }; render(); },
+  'plan-swap-cancel': () => { planSwap = null; render(); },
+  'plan-swap-pick': el => { if (planReplaceExercise(findDay(current.params.id), Number(el.dataset.i), el.dataset.name)) render(); },
+  'plan-swap-ok': el => {
+    const input = $view.querySelector(`[data-field="plan-swap-name"][data-i="${el.dataset.i}"]`);
+    if (planReplaceExercise(findDay(current.params.id), Number(el.dataset.i), input && input.value)) render();
+  },
   'ex-del': el => {
     const day = findDay(current.params.id);
     const ex = day.exercises[el.dataset.i];
@@ -4532,6 +4585,7 @@ const fields = {
     if (info) info.hidden = !libEntry(el.value);
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
+  'plan-swap-name': el => showSuggestions(el),
   'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'libc-name': el => { libForm.name = el.value; },
   'libc-note': el => { libForm.note = el.value; },
