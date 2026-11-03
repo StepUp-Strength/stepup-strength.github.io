@@ -3,7 +3,7 @@
 /* ---------- Übungsbibliothek: animierte Figuren ---------- */
 
 // Körpermaße der Figur (SVG-Einheiten). shW/hipW: halbe Schulter-/Hüftbreite in der Vorderansicht.
-const FIG = { torso: 42, neck: 13, ua: 25, fa: 23, th: 33, sn: 32, foot: 9, head: 8.5, shW: 11, hipW: 6 };
+const FIG = { torso: 42, neck: 13, ua: 25, fa: 23, th: 33, sn: 32, foot: 9, head: 8.5, shW: 11, hipW: 6, joint: 2.6 };
 const FIG_DUR = 2.8;  // Sekunden pro Wiederholung
 const FIG_GROUND = 148;
 
@@ -93,19 +93,22 @@ function figSvg(pat, gearType, animate = true, label = '') {
   });
   const cablesFirst = gears.filter(g => g.type === 'cable');
   const backCls = front ? 'fb' : 'fb far';
+  // Ellbogen und Knie als sichtbares Gelenk (sonst wirkt z. B. ein Curl wie Schulterheben, User-Wunsch 2026-11-03)
+  const joint = (k, cls) => els.push({ tag: 'circle', cls: 'fj' + cls, a: J => ({ cx: J[k][0], cy: J[k][1], r: FIG.joint }) });
+  const jointBack = front ? '' : ' far';
 
   // hinten: Seile, zweites Bein/Arm
   for (const g of cablesFirst) els.push({ gear: g, cls: '' });
-  if (farLeg) { seg('h2', 'kn2', backCls + ' leg'); seg('kn2', 'ft2', backCls + ' leg'); if (!pat.noFeet) seg('ft2', 'toe2', backCls + ' foot'); }
-  if (farArm) { seg('s2', 'el2', backCls + ' arm'); seg('el2', 'ha2', backCls + ' arm'); }
+  if (farLeg) { seg('h2', 'kn2', backCls + ' leg'); seg('kn2', 'ft2', backCls + ' leg'); if (!pat.noFeet) seg('ft2', 'toe2', backCls + ' foot'); joint('kn2', jointBack); }
+  if (farArm) { seg('s2', 'el2', backCls + ' arm'); seg('el2', 'ha2', backCls + ' arm'); joint('el2', jointBack); }
   for (const g of gears) if (g.type !== 'cable' && /2$/.test(g.at)) els.push({ gear: g, cls: front ? '' : 'far' });
   // Rumpf, Kopf, vorderes Bein und Arm
   seg('hip', 'sh', 'fb torso');
   if (front) { seg('s1', 's2', 'fb torso'); seg('h1', 'h2', 'fb torso'); }
   els.push({ tag: 'circle', cls: 'fh', a: J => ({ cx: J.head[0], cy: J.head[1], r: FIG.head }) });
-  seg('h1', 'kn', 'fb leg'); seg('kn', 'ft', 'fb leg'); if (!pat.noFeet) seg('ft', 'toe', 'fb foot');
+  seg('h1', 'kn', 'fb leg'); seg('kn', 'ft', 'fb leg'); if (!pat.noFeet) seg('ft', 'toe', 'fb foot'); joint('kn', '');
   for (const g of gears) if (g.type !== 'cable' && g.behind && !/2$/.test(g.at)) els.push({ gear: g, cls: '' });
-  seg('s1', 'el', 'fb arm'); seg('el', 'ha', 'fb arm');
+  seg('s1', 'el', 'fb arm'); seg('el', 'ha', 'fb arm'); joint('el', '');
   for (const g of gears) if (g.type !== 'cable' && !g.behind && !/2$/.test(g.at)) els.push({ gear: g, cls: '' });
 
   // Werte je Pose -> statisch oder animiert
@@ -328,7 +331,7 @@ const FIG_PATTERNS = {
   // ----- Arme -----
   curl: {
     gear: [{ at: 'ha', type: 'db', from: [120, 146], r: 8 }], thumb: 1,
-    poses: [{ ...STAND }, { ...STAND, ua: 85, fa: -70 }],
+    poses: [{ ...STAND }, { ...STAND, ua: 80, fa: -45 }],  // oben: Hand vor der Brust, Knick im Ellbogen klar sichtbar
   },
   preacher: {
     props: [['r', 58, 113, 36, 6], ['l', 76, 119, 76, 148, 4], ['l', 96, 74, 118, 100, 7], ['l', 114, 102, 114, 148, 4]],

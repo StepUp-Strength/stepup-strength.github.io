@@ -2142,3 +2142,5 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .cycle .cyc-adjust .pill.now { background: var(--accent); color: #fff; }
 .cycle .cyc-adjust .pill.dl.now { background: var(--warn); color: #1a1200; }
 .cycle .cyc-adjust button.pill { min-height: 46px; }
+/* Übungsfiguren: Ellbogen und Knie als helles Gelenk im Strich */
+.fig .fj { fill: var(--card); stroke: none; }
