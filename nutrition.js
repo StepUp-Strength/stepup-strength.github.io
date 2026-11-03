@@ -702,6 +702,9 @@ function nutIntakeFormHtml() {
     </div>`;
 }
 
+// Knopf zum Import eines eigenen Ernährungsplans (nutplan.js) – unter den Tagebuch-Knöpfen
+const NP_OPEN_BTN = `<button class="btn nav np-open-btn" data-action="np-open">📋 Eigenen Ernährungsplan übernehmen<small>Aus Excel, Google Sheets oder als Tabelle einfügen – z. B. vom Ernährungsberater</small></button>`;
+
 // Heute: Ist ↔ Soll
 function nutIntakeCard(n, c) {
   c = nutForDay(c);
@@ -719,7 +722,8 @@ function nutIntakeCard(n, c) {
       ${nutIntakeForm ? nutIntakeFormHtml() : `<button class="btn primary food-open" data-action="food-open">🍎 Ernährungstagebuch</button>
       <div class="row" ${feat('nut-health') ? '' : 'hidden'}>
         <button class="btn" data-action="health-paste">❤️ Aus Health</button>
-        <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>`}
+        <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>
+      ${nutPlanActive() ? '' : NP_OPEN_BTN}`}
     </div>`;
 }
 
@@ -1088,12 +1092,9 @@ function renderNutrition() {
       <p class="hint nut-small nut-disclaimer">Alle Werte sind Richtwerte für gesunde Erwachsene. Bei Vorerkrankungen, in
         Schwangerschaft und Stillzeit oder bei Essstörungen bitte vorher ärztlich abklären.</p>`;
   }
-  if (!planOn) {
-    h += `<button class="btn nav" data-action="np-open">📋 Eigenen Ernährungsplan übernehmen<small>Aus Excel, Google Sheets oder als Tabelle einfügen – z. B. vom Ernährungsberater</small></button>`;
-  }
-  // Ernährungstagebuch auch ohne fertig eingerichtete Phase erreichbar
+  // Ernährungstagebuch (und darunter Plan-Import) auch ohne fertig eingerichtete Phase erreichbar
   if (!planOn && (!n || !nutReady(n) || kg == null)) {
-    h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>`;
+    h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>${NP_OPEN_BTN}`;
   }
   h += `<h2>Körpergewicht</h2>${bwCard()}${feat('nut-health') ? healthCard() : ''}${rangeRow()}
     <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${bwList()}`;

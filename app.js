@@ -646,7 +646,9 @@ const ciLabel = ci => ci.deload ? 'Deload-Woche' : weekLabel(ci.week);
 function roundAfter(ci) {
   if (!ci.deload) return { start: ci.cycleStart, week: ci.week + 1, no: ci.cycle };
   const last = roundSessions(ci.cycleStart, ci.week).map(s => new Date(s.date).toLocaleDateString('sv-SE')).sort().pop();
-  return { start: last && last > ci.cycleStart ? last : newCycleId(ci.cycleStart), week: 1, no: ci.cycle + 1 };
+  // Zyklus, der mit dem Deload begonnen hat (nach Pause/Krankheit): die Intro-Woche danach gehört noch zum selben Zyklus
+  const lead = data.cycle.leadDl && data.cycle.leadDl === ci.cycleStart;
+  return { start: last && last > ci.cycleStart ? last : newCycleId(ci.cycleStart), week: 1, no: ci.cycle + (lead ? 0 : 1) };
 }
 
 function toCycleInfo(start, week, no, bw) {
@@ -2439,8 +2441,11 @@ function cycleAdjustHtml(ci) {
         <p class="hint">Alle eingetragenen Trainings bleiben gespeichert. Wie soll es weitergehen?</p>
         ${ci.deload ? '' : `<button class="btn primary" data-action="cyc-end" data-m="deload">😮‍💨 Mit Deload-Woche abschließen</button>
         <p class="hint">Empfohlen: ${trained ? 'Nach dieser Woche' : 'Ab jetzt'} kommt die leichte Deload-Woche zum Erholen, danach beginnt der nächste Zyklus.</p>`}
-        <button class="btn" data-action="cyc-end" data-m="new">⏭ Ohne Deload – direkt neuer Zyklus</button>
+        <button class="btn" data-action="cyc-end" data-m="new">⏭ Neuer Zyklus – mit der Intro-Woche</button>
         <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche – z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
+        ${ci.deload ? '' : `<button class="btn" data-action="cyc-end" data-m="newdl">🩹 Neuer Zyklus – mit der Deload-Woche starten</button>
+        <p class="hint">Nach Krankheit oder längerer Pause: Du steigst ab sofort mit der leichten Deload-Woche wieder ein (halbe Sätze,
+          20 % weniger Gewicht), danach geht es mit der Intro-Woche weiter.</p>`}
         <button class="btn center" data-action="cyc-end-cancel">Abbrechen</button>
       </div>`;
   }
@@ -4294,6 +4299,16 @@ const actions = {
         if (!trained) setRound(ci.cycleStart, len + 1, ci.cycle);
       }
       toast(cycleInfo().deload ? 'Jetzt: Deload-Woche, danach neuer Zyklus' : 'Zyklus endet nach dieser Woche – dann kommt der Deload');
+    } else if (el.dataset.m === 'newdl') {
+      // neuer Zyklus, der mit der Deload-Woche beginnt (Wiedereinstieg) – danach Intro-Woche im selben Zyklus
+      if (ci.deload) { toast('Die Deload-Woche läuft schon'); return; }
+      data.cycle.buildWeeks = Math.max(1, ci.week - (roundSessions(ci.cycleStart, ci.week).length ? 0 : 1));
+      const id = newCycleId(ci.cycleStart);
+      setRound(id, 1, ci.cycle + 1);
+      if (selfDeload()) data.cycle.deloadAt = 1;
+      else setRound(id, data.cycle.buildWeeks + 1, ci.cycle + 1);
+      data.cycle.leadDl = id;
+      toast('Neuer Zyklus – es geht mit der Deload-Woche los, danach Intro');
     } else {
       // ohne Deload: sofort neuer Zyklus mit der Intro-Woche
       data.cycle.buildWeeks = Math.max(1, ci.week - (roundSessions(ci.cycleStart, ci.week).length ? 0 : 1));

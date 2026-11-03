@@ -91,8 +91,8 @@ const SPLITS = [
   { id: 'fbpp4', tag: '2er-Split', label: 'Ganzkörper Push/Pull', pairs: true, days: FBPP(4) },
   { id: 'tl', tag: '2er-Split', label: 'Torso/Limbs', note: TL_NOTE, pairs: true, days: [['Torso – niedrige Wdh.', 'heavy', G_TORSO], ['Limbs – niedrige Wdh.', 'heavy', G_LIMBS],
     ['Torso – hohe Wdh.', 'light', G_TORSO], ['Limbs – hohe Wdh.', 'light', G_LIMBS]] },
-  { id: 'ppl4', tag: '3er-Split', label: 'Push/Pull/Beine + Ganzkörper', note: 'Der Ganzkörper-Tag sorgt dafür, dass jeder große Muskel 2× pro Woche dran ist',
-    days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER], ['Ganzkörper', 'light', G_FULL]] },
+  { id: 'ppl4c', tag: '3er-Split', label: 'Push/Pull/Beine', note: 'Klassischer Push/Pull/Beine-Split plus Oberkörper-Tag – Push und Pull 2×, Beine 1× pro Woche',
+    days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER], ['Oberkörper', 'light', G_UPPER]] },
   // 5
   { id: 'pplul', tag: '3er + 2er-Split', label: 'Push/Pull/Beine + Ober-/Unterkörper', days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER],
     ['Oberkörper', 'light', G_UPPER], ['Unterkörper', 'light', G_LOWER]] },
