@@ -2449,25 +2449,48 @@ function applyCycleLen(v) {
 let cycAdjustOpen = false;  // „Zyklus anpassen“ aufgeklappt
 let cycEndAsk = false;      // Rückfrage „Zyklus beenden?“
 
-// Regler für die Standard-Zykluslänge (4–10 Aufbauwochen)
-function cycleLenSlider() {
-  const v = data.cycle.defWeeks;
-  return `<div class="cyc-len">
-      <label class="lbl" for="cyc-len">Zykluslänge: <b id="cyc-len-val">${v} Wochen</b> + 1 Deload-Woche</label>
-      <input type="range" id="cyc-len" min="4" max="10" step="1" value="${v}" data-field="cycle-len">
-      <div class="cyc-len-scale"><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span></div>
-      <p class="hint">Aufbauwochen inklusive Intro-Woche, danach folgt 1 Deload-Woche. Start und Höhepunkt (Sätze und Wdh. im Tank)
-        bleiben gleich – die App verteilt den Anstieg auf die Wochen: Bei einem langen Zyklus steigt es langsamer und gleichmäßiger,
-        bei einem kurzen schneller. Gilt ab sofort und für alle folgenden Zyklen.</p>
-    </div>`;
-}
+// Zykluslänge im Panel „Zyklus anpassen“: ein − / + mit Auswahl „Gilt für“ – alle Zyklen (Standard, 4–10 Wochen, Anstieg
+// wird neu verteilt) oder nur diesen Zyklus (verlängern/verkürzen, z. B. wegen Urlaub). Früher zwei Regler (Schieber +
+// −/+), User-Wunsch 2026-11-03. null: Auswahl aus dem Stand ableiten (Zyklus verlängert/verkürzt -> „nur dieser“).
+let cycLenScope = null;
 
-// Laufenden Zyklus anpassen: verlängern, verkürzen, beenden (Startseite und Plan-Reiter)
-function cycleAdjustHtml(ci) {
-  if (!feat('cycle-adjust') || ownPlan()) return '';
-  if (!cycAdjustOpen) return '<button class="btn outline cyc-adjust-btn" data-action="cyc-adjust-open">⚙️ Zyklus anpassen</button>';
+function cycleLenHtml(ci) {
   const len = data.cycle.buildWeeks, def = data.cycle.defWeeks, adj = data.cycle.adj;
   const min = ci.deload ? len : Math.max(1, ci.week);
+  const lenOn = feat('cycle-len');
+  const scope = !lenOn ? 'this' : cycLenScope || (adj ? 'this' : 'all');
+  // „Alle Zyklen“: Zahl = Standardlänge (4–10); „Nur diesen Zyklus“: Zahl = Länge des laufenden Zyklus (ab laufender Woche, bis 12)
+  const val = scope === 'all' ? def : len;
+  const lo = scope === 'all' ? 4 : min, hi = scope === 'all' ? 10 : 12;
+  const wk = n => `${n} Woche${n === 1 ? '' : 'n'}`;
+  const changed = adj ? `${wk(Math.abs(adj))} ${adj > 0 ? 'verlängert' : 'verkürzt'}` : '';
+  const state = scope === 'all'
+    ? `Standard für alle Zyklen${adj ? ` · dieser Zyklus: ${wk(len)} (${changed})` : ''}`
+    : adj ? `nur dieser Zyklus, ${changed} · Standard ${def}` : `nur dieser Zyklus · wie Standard`;
+  const chip = (k, l) => `<button class="vchip ${scope === k ? 'on' : ''}" data-action="cyc-scope" data-s="${k}">${l}</button>`;
+  return `<p><b>Zykluslänge</b></p>
+      <div class="row cyc-adj-row">
+        <button class="icon-btn" data-action="cyc-adj" data-scope="${scope}" data-d="-1" ${val <= lo ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
+        <span><b>${wk(val)}</b> + Deload<small>${state}</small></span>
+        <button class="icon-btn" data-action="cyc-adj" data-scope="${scope}" data-d="1" ${val >= hi ? 'disabled' : ''} aria-label="Eine Woche länger">+</button>
+      </div>
+      ${lenOn ? `<p class="lbl chips-title">Gilt für</p><div class="variants cyc-scope">${chip('all', 'Alle Zyklen')}${chip('this', 'Nur diesen Zyklus')}</div>` : ''}
+      <p class="hint">${scope === 'all'
+        ? `Aufbauwochen inklusive Intro-Woche (4–10), danach 1 Deload-Woche. Start und Höhepunkt (Sätze und Wdh. im Tank) bleiben
+          gleich – die App verteilt den Anstieg auf die Wochen: lang = langsamer und gleichmäßiger, kurz = schneller. Gilt ab
+          sofort, auch für den laufenden Zyklus.`
+        : `<b>Kürzer:</b> Der Deload kommt früher – praktisch, wenn er genau in den Urlaub fallen soll. <b>Länger:</b> Zusätzliche
+          Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter) – z. B. wenn du wegen des Urlaubs Trainings
+          verpasst hast. Gilt nur für diesen Zyklus; der nächste hat wieder ${wk(def)}.`}</p>`;
+}
+
+// Zyklus anpassen an der Zykluskarte (Trainings-Reiter): Woche wechseln, Zykluslänge, beenden
+function cycleAdjustHtml(ci) {
+  if (!feat('cycle-adjust') || ownPlan()) return '';
+  if (!cycAdjustOpen) {
+    return `<button class="btn cyc-adjust-btn" data-action="cyc-adjust-open"><span>⚙️ Zyklus anpassen</span>
+      <small>${feat('plan-week-jump') ? 'Woche wechseln · ' : ''}Länge · Beenden</small></button>`;
+  }
   if (cycEndAsk) {
     const trained = roundSessions(ci.cycleStart, ci.week).length > 0;
     return `<div class="cyc-adjust">
@@ -2492,16 +2515,8 @@ function cycleAdjustHtml(ci) {
       <hr class="cyc-sep">`;
   return `<div class="cyc-adjust">
       ${jump}
-      ${feat('cycle-len') ? cycleLenSlider() + '<hr class="cyc-sep">' : ''}
-      <p><b>Diesen Zyklus anpassen</b> <small class="hint">· z. B. wegen Urlaub</small></p>
-      <div class="row cyc-adj-row">
-        <button class="icon-btn" data-action="cyc-adj" data-d="-1" ${len <= min ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
-        <span><b>${len} Woche${len === 1 ? '' : 'n'}</b> + Deload${adj ? `<small>${adj > 0 ? `${adj} Woche${adj === 1 ? '' : 'n'} verlängert` : `${-adj} Woche${adj === -1 ? '' : 'n'} verkürzt`} · sonst ${def}</small>` : `<small>Standard</small>`}</span>
-        <button class="icon-btn" data-action="cyc-adj" data-d="1" ${len >= 12 ? 'disabled' : ''} aria-label="Eine Woche länger">+</button>
-      </div>
-      <p class="hint"><b>Kürzer:</b> Der Deload kommt früher – praktisch, wenn er genau in den Urlaub fallen soll.
-        <b>Länger:</b> Zusätzliche Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter) – praktisch, wenn du
-        wegen des Urlaubs Trainings verpasst hast und den Deload nach hinten schieben willst. Gilt nur für diesen Zyklus; der nächste hat wieder ${def} Wochen.</p>
+      ${cycleLenHtml(ci)}
+      <hr class="cyc-sep">
       <button class="btn danger" data-action="cyc-end-ask">⏹ Zyklus beenden</button>
       <button class="btn center" data-action="cyc-adjust-open">Fertig</button>
     </div>`;
@@ -4324,11 +4339,17 @@ const actions = {
   },
   'cycle-weeks': el => applyCycleLen(data.cycle.defWeeks + Number(el.dataset.delta)),
   // Laufenden Zyklus anpassen (Urlaub …): verlängern / verkürzen / beenden
-  'cyc-adjust-open': () => { cycAdjustOpen = !cycAdjustOpen; cycEndAsk = false; render(); },
+  'cyc-adjust-open': () => { cycAdjustOpen = !cycAdjustOpen; cycEndAsk = false; cycLenScope = null; render(); },
   'cyc-adj': el => {
-    setCycleAdj(data.cycle.adj + Number(el.dataset.d));
+    const d = Number(el.dataset.d);
+    if (el.dataset.scope === 'all') {
+      // Standardlänge für alle Zyklen (4–10), gilt sofort auch für den laufenden – dessen Verlängerung/Verkürzung bleibt
+      data.cycle.defWeeks = Math.min(10, Math.max(4, data.cycle.defWeeks + d));
+      setCycleAdj(data.cycle.adj);
+    } else setCycleAdj(data.cycle.adj + d);
     saveData(); render();
   },
+  'cyc-scope': el => { cycLenScope = el.dataset.s; render(); },
   'cyc-end-ask': () => { cycEndAsk = true; render(); },
   'cyc-end-cancel': () => { cycEndAsk = false; render(); },
   'cyc-end': el => {
@@ -4716,7 +4737,6 @@ const fields = {
     saveDraft();
   },
   // Regler Zykluslänge: Anzeige beim Ziehen, übernommen beim Loslassen (siehe change)
-  'cycle-len': el => { const v = document.getElementById('cyc-len-val'); if (v) v.textContent = `${el.value} Wochen`; },
   'tr-rir': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.rir = el.value;
@@ -4743,7 +4763,6 @@ document.addEventListener('change', e => {
     return;
   }
   if (e.target.dataset && e.target.dataset.field === 'tr-max') { applyTrainingMax(e.target); return; }
-  if (e.target.dataset && e.target.dataset.field === 'cycle-len') { applyCycleLen(Number(e.target.value)); return; }
   if (e.target.id === 'import-file' && e.target.files[0]) {
     importData(e.target.files[0]);
     e.target.value = '';

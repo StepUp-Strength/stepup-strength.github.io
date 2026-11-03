@@ -2144,3 +2144,15 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .cycle .cyc-adjust button.pill { min-height: 46px; }
 /* Übungsfiguren: Ellbogen und Knie als helles Gelenk im Strich */
 .fig .fj { fill: var(--card); stroke: none; }
+/* „⚙️ Zyklus anpassen“ deutlich hervorgehoben: weiße Fläche auf der blauen Karte, zweite Zeile mit dem Inhalt */
+.card.cycle .btn.cyc-adjust-btn:not(.primary):not(.danger) {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 100%; min-height: 62px; margin: 14px 0 0; padding: 10px 14px; border: 0; border-radius: 16px;
+  background: #fff; color: var(--accent); font-size: 18px; font-weight: 800;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .18);
+}
+.card.cycle .cyc-adjust-btn small { display: block; text-align: center; font-size: 13.5px; font-weight: 600; color: #5b6170; }
+.card.cycle .cyc-adjust-btn:active { transform: scale(.98); }
+/* Auswahl „Gilt für“ im Panel */
+.cyc-scope .vchip { min-height: 44px; }
+.card.cycle .cyc-adjust .vchip:not(.on) { background: var(--card); color: var(--text); }
