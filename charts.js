@@ -820,12 +820,14 @@ function renderCharts() {
   // Modi: Tonnage und Detail-Schalter nur für Experten, Schritte ab Standard
   if ((s.mode === 'ton' && !feat('chart-detail')) || (s.mode === 'steps' && !feat('steps'))) s.mode = 'ex';
   if (!feat('chart-detail')) { s.metric = 'weight'; s.variant = ''; s.withDeload = false; }
-  const tabs = [['ex', 'Übungen'], feat('chart-detail') && ['ton', 'Tonnage'], feat('steps') && ['steps', 'Schritte'], ['awards', '🏆 Erfolge']].filter(Boolean);
+  const tabs = [['ex', 'Übungen'], feat('chart-detail') && ['ton', 'Tonnage'], feat('steps') && ['steps', 'Schritte'],
+    typeof renderCardioStats === 'function' && ['cardio', '🏃 Cardio'], ['awards', '🏆 Erfolge']].filter(Boolean);
   let h = `<div class="seg grid two">${tabs.map(([m, l]) =>
     `<button class="${s.mode === m ? 'on' : ''}" data-action="chart-mode" data-mode="${m}">${l}</button>`).join('')}
   </div>`;
 
   if (s.mode === 'awards') return h + renderAwards();
+  if (s.mode === 'cardio') return h + renderCardioStats();  // cardio.js
 
   if (s.mode === 'steps') {
     h += (feat('nut-health') ? `<p class="hint">❤️ Schritte aus Apple Health holst du im Reiter <b>Ernährung</b> mit „Aus Health“ –

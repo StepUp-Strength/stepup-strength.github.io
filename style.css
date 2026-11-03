@@ -2156,3 +2156,50 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 /* Auswahl „Gilt für“ im Panel */
 .cyc-scope .vchip { min-height: 44px; }
 .card.cycle .cyc-adjust .vchip:not(.on) { background: var(--card); color: var(--text); }
+
+/* ---------- Kalender (Verlauf, Cardio) ---------- */
+.cal { margin: 0 0 10px; padding: 12px 10px 10px; border-radius: 20px; background: var(--card); box-shadow: var(--shadow); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
+.cal-head b { font-size: 18px; }
+.cal-head .icon-btn { min-width: 44px; height: 44px; font-size: 24px; }
+.cal-head .icon-btn:disabled { opacity: .3; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-wd { text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); padding: 2px 0 4px; }
+.cal-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px;
+  min-width: 0; min-height: 50px; padding: 4px 0 2px; border: 0; border-radius: 12px; background: transparent;
+  font-family: inherit; color: var(--text); cursor: pointer;
+}
+.cal-cell.empty { min-height: 0; }
+.cal-cell b {
+  display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%;
+  font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.cal-cell small { min-height: 15px; font-size: 12px; line-height: 15px; }
+.cal-cell.future { color: var(--muted); opacity: .45; cursor: default; }
+.cal-cell.today b { box-shadow: inset 0 0 0 2px var(--accent); }
+.cal-cell.tr b { background: var(--accent); color: #fff; font-weight: 800; }
+.cal-cell.tr.dl b { background: var(--warn); color: #1a1200; }
+.cal-cell.cd b { background: var(--accent-soft); color: var(--accent-text); font-weight: 800; }
+.cal-cell.sel { background: var(--fill); box-shadow: inset 0 0 0 2px var(--line-strong); }
+.cal-cell:not(.future):active { transform: scale(.94); }
+.cal-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 14px; font-size: 13.5px; color: var(--muted); }
+.cal-key { display: inline-block; width: 12px; height: 12px; margin-right: -6px; border-radius: 50%; vertical-align: -1px; }
+.cal-key.tr { background: var(--accent); }
+.cal-key.dl { background: var(--warn); }
+.cal-key.cd { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cal-day { margin-top: 0; }
+.cal-day-head { margin: 0 0 8px; font-size: 16px; }
+.cal-day .btn.nav:last-child { margin-bottom: 0; }
+
+/* ---------- Cardio-Statistik ---------- */
+.cardio-range button { font-size: 14.5px; }
+.cardio-stats { grid-template-columns: repeat(2, 1fr); }
+.cardio-stats .stat b { font-size: 21px; }
+.cardio-chart { padding: 10px 8px 4px; }
+.cardio-bars { display: block; width: 100%; height: auto; }
+.chart-svg .c-bar { fill: var(--accent); opacity: .55; }
+.chart-svg .c-bar.now { opacity: 1; }
+.chart-svg .c-val { font-size: 10px; font-weight: 700; fill: var(--text); }
+.cardio-unit { margin: 2px 6px 6px; font-size: 13px; }
+.cardio-add-btn { margin-top: 6px; }

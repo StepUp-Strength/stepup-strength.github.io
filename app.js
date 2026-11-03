@@ -1096,6 +1096,34 @@ function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
   return res;
 }
 
+// Geschätzte Trainingsdauer in Minuten (User-Vorgabe 2026-11-03): je Satz 1 min, nach jedem Satz Pause nach Übungsart –
+// Grundübung 4, normale Übung 3, Isolation (Assistenz) 2 min; nach dem letzten Satz des Trainings keine Pause.
+// Sätze wie im Training (draftEntries): Muskelgruppen-Volumen der Woche, sonst Wochenplan der Übung; deload = halbe Sätze.
+const REST_MIN = { compound: 4, normal: 3, assist: 2 };
+function estDuration(day, week, plan = activePlan(), deload = false) {
+  const exs = day.exercises.filter(e => e.name.trim());
+  if (!exs.length) return 0;
+  const bw = data.cycle.buildWeeks || 4;
+  const w = Math.min(Math.max(1, week), bw);
+  const auto = autoSetsForDay(day, deload ? bw : w, deload, plan.volume || {});
+  let t = 0, rest = 0;
+  for (const ex of exs) {
+    const n = auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw);
+    rest = REST_MIN[kindOf(ex)] || 3;
+    t += n * (1 + rest);
+  }
+  return t - rest;
+}
+// „ca. 55 min“ bzw. „ca. 45–60 min“ (auf 5 min gerundet)
+function estText(lo, hi = lo) {
+  const r = m => Math.max(5, Math.round(m / 5) * 5);
+  const a = r(Math.min(lo, hi)), b = r(Math.max(lo, hi));
+  if (a === b) return `ca. ${fmtDur(a)}`;
+  return b <= 60 ? `ca. ${a}–${b} min` : `ca. ${fmtDur(a)} – ${fmtDur(b)}`;
+}
+// Spanne eines Tages über den Zyklus: Intro-Woche bis Höhepunkt (eigener Plan: immer gleich)
+const estRange = (day, plan = activePlan()) => [estDuration(day, 1, plan), estDuration(day, data.cycle.buildWeeks || 4, plan)];
+
 // Deload: Volumen halbieren (Sätze), Gewicht −15 %, nie schwerer als DELOAD_RIR im Tank.
 // base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
 const deloadSets = sets => Math.max(1, Math.round(sets / 2));
@@ -2087,8 +2115,10 @@ function renderStart() {
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
     const done = day.exercises.some(e => e.name.trim()) && !open.has(day.id);
-    const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (last ? ` · zuletzt ${fmtDate(last.date)}` : '') +
-      (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
+    // geschätzte Dauer dieser Woche (Sätze wie im Training) und zuletzt gemessene Dauer
+    const est = estDuration(day, ci.week, activePlan(), ci.deload);
+    const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (est ? ` · ${estText(est)}` : '') +
+      (last ? ` · zuletzt ${fmtDate(last.date)}` : '') + (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     const next = day === nextDay;
     h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''}" data-action="start-day" data-id="${day.id}">
       <span class="day-no">${done ? '✓' : i + 1}</span>
@@ -2393,9 +2423,12 @@ function renderPlan() {
     const isActive = p.id === active.id;
     const state = isActive ? ' · aktiv'
       : (p.endedAt ? ` · beendet am ${fmtDate(p.endedAt + 'T12:00:00')}` : '') + ' · antippen zum Aktivieren';
+    // geschätzte Dauer pro Training: kürzester Tag in der Intro-Woche bis längster am Höhepunkt
+    const est = p.days.map(d => estRange(d, p)).filter(([, hi]) => hi);
+    const estTxt = est.length ? ` · ${estText(Math.min(...est.map(x => x[0])), Math.max(...est.map(x => x[1])))} pro Training` : '';
     h += `<div class="plan-row ${isActive ? 'active' : ''} ${p.endedAt && !isActive ? 'ended' : ''}">
       <button class="plan-pick" data-action="plan-activate" data-id="${p.id}">
-        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${state}</small>
+        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${estTxt}${state}</small>
       </button>
       <button class="icon-btn" data-action="plan-rename" data-id="${p.id}" aria-label="Umbenennen">✎</button>
       ${feat('plans-multi') ? `<button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>` : ''}
@@ -2416,9 +2449,14 @@ function renderPlan() {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
   }
   data.days.forEach((day, i) => {
+    const [lo, hi] = estRange(day, active);
     h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
-      <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}</span></button>`;
+      <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}${hi ? `<small>${estText(lo, hi)}${lo !== hi ? ' (Intro bis Höhepunkt)' : ''}</small>` : ''}</span></button>`;
   });
+  if (data.days.some(d => estDuration(d, 1, active))) {
+    h += `<p class="hint">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
+      Isolationsübungen 2 Minuten (ohne Aufwärmen).</p>`;
+  }
   if (active.own) {
     return h + `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
       <h2>Steigerung</h2>
@@ -2797,11 +2835,81 @@ function renderDay({ id }) {
   return h;
 }
 
+/* ---------- Kalender (Verlauf und Cardio-Statistik) ---------- */
+
+// je Kalender (key): angezeigter Monat 'JJJJ-MM' und angetippter Tag 'JJJJ-MM-TT' (null = keiner)
+const calState = {};
+const MONTHS_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const calGet = key => calState[key] || (calState[key] = { month: todayISO().slice(0, 7), sel: null });
+// Kalendertag (lokal) eines gespeicherten Zeitpunkts
+const localDay = iso => new Date(iso).toLocaleDateString('sv-SE');
+
+// Monatskalender, Woche ab Montag. marks(tag) -> { cls, sub } | null (cls z. B. 'tr' Training, 'cd' nur Cardio)
+function calendarHtml(key, marks) {
+  const st = calGet(key);
+  const [y, m] = st.month.split('-').map(Number);
+  const lead = (new Date(y, m - 1, 1, 12).getDay() + 6) % 7;
+  const days = new Date(y, m, 0).getDate();
+  const today = todayISO();
+  let cells = '<span class="cal-cell empty"></span>'.repeat(lead);
+  for (let d = 1; d <= days; d++) {
+    const iso = `${st.month}-${String(d).padStart(2, '0')}`;
+    const mk = iso <= today ? marks(iso) : null;
+    const cls = ['cal-cell', mk && mk.cls, iso === today && 'today', iso === st.sel && 'sel', iso > today && 'future'].filter(Boolean).join(' ');
+    cells += `<button class="${cls}" data-action="cal-pick" data-k="${key}" data-d="${iso}" ${iso > today ? 'disabled' : ''}
+      aria-label="${fmtDate(iso + 'T12:00:00', true)}"><b>${d}</b><small>${mk && mk.sub ? mk.sub : ''}</small></button>`;
+  }
+  return `<div class="cal">
+      <div class="cal-head">
+        <button class="icon-btn" data-action="cal-nav" data-k="${key}" data-d="-1" aria-label="Voriger Monat">‹</button>
+        <b>${MONTHS_DE[m - 1]} ${y}</b>
+        <button class="icon-btn" data-action="cal-nav" data-k="${key}" data-d="1" ${st.month >= today.slice(0, 7) ? 'disabled' : ''} aria-label="Nächster Monat">›</button>
+      </div>
+      <div class="cal-grid">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(w => `<span class="cal-wd">${w}</span>`).join('')}${cells}</div>
+    </div>`;
+}
+
+// Knopf eines gespeicherten Trainings (Verlauf, Kalendertag)
+const sessionBtn = s => `<button class="btn nav" data-action="open-session" data-id="${s.id}">
+    ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.deload ? ' · Deload' : ''}</small></button>`;
+
+// Verlauf: Kalender mit Trainings (und Cardio), angetippter Tag, Trainings des Monats, Übungen
 function renderHistory() {
   const cardio = typeof cardioStartHtml === 'function' ? cardioStartHtml() : '';
-  if (!data.sessions.length) {
+  const cardioList = typeof data.cardio !== 'undefined' ? data.cardio : [];
+  if (!data.sessions.length && !cardioList.length) {
     return cardio + '<p class="hint">Noch keine Trainings gespeichert.</p>';
   }
+  const byDay = new Map();
+  for (const s of sessionsNewestFirst()) {
+    const d = localDay(s.date);
+    if (!byDay.has(d)) byDay.set(d, []);
+    byDay.get(d).push(s);
+  }
+  const icon = c => (typeof CARDIO_TYPES !== 'undefined' && (CARDIO_TYPES[c.type] || CARDIO_TYPES.other).icon) || '🏃';
+  const st = calGet('hist');
+  let h = calendarHtml('hist', iso => {
+    const ss = byDay.get(iso) || [], cs = cardioList.filter(c => c.date === iso);
+    if (!ss.length && !cs.length) return null;
+    return { cls: ss.length ? (ss.every(s => s.deload) ? 'tr dl' : 'tr') : 'cd', sub: cs.length ? icon(cs[0]) : '' };
+  });
+  h += `<p class="cal-legend"><span class="cal-key tr"></span>Training <span class="cal-key dl"></span>Deload
+    <span class="cal-key cd"></span>nur Cardio</p>`;
+  // angetippter Tag
+  if (st.sel) {
+    const ss = byDay.get(st.sel) || [], cs = cardioList.filter(c => c.date === st.sel);
+    h += `<div class="card cal-day"><p class="cal-day-head"><b>${fmtDate(st.sel + 'T12:00:00', true)}</b></p>
+      ${ss.map(sessionBtn).join('')}${cs.map(c => typeof cardioRowHtml === 'function' ? cardioRowHtml(c) : '').join('')}
+      ${ss.length || cs.length ? '' : '<p class="hint">An diesem Tag hast du nichts eingetragen.</p>'}</div>`;
+  }
+  // Trainings des angezeigten Monats
+  const inMonth = sessionsNewestFirst().filter(s => localDay(s.date).slice(0, 7) === st.month);
+  const cdMonth = cardioList.filter(c => c.date.slice(0, 7) === st.month);
+  const [y, m] = st.month.split('-').map(Number);
+  h += `<h2>${MONTHS_DE[m - 1]}: ${inMonth.length} Training${inMonth.length === 1 ? '' : 's'}${cdMonth.length ? ` · ${cdMonth.length}× Cardio` : ''}</h2>`;
+  h += inMonth.length ? inMonth.map(sessionBtn).join('') : '<p class="hint">In diesem Monat keine Trainings.</p>';
+  h += `<h2>Cardio</h2>${cardio}`;
+
   // Übungen nach Namen zusammenfassen
   const map = new Map();
   for (const s of sessionsNewestFirst()) {
@@ -2812,16 +2920,10 @@ function renderHistory() {
     }
   }
   const exercises = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
-
-  let h = cardio + (feat('ex-history') ? '<h2>Übungen</h2>' : '');
+  if (feat('ex-history') && exercises.length) h += '<h2>Übungen</h2>';
   for (const ex of feat('ex-history') ? exercises : []) {
     h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
       ${esc(ex.name)}<small>${ex.count}× trainiert · zuletzt ${fmtDate(ex.last)}</small></button>`;
-  }
-  h += '<h2>Alle Trainings</h2>';
-  for (const s of sessionsNewestFirst()) {
-    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}">
-      ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.deload ? ' · Deload' : ''}</small></button>`;
   }
   return h;
 }
@@ -4478,6 +4580,19 @@ const actions = {
   // aus dem Verlauf oder z. B. aus der Bibliothek: „Zurück“ führt wieder dorthin
   'open-exercise': el => go('exercise', { name: el.dataset.name, from: current.view, fromParams: current.params }),
   'open-session': el => go('session', { id: el.dataset.id, week: el.dataset.week }),
+  // Kalender: Monat blättern bzw. Tag antippen (nochmal antippen = abwählen)
+  'cal-nav': el => {
+    const st = calGet(el.dataset.k);
+    const [y, m] = st.month.split('-').map(Number);
+    st.month = new Date(y, m - 1 + Number(el.dataset.d), 1, 12).toLocaleDateString('sv-SE').slice(0, 7);
+    st.sel = null;
+    render();
+  },
+  'cal-pick': el => {
+    const st = calGet(el.dataset.k);
+    st.sel = st.sel === el.dataset.d ? null : el.dataset.d;
+    render();
+  },
   'del-session': el => {
     if (!confirm('Dieses Training endgültig löschen?')) return;
     data.sessions = data.sessions.filter(s => s.id !== el.dataset.id);
