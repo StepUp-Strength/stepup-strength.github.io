@@ -190,6 +190,39 @@ const $cancel = document.getElementById('cancel');
 const $toast = document.getElementById('toast');
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+/* ---------- Modi: Einfach / Standard / Experte ----------
+   Die Logik (Steigerung, Volumen, Tank, Zyklen, Ernährung) ist in allen Modi dieselbe – der Modus bestimmt nur, was zu
+   sehen und einzustellen ist (data.profile.mode). Was ausgeblendet ist, läuft mit der Empfehlung der App weiter.
+   FEATURE_MODE: ab welchem Modus eine Funktion zu sehen ist (fehlt sie hier: in allen Modi). Abgestimmt mit dem User. */
+const APP_MODES = {
+  e: { rank: 1, icon: '🌱', label: 'Einfach', text: 'Nur das Nötigste – die App entscheidet für dich. Ideal für Neulinge.' },
+  s: { rank: 2, icon: '💪', label: 'Standard', text: 'Das Wichtige mit kurzer Begründung – für Einsteiger und Fortgeschrittene.' },
+  x: { rank: 3, icon: '🦉', label: 'Experte', text: 'Alle Zahlen, Tabellen und Einstellungen – für alte Hasen.' },
+};
+const FEATURE_MODE = {
+  // Plan-Assistent
+  'wiz-custom': 's', 'wiz-style': 'x', 'wiz-freq': 's', 'wiz-days': 's', 'wiz-name': 's', 'wiz-focus': 's', 'wiz-volume': 's',
+  'wiz-volume-edit': 'x', 'wiz-rir': 'x', 'wiz-preview': 's', 'wiz-int': 's', 'wiz-deload': 's', 'wiz-prog': 's', 'entry-week': 's',
+  // Vor dem Training
+  'check-detail': 's', 'first-max': 's', 'cycle-choice': 's',
+  // Training
+  'tr-rir-input': 's', 'tr-tank-target': 's', 'tr-max': 's', 'tr-step': 's', 'tr-variants': 'x', 'tr-compare': 's', 'tr-sets': 's',
+  'tr-add': 's', 'tr-comment': 's', 'tr-prog': 's', 'tr-next': 's',
+  // Startseite & Verlauf
+  'stall-hints': 's', 'week-view': 's', 'session-edit': 's', 'ex-history': 's', 'chart-detail': 'x', 'steps': 's',
+  // Plan-Reiter
+  'plans-multi': 's', 'plan-add-ex': 's', 'day-reprange': 's', 'ex-kind-group': 'x', 'day-free': 'x', 'day-volume': 'x',
+  'plan-cycle-settings': 'x', 'plan-week-jump': 's', 'plan-week-prog': 'x', 'plan-volume': 'x', 'plan-rir': 'x', 'custom-ex': 's',
+  'day-templates': 's',
+  // Ernährung
+  'nut-minicut': 's', 'nut-pace': 's', 'nut-own-kcal': 's', 'nut-macros': 's', 'nut-macro-pct': 'x', 'nut-protein-detail': 's',
+  'nut-health': 's', 'nut-history': 's', 'nut-trend-detail': 's', 'nut-measured': 'x', 'nut-train-q': 's', 'nut-explain': 's',
+};
+// Bestehende Nutzer ohne Wahl: Experte (so fehlt nach dem Update nichts); neue wählen bei der Begrüßung
+const appMode = () => (data.profile && APP_MODES[data.profile.mode] ? data.profile.mode : 'x');
+const feat = k => APP_MODES[appMode()].rank >= APP_MODES[FEATURE_MODE[k] || 'e'].rank;
+const simpleMode = () => appMode() === 'e';
 const nameKey = name => String(name).trim().toLowerCase();
 const findDay = id => data.days.find(d => d.id === id);
 
@@ -1868,7 +1901,7 @@ function cycleCard(ci) {
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
-    <h2>${head}</h2>${cyclePills(ci, 'week-open')}
+    <h2>${head}</h2>${cyclePills(ci, feat('week-view') ? 'week-open' : null)}
     <p class="round-status">🔄 ${roundStatus(ci)}</p>
     <p class="sub">${sub} Eine Woche ist geschafft, sobald jeder Trainingstag einmal${(activePlan().perWeek || 1) > 1 ? ' bzw. zweimal' : ''} dran war – egal, wie viele Tage du dafür brauchst.</p>
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
@@ -1880,7 +1913,7 @@ function cycleCard(ci) {
 
 // Start-Bildschirm: Stillstand-Hinweise und Beschwerden dieses Zyklus
 function hintsCard() {
-  const hints = stagnationHints();
+  const hints = feat('stall-hints') ? stagnationHints() : [];
   const areas = currentComplaints() || [];
   if (!hints.length && !areas.length) return '';
   let h = '<div class="card hints"><h2>💡 Hinweise</h2>';
@@ -1895,8 +1928,35 @@ function hintsCard() {
   return h + '</div>';
 }
 
+// Einfach/Standard: nach dem zweiten abgeschlossenen Zyklus einmal anbieten, mehr Einstellungen zu zeigen
+function modeUpCard() {
+  const m = appMode();
+  if (m === 'x' || (data.profile || {}).modeUpSeen === m) return '';
+  if (new Set(data.sessions.filter(x => x.cycleStart).map(x => x.cycleStart)).size < 3) return '';
+  const next = m === 'e' ? 's' : 'x';
+  return `<div class="card hints"><p><b>${APP_MODES[next].icon} Du trainierst jetzt schon eine ganze Weile regelmäßig</b></p>
+      <p class="hint">Möchtest du mehr Einstellungen und Erklärungen sehen? Im Modus „${APP_MODES[next].label}“: ${APP_MODES[next].text}
+        Deine Daten bleiben, wie sie sind – zurück geht es jederzeit in den Optionen.</p>
+      <div class="row"><button class="btn primary" data-action="mode-set" data-m="${next}">Zu „${APP_MODES[next].label}“ wechseln</button>
+        <button class="btn" data-action="mode-up-no">Nein, danke</button></div></div>`;
+}
+
+// Erinnerung an die Sicherung (alle Modi): ab 4 Trainings, wenn die letzte Sicherung über 30 Tage her ist
+function backupCard() {
+  if (data.sessions.length < 4) return '';
+  const last = data.lastExport || '', snooze = data.backupSnooze || '';
+  const today = new Date().toLocaleDateString('sv-SE');
+  const days = d => d ? Math.round((Date.parse(today + 'T12:00:00') - Date.parse(d + 'T12:00:00')) / 86400000) : Infinity;
+  if (days(last) < 30 || days(snooze) < 7) return '';
+  return `<div class="card hints"><p><b>💾 Zeit für eine Sicherung</b></p>
+      <p class="hint">${last ? `Deine letzte Sicherung ist ${days(last)} Tage her.` : 'Du hast deine Daten noch nie gesichert.'}
+        Alles liegt nur auf diesem Handy – geht es verloren oder wird die App gelöscht, sind die Daten weg.</p>
+      <div class="row"><button class="btn primary" data-action="export">Jetzt sichern</button>
+        <button class="btn" data-action="backup-later">Später</button></div></div>`;
+}
+
 function renderStart() {
-  let h = greeting() + colorHintCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
+  let h = greeting() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -1963,10 +2023,12 @@ function renderTraining() {
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
     <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
-  h += `<p class="sub">${fmtDate(draft.date, true)}<br>${draft.own
+  h += `<p class="sub">${fmtDate(draft.date, true)}<br>${!feat('tr-rir-input')
+    ? 'Trag nach jedem Satz ein, was du geschafft hast, und tippe an, wie er sich angefühlt hat – die App passt die nächsten Sätze daran an.'
+    : draft.own
     ? 'Trag nach jedem Satz ein, was du geschafft hast und wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt.'
     : 'Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.'}</p>`;
-  h += progressionCard();
+  if (feat('tr-prog')) h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
   if (draft.reorder) {
@@ -1989,8 +2051,8 @@ function renderTraining() {
         <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
         <div class="ex-tools">
-          <button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
-            data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>
+          ${feat('tr-comment') ? `<button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
+            data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>` : ''}
           <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
         </div>
       </div>`;
@@ -2006,13 +2068,13 @@ function renderTraining() {
       h += `<p class="complaint-note">⚠️ ${c.label}: ${c.tip}. Bei Schmerz Satz abbrechen.</p>`;
     }
     const stall = stalls.find(s => s.key === nameKey(en.name));
-    if (stall) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
+    if (stall && feat('stall-hints')) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
     const body = en.target && en.target.bodyweight;  // Eigengewicht: kein Aufwärmen, kg = Körpergewicht
     if (!body) {
       if (!en.warmupEdited) syncWarmup(en);  // Vorschlag passend zum aktuellen ersten Arbeitssatz
       h += warmupBlock(en, ei);
     }
-    const lastComment = lastCommentFor(en.name);
+    const lastComment = feat('tr-comment') && lastCommentFor(en.name);
     if (lastComment) {
       h += `<div class="last-comment"><span>💬 Letztes Mal: „${esc(lastComment.text)}“</span>
         <button class="icon-btn" data-action="comment-dismiss" data-sid="${lastComment.sessionId}"
@@ -2026,31 +2088,42 @@ function renderTraining() {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
       const t = en.target;
-      h += `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank</p>`;
+      h += feat('tr-tank-target')
+        ? `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank</p>`
+        : `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · ${feelTargetText(t)}</p>`;
     }
     // Max. bei 10 Wdh., Steigerung und Ausführung kompakt nebeneinander; die Auswahl klappt darunter auf
     const t = en.target;
-    const withMax = t && !t.own && !body;
+    const withMax = t && !t.own && !body && feat('tr-max');
     const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
-    h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.</span>
+    if (withMax || feat('tr-variants')) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.</span>
           <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
             data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>` : ''}
-        <div class="ex-chips">${withMax ? stepChip(en, ei) : ''}
-          <button class="step-chip" data-action="ex-variant-open" data-ei="${ei}" aria-expanded="${!!en.variantOpen}">Ausführung:
-            <b>${vAll != null ? VARIANTS[vAll] : 'gemischt'}</b> <span aria-hidden="true">✎</span></button></div>
+        <div class="ex-chips">${withMax && feat('tr-step') ? stepChip(en, ei) : ''}
+          ${feat('tr-variants') ? `<button class="step-chip" data-action="ex-variant-open" data-ei="${ei}" aria-expanded="${!!en.variantOpen}">Ausführung:
+            <b>${vAll != null ? VARIANTS[vAll] : 'gemischt'}</b> <span aria-hidden="true">✎</span></button>` : ''}</div>
       </div>`;
     if (withMax && t.max10 == null) h += `<p class="first-max-hint">${last ? '' : '🆕 Erstes Mal: '}${MAX_UNKNOWN_HINT}</p>`;
+    // Einfach-Modus: „Kennenlern-Woche“ statt Max.-Abfrage – die App errechnet das Max. aus dem Geschafften
+    if (!feat('tr-max') && t && !t.own && !body && t.max10 == null) {
+      h += `<p class="first-max-hint">🆕 Kennenlernen: Nimm ein Gewicht, mit dem du die Wiederholungen sicher schaffst, und sag nach jedem
+        Satz, wie er sich angefühlt hat – die App passt das Gewicht danach an.</p>`;
+    }
     if (withMax && en.stepOpen) h += stepPick(en, ei);
     if (en.variantOpen) {
       h += `<div class="variants ex-var-pick">${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${vAll === v ? 'on' : ''}" data-action="ex-variant" data-ei="${ei}" data-v="${v}">${label}</button>`).join('')}
         <p class="hint">Gilt für alle noch offenen Sätze. Einzelne Sätze: Satznummer antippen.</p></div>`;
     }
-    if (en.weekFirst) {
+    if (en.weekFirst && feat('tr-compare')) {
       h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
         ${setRows([{ sets: en.weekFirst.sets }])}<b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></div>`;
     }
-    if (en.compare) {
+    if (!feat('tr-compare')) {
+      // Einfach: eine Zeile mit den Werten vom letzten Mal
+      h += last ? `<p class="last">Letztes Mal: ${last.sets.map(x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps}` : `${x.reps} Wdh.`).join(' · ')}</p>`
+        : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+    } else if (en.compare) {
       const rule = en.compare.shifted && !en.rule
         ? 'Verlängerung berücksichtigt: Gewicht aus dieser Woche, Wdh. und Tank wie in der aktuellen Woche'
         : en.rule === 'brake'
@@ -2073,38 +2146,68 @@ function renderTraining() {
         : en.target && en.target.max10 == null && !body ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
           : '<p class="last">Erstes Mal – noch keine Werte.</p>';
     }
-    h += `<p class="adjust" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
-    h += '<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>';
+    // Einfach: kein Erklärtext zur Anpassung (Fachbegriffe) – die angepassten Werte stehen direkt in den Feldern
+    h += `<p class="adjust ${feat('tr-rir-input') ? '' : 'simple-off'}" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
+    const rirInput = feat('tr-rir-input');
+    h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">${rirInput ? 'Tank' : 'Gefühl'}</span>`;
     const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
-    const next = nextPreview(en);
+    const next = feat('tr-next') ? nextPreview(en) : [];
     const bodyKg = body ? currentBodyweight() : null;
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
-      h += `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
-          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>
+      h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
+          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>`
+          : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</span>`) + `
         ${body ? `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`
         : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
-        <input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
-          class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">
-        <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>`;
+        ${rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
+          class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`
+          : `<button class="feel-btn ${s.rir !== '' && s.rir != null ? 'set' : ''}" data-action="tr-feel-open" data-ei="${ei}" data-si="${si}"
+            aria-label="Wie hat sich Satz ${si + 1} angefühlt?">${feelIcon(en, s)}</button>`}
+        <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>
+        ${!rirInput && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
+          `<button class="vchip" data-action="tr-feel" data-ei="${ei}" data-si="${si}" data-f="${f.k}">${f.icon}<small>${f.label}</small></button>`).join('')}</div>` : ''}`;
     });
-    h += `</div><p class="avg" data-avg="${ei}">${avgTankText(en)}</p>
-      <div class="row set-btns">
+    h += `</div>${rirInput ? `<p class="avg" data-avg="${ei}">${avgTankText(en)}</p>` : ''}
+      ${feat('tr-sets') ? `<div class="row set-btns">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
-      </div></section>`;
+      </div>` : ''}</section>`;
   });
-  h += draft.adding ? renderAddExercise()
+  if (feat('tr-add')) h += draft.adding ? renderAddExercise()
     : '<button class="btn center" data-action="add-open">+ Übung hinzufügen</button>';
-  h += `<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam). Sätze mit Pause oder langsam werden nur mit gleich ausgeführten Sätzen verglichen.</p>
+  h += `${feat('tr-variants') ? '<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam). Sätze mit Pause oder langsam werden nur mit gleich ausgeführten Sätzen verglichen.</p>' : ''}
     <button class="btn primary" data-action="tr-save">Training speichern</button>
     <div class="spacer"></div>
     <button class="btn danger" data-action="tr-cancel">Training verwerfen</button>`;
   return h;
 }
+
+// Einfach-Modus: Gefühl statt Tank-Zahl. Intern wird daraus „Wdh. im Tank“ relativ zum Ziel der Übung.
+const FEELS = [
+  { k: 'easy', icon: '😊', label: 'locker' },
+  { k: 'good', icon: '💪', label: 'gut' },
+  { k: 'hard', icon: '😤', label: 'hart' },
+  { k: 'max', icon: '🔥', label: 'ging nichts mehr' },
+];
+function feelRir(t, k) {
+  const r = Math.round((t && t.rir != null ? t.rir : 2));
+  // locker = noch mind. 4 · gut = genau das Ziel · hart = noch 1 · ging nichts mehr = 0
+  return { easy: Math.max(4, r + 2), good: r, hard: Math.max(0, Math.min(1, r - 1)), max: 0 }[k];
+}
+function feelIcon(en, s) {
+  if (s.rir === '' || s.rir == null) return '<span class="feel-q">Wie?</span>';
+  const v = parseNum(s.rir), r = Math.round(en.target && en.target.rir != null ? en.target.rir : 2);
+  return v <= 0 ? '🔥' : v < r ? '😤' : v > r + 1 ? '😊' : '💪';
+}
+const feelTargetText = t => {
+  const r = Math.round(t.rir != null ? t.rir : 2);
+  return r <= 0 ? 'jeder Satz bis „ging nichts mehr“ 🔥'
+    : `hör auf, wenn noch etwa ${r} Wdh. gegangen wären (= 💪 gut)`;
+};
 
 // Progression nur für dieses Training ein-/ausschalten (nicht im Deload; Volumen erst ab Woche 2)
 function progressionCard() {
@@ -2188,8 +2291,9 @@ function renderAddExercise() {
 function renderPlan() {
   const c = data.cycle;
   const active = activePlan();
-  let h = '<h2>Meine Pläne</h2>';
-  for (const p of data.plans) {
+  let h = feat('plans-multi') ? '<h2>Meine Pläne</h2>' : '<h2>Mein Plan</h2>';
+  // Einfach: nur der aktive Plan („Neuen Plan erstellen“ ersetzt ihn)
+  for (const p of data.plans.filter(x => feat('plans-multi') || x.id === active.id)) {
     const isActive = p.id === active.id;
     const state = isActive ? ' · aktiv'
       : (p.endedAt ? ` · beendet am ${fmtDate(p.endedAt + 'T12:00:00')}` : '') + ' · antippen zum Aktivieren';
@@ -2198,7 +2302,7 @@ function renderPlan() {
         <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${state}</small>
       </button>
       <button class="icon-btn" data-action="plan-rename" data-id="${p.id}" aria-label="Umbenennen">✎</button>
-      <button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>
+      ${feat('plans-multi') ? `<button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>` : ''}
     </div>`;
   }
   const libBtn = `<button class="btn nav lib-open-btn" data-action="lib">📖 Übungsbibliothek
@@ -2235,9 +2339,17 @@ function renderPlan() {
       <p class="per-week-title">🔁 Jeder Trainingstag 2× pro Woche · ${data.days.length * perWeek} Trainings</p>
       <p class="hint">Die Tage wiederholen sich der Reihe nach. Das 2. Training eines Tages in der Woche richtet sich nach dem 2. Training derselben Woche im letzten Zyklus und liegt nie über dem Plan des 1. Trainings dieser Woche.</p>
     </div>` : ''}
-    <h2>Periodisierung</h2>
-    <div class="card">
-      <div class="row" style="margin-top:0">
+    ${periodCard(c, active)}`;
+  return h;
+}
+
+// Periodisierung im Plan-Reiter – Teile je nach Modus (Wochen/Deload, Woche wechseln, Progression, RIR, Volumen)
+function periodCard(c, active) {
+  const cfg = feat('plan-cycle-settings'), jump = feat('plan-week-jump');
+  if (!cfg && !jump && !feat('plan-volume')) return '';
+  let h = '<h2>Periodisierung</h2><div class="card">';
+  if (cfg) {
+    h += `<div class="row" style="margin-top:0">
         <span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
         <div class="stepper">
           <button data-action="cycle-weeks" data-delta="-1" aria-label="Weniger Wochen">−</button>
@@ -2252,14 +2364,17 @@ function renderPlan() {
       <p class="hint">${selfDeload()
         ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm oder hier über „Deload“.'
         : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
-        Deload: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>
-      <p class="lbl chips-title">Aktuelle Woche</p>
+        Deload: halbe Sätze, 20 % weniger Gewicht, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
+  }
+  if (jump) {
+    h += `<p class="lbl chips-title" ${cfg ? '' : 'style="margin-top:0"'}>Aktuelle Woche</p>
       ${cyclePills(cycleInfo(), 'cycle-jump')}
-      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause direkt mit der Deload-Woche oder wieder mit der Intro-Woche.</p>
-      ${progressionTable()}
-      ${rirTable(c.buildWeeks)}
-    </div>
-    ${volumeEditor()}`;
+      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause direkt mit der Deload-Woche oder wieder mit der Intro-Woche.</p>`;
+  }
+  if (feat('plan-week-prog')) h += progressionTable();
+  if (feat('plan-rir')) h += rirTable(c.buildWeeks);
+  h += '</div>';
+  if (feat('plan-volume')) h += volumeEditor();
   return h;
 }
 
@@ -2394,14 +2509,15 @@ function renderDay({ id }) {
   let h = `<label class="lbl">Name des Trainingstags
       <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}">
     </label>
-    <div class="variants plan daytype"><span>Wiederholungsbereich</span>${Object.entries({ heavy: 'Niedrig', light: 'Hoch', '': 'Frei' }).map(([t, label]) =>
+    ${feat('day-reprange') ? `<div class="variants plan daytype"><span>Wiederholungsbereich</span>${Object.entries({ heavy: 'Niedrig', light: 'Hoch', '': 'Frei' })
+      .filter(([t]) => t || feat('day-free') || !dayIntensity(day)).map(([t, label]) =>
       `<button class="vchip ${(dayIntensity(day) || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
-    </div>
-    <p class="hint">${dayIntensity(day)
+    </div>` : ''}
+    <p class="hint">${!feat('day-reprange') ? 'Sätze, Wiederholungen und Gewichte rechnet die App automatisch aus.' : dayIntensity(day)
       ? `${{ heavy: 'Niedrig: mehr Gewicht, weniger Wiederholungen', light: 'Hoch: weniger Gewicht, mehr Wiederholungen' }[dayIntensity(day)]} – beides sind intensive Trainingstage, nur mit unterschiedlicher Belastung.
         Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.`
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
-    ${volumeSummary(day)}
+    ${feat('day-volume') ? volumeSummary(day) : ''}
     <h2>Übungen</h2>`;
   const bw = data.cycle.buildWeeks;
   const autoWeeks = Array.from({ length: bw }, (_, w) => autoSetsForDay(day, w + 1, false));
@@ -2417,14 +2533,14 @@ function renderDay({ id }) {
           ${libEntry(ex.name) ? '' : 'hidden'}>i</button>
       </div>
       <div class="suggest" hidden></div>
-      ${planCompare(ex, day)}
-      <label class="row"><span>Muskelgruppe</span>
+      ${feat('tr-compare') ? planCompare(ex, day) : ''}
+      ${feat('ex-kind-group') ? `<label class="row"><span>Muskelgruppe</span>
         <select class="inp sel" data-field="ex-group" data-i="${i}">
           <option value="">auto${groupOf({ name: ex.name }) ? ': ' + MUSCLES[groupOf({ name: ex.name })] : ''}</option>
           ${Object.entries(MUSCLES).map(([g, label]) =>
             `<option value="${g}" ${ex.group === g ? 'selected' : ''}>${label}</option>`).join('')}
         </select>
-      </label>
+      </label>` : ''}
       ${isAuto
         ? `<p class="auto-info">Sätze automatisch: ${autoWeeks.map((m, w) => `${w === 0 ? 'Intro' : 'W' + (w + 1)} ${m.get(ex.id)}`).join(' · ')} · Deload ${autoDeload.get(ex.id)}<br>
            Wdh.: ${repRangeText(day, ex)} (Start bei ${repsFor(day, ex)})</p>`
@@ -2434,23 +2550,23 @@ function renderDay({ id }) {
            ${dayIntensity(day)
              ? `<p class="auto-info">Wdh.: ${repRangeText(day, ex)} (Start bei ${repsFor(day, ex)}) · Muskelgruppe ohne Volumen-Vorgabe, Sätze von Hand</p>`
              : stepperRow('Wdh. pro Satz', 'reps', i, ex.reps)}`}
-      <div class="variants plan"><span>Art${ex.kind == null ? ' <small class="hint">(auto)</small>' : ''}</span>${Object.entries(KINDS).map(([k, label]) =>
+      ${feat('ex-kind-group') ? `<div class="variants plan"><span>Art${ex.kind == null ? ' <small class="hint">(auto)</small>' : ''}</span>${Object.entries(KINDS).map(([k, label]) =>
         `<button class="vchip ${kindOf(ex) === k ? 'on' : ''}" data-action="plan-kind" data-i="${i}" data-k="${k}">${label}</button>`).join('')}
-      </div>
-      <p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex), groupOf(ex))}</b></p>
-      <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+      </div>` : ''}
+      ${feat('tr-tank-target') ? `<p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex), groupOf(ex))}</b></p>` : ''}
+      ${feat('tr-variants') ? `<div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
-      </div>
+      </div>` : ''}
       ${bodyweightRow(ex, i)}
-      ${isBodyweight(ex) ? '' : `<label class="row">
+      ${isBodyweight(ex) || !feat('tr-max') ? '' : `<label class="row">
         <span>Max. kg bei 10 Wdh.</span>
         <input class="inp kg ${ex.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal"
           autocomplete="off" data-field="ex-max" data-i="${i}" placeholder="kg"
           value="${ex.max10 == null ? '' : fmtNum(ex.max10)}">
       </label>
-      <div class="variants plan"><span>Steigerung${ex.step == null ? ' <small class="hint">(auto)</small>' : ''}</span>${STEP_OPTIONS.map(v =>
+      ${feat('tr-step') ? `<div class="variants plan"><span>Steigerung${ex.step == null ? ' <small class="hint">(auto)</small>' : ''}</span>${STEP_OPTIONS.map(v =>
         `<button class="vchip ${stepFor(ex) === v ? 'on' : ''}" data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
-      </div>`}
+      </div>` : ''}`}
       <div class="row">
         <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
         <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten">↓</button>
@@ -2458,9 +2574,10 @@ function renderDay({ id }) {
       </div>
     </div>`;
   });
-  h += `<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
+  h += `${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint">Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 kg. ${STEP_HINT}</p>
+    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 kg. ${STEP_HINT}`
+      : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
   return h;
@@ -2481,8 +2598,8 @@ function renderHistory() {
   }
   const exercises = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
-  let h = '<h2>Übungen</h2>';
-  for (const ex of exercises) {
+  let h = feat('ex-history') ? '<h2>Übungen</h2>' : '';
+  for (const ex of feat('ex-history') ? exercises : []) {
     h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
       ${esc(ex.name)}<small>${ex.count}× trainiert · zuletzt ${fmtDate(ex.last)}</small></button>`;
   }
@@ -2542,7 +2659,7 @@ function renderLibrary() {
     <div id="lib-results">${libResults()}</div>
     <div id="lib-groups" ${libQuery.trim() ? 'hidden' : ''}>
     <p class="hint">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>
-    <button class="btn outline lib-add-btn" data-action="libc-new">＋ Eigene Übung hinzufügen</button>
+    ${feat('custom-ex') ? '<button class="btn outline lib-add-btn" data-action="libc-new">＋ Eigene Übung hinzufügen</button>' : ''}
     <p class="hint">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an – danach kannst du sie
       jederzeit wieder aufrufen: im Plan, im Plan-Assistenten und beim Ersetzen oder Hinzufügen im Training.</p>`;
   if (data.customExercises.length) {
@@ -2832,7 +2949,7 @@ function renderSession({ id, fresh, edit, week }) {
   const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
   let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
     (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p>' +
-    `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button><ul class="list">`;
+    `${feat('session-edit') ? `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button>` : ''}<ul class="list">`;
   for (const e of s.entries) {
     const res = e.result
       ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
@@ -2932,6 +3049,26 @@ function renderCheck({ id, step, areas }) {
       <p class="hint">Mehrere antippen möglich. Betroffene Übungen bekommen in diesem Zyklus einen Hinweis.</p>
     </div>`;
   }
+  if (!feat('check-detail') && step === 1) {
+    // Einfach: eine Frage – bei Nein kurze Auswahl, was los ist
+    if (current.params.notOk) {
+      return `<div class="card check">
+        <p class="sub">${esc(findDay(id).name)}</p>
+        <h2 class="question">Was ist los?</h2>
+        <div class="row"><button class="btn" data-action="check-simple" data-k="sleep">😴 schlecht geschlafen</button>
+          <button class="btn" data-action="check-simple" data-k="stress">😫 viel Stress</button></div>
+        <button class="btn" data-action="check-simple" data-k="both">beides</button>
+        <p class="hint">Die App senkt die Ziele heute etwas.</p></div>`;
+    }
+    return `<div class="card check">
+      <p class="sub">${esc(findDay(id).name)}</p>
+      <div class="check-emoji" aria-hidden="true">🙂</div>
+      <h2 class="question">Alles okay heute?</h2>
+      <div class="row">
+        <button class="btn primary" data-action="check-simple" data-k="ok">Ja</button>
+        <button class="btn primary" data-action="check-simple" data-k="no">Nein</button>
+      </div></div>`;
+  }
   const [emoji, q] = step === 1 ? ['😴', 'Hast du gut geschlafen?'] : ['😫', 'Hattest du sonst viel Stress?'];
   return `<div class="card check">
     <p class="sub">${esc(findDay(id).name)} · Frage ${step} von ${total}</p>
@@ -2952,8 +3089,20 @@ const readinessText = r => {
   return parts.join(', ');
 };
 
+// Modus wählen (Optionen)
+function modeCard() {
+  const m = appMode();
+  return `<div class="card mode-card">
+      <h2>Modus</h2>
+      <div class="mode-opts">${Object.entries(APP_MODES).map(([k, x]) =>
+        `<button class="split-opt ${m === k ? 'on' : ''}" data-action="mode-set" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
+      <p class="hint">Bestimmt, wie viel die App zeigt und fragt. Die Trainingssteuerung ist in allen Modi dieselbe: Was du nicht siehst,
+        läuft mit der Empfehlung der App weiter. Ein Wechsel ändert nichts an deinen Daten.</p>
+    </div>`;
+}
+
 function renderData() {
-  return appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -2997,7 +3146,10 @@ function beginCheck(id) {
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
   if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
   // neuer Plan aus dem Assistenten: erst fragen, mit welcher Zykluswoche er beginnt
-  if (activePlan().askEntry) { go('entryweek', { id, w: 1 }); return; }
+  if (activePlan().askEntry) {
+    if (!feat('entry-week')) { delete activePlan().askEntry; saveData(); }  // Einfach: immer mit der Intro-Woche
+    else { go('entryweek', { id, w: 1 }); return; }
+  }
   if (!askSkipRound(day)) return;
   beginAfterRound(id);
 }
@@ -3008,10 +3160,14 @@ function beginAfterRound(id, choice = null) {
   const fresh = !data.sessions.some(s => s.cycleStart === ci.cycleStart);  // erstes Training dieses Zyklus
   if (!choice && fresh && !ci.deload && data.cycleShift[ci.cycleStart] === undefined) {
     const ext = prevExtension(ci.cycleStart);
-    if (ext) { go('cyclechoice', { id, from: ext.from, by: ext.by }); return; }
+    if (ext && !feat('cycle-choice')) {
+      // Einfach: Verlängerung automatisch berücksichtigen
+      data.cycleShift[ci.cycleStart] = { from: ext.from, by: ext.by };
+      saveData();
+    } else if (ext) { go('cyclechoice', { id, from: ext.from, by: ext.by }); return; }
   }
   const neu = firstTimeExercises(findDay(id));
-  if (neu.length) { go('firstmax', { id, exIds: neu.map(e => e.id), choice }); return; }
+  if (neu.length && feat('first-max')) { go('firstmax', { id, exIds: neu.map(e => e.id), choice }); return; }
   beginQuestions(id, null, choice);
 }
 
@@ -3369,6 +3525,8 @@ function saveTraining() {
 }
 
 async function exportData() {
+  data.lastExport = new Date().toLocaleDateString('sv-SE');  // für die Sicherungs-Erinnerung
+  saveData();
   const json = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
   const filename = `training-sicherung-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([json], filename, { type: 'application/json' });
@@ -3607,6 +3765,19 @@ const actions = {
     if (!askSkipRound(findDay(id))) return;
     beginAfterRound(id);
   },
+  // Einfach-Modus: Gefühl eines Satzes
+  'tr-feel-open': el => {
+    const en = draft.entries[el.dataset.ei];
+    en.feelOpen = en.feelOpen === Number(el.dataset.si) ? null : Number(el.dataset.si);
+    render();
+  },
+  'tr-feel': el => {
+    const ei = Number(el.dataset.ei), si = Number(el.dataset.si);
+    const en = draft.entries[ei];
+    fields['tr-rir']({ value: String(feelRir(en.target, el.dataset.f)), dataset: { ei: String(ei), si: String(si) } });
+    en.feelOpen = null;
+    render();
+  },
   'first-max-done': () => beginQuestions(current.params.id, current.params.exIds, current.params.choice),
   // erstes Training nach einem verlängerten Zyklus: Vergleich versetzen (1) oder Woche für Woche (0)
   'cycle-choice': el => {
@@ -3621,6 +3792,14 @@ const actions = {
     if (step === 1) go('check', { ...current.params, step: 2, sleptWell: yes });
     else if (currentComplaints() == null) go('check', { ...current.params, step: 3, stress: yes, areas: [] });
     else startDay(id, { sleptWell: current.params.sleptWell, stress: yes });
+  },
+  'check-simple': el => {
+    const k = el.dataset.k;
+    if (k === 'no') { go('check', { ...current.params, notOk: true }); return; }
+    const sleptWell = !(k === 'sleep' || k === 'both'), stress = k === 'stress' || k === 'both';
+    const { id } = current.params;
+    if (currentComplaints() == null) go('check', { ...current.params, step: 3, sleptWell, stress, areas: [], notOk: false });
+    else startDay(id, { sleptWell, stress });
   },
   'check-area': el => {
     const areas = current.params.areas || [];
@@ -4124,6 +4303,14 @@ const actions = {
   },
 
   export: () => exportData(),
+  'mode-set': el => {
+    data.profile = { ...(data.profile || {}), mode: el.dataset.m, modeUpSeen: el.dataset.m };
+    saveData();
+    toast(`Modus „${APP_MODES[el.dataset.m].label}“`);
+    render();
+  },
+  'mode-up-no': () => { data.profile = { ...(data.profile || {}), modeUpSeen: appMode() }; saveData(); render(); },
+  'backup-later': () => { data.backupSnooze = new Date().toLocaleDateString('sv-SE'); saveData(); render(); },
   import: () => document.getElementById('import-file').click(),
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
@@ -4468,6 +4655,11 @@ function welcomeHtml() {
         </label>
         <p class="lbl">Geschlecht</p>
         <div class="seg two" id="welcome-sex">${sexButtons(profileSex(), 'welcome-sex')}</div>
+        ${welc.fresh ? `<p class="lbl">Wie viel soll die App zeigen?</p>
+          <div class="welcome-modes" id="welcome-mode">${Object.entries(APP_MODES).map(([k, x]) =>
+            `<button class="split-opt ${welc.mode === k ? 'on' : ''}" data-action="welcome-mode" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
+          <p class="hint welcome-note">Die Trainingssteuerung ist in allen Modi gleich – der Modus bestimmt nur, wie viele Zahlen und
+            Einstellungen du siehst. Du kannst ihn jederzeit in den Optionen ändern.</p>` : ''}
       </div>
       ${two ? '' : '<p class="hint welcome-note">Du kannst beides später im Reiter „Optionen“ unter „Profil“ ändern.</p>'}
       <button class="btn primary" data-action="welcome-ok">${two ? 'Weiter' : 'Speichern'}</button>`;
@@ -4484,7 +4676,7 @@ function welcomeHtml() {
       <p>${welc.fresh || welcomeNeedsProfile() ? 'In welcher Phase bist du gerade?' : 'Neu in der App:'} Davon hängt ab, wie viel du essen solltest – und
         auf Wunsch passt die App in einer Diät auch deinen Trainingsplan an.</p>
       <div class="welcome-form wiz-q welcome-phases">
-        ${Object.entries(NUT_PHASES).map(([p, ph]) => opt(p, ph.icon, ph.label, ph.short)).join('')}
+        ${Object.entries(NUT_PHASES).filter(([p]) => p !== 'minicut' || feat('nut-minicut')).map(([p, ph]) => opt(p, ph.icon, ph.label, ph.short)).join('')}
         ${opt('', '🕓', 'Später festlegen', 'Kein Problem – du kannst die Phase jederzeit im Reiter „Ernährung“ wählen.')}
         <details class="nut-help">${NUT_HELP}</details>
       </div>
@@ -4523,6 +4715,11 @@ actions['welcome-sex'] = el => {
   if (!(data.profile && data.profile.color)) document.documentElement.dataset.accent = el.dataset.k === 'f' ? 'berry' : 'blue';
 };
 
+actions['welcome-mode'] = el => {
+  welc.mode = el.dataset.m;
+  el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+};
+
 actions['welcome-ok'] = () => {
   const box = document.querySelector('.welcome');
   if (!box) return;
@@ -4530,8 +4727,9 @@ actions['welcome-ok'] = () => {
   const on = box.querySelector('#welcome-sex button.on');
   if (!name) { alert('Bitte gib deinen Namen ein.'); return; }
   if (!on) { alert('Bitte wähle dein Geschlecht.'); return; }
+  if (welc.fresh && !welc.mode) { alert('Bitte wähle aus, wie viel die App zeigen soll (Einfach, Standard oder Experte).'); return; }
   // Erste Farbwahl nach dem Geschlecht (Frau: Beere, sonst Blau) – danach nur noch unter „Optionen“ änderbar
-  data.profile = { ...(data.profile || {}), name, sex: on.dataset.k,
+  data.profile = { ...(data.profile || {}), name, sex: on.dataset.k, ...(welc.mode ? { mode: welc.mode, modeUpSeen: welc.mode } : {}),
     color: (data.profile && data.profile.color) || (on.dataset.k === 'f' ? 'berry' : 'blue') };
   if (!welcomeNeedsPhase()) data.welcomeSeen = true;
   saveData();
@@ -4550,6 +4748,7 @@ actions['welcome-train'] = el => { welc.trainAdapt = el.dataset.v === '1'; welco
 
 actions['welcome-done'] = () => {
   if (welc.phase == null) { alert('Bitte wähle deine Phase – oder „Später festlegen“.'); return; }
+  if ((welc.phase === 'diet' || welc.phase === 'minicut') && welc.trainAdapt == null && !feat('nut-train-q')) welc.trainAdapt = true;
   if ((welc.phase === 'diet' || welc.phase === 'minicut') && welc.trainAdapt == null) {
     alert('Bitte noch auswählen, ob dein Trainingsplan an die Phase angepasst werden soll.');
     return;

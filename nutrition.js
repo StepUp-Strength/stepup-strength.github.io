@@ -136,6 +136,7 @@ const NUT_ADAPT_TEXT = 'Du trainierst 1 Wiederholung näher am Muskelversagen, d
 // Frage beim Einrichten von Diät und Minicut
 function nutTrainQuestion(d, action = 'nut-train-pick') {
   if (d.phase !== 'diet' && d.phase !== 'minicut') return '';
+  if (!feat('nut-train-q')) return '';  // Einfach: Training wird automatisch angepasst
   const opt = (v, title, text) => `<button class="split-opt ${d.trainAdapt === v ? 'on' : ''}" data-action="${action}" data-v="${v ? 1 : 0}">
       <b>${title}</b><small>${text}</small></button>`;
   const own = data.plans.length && hasActivePlan() && ownPlan();
@@ -397,7 +398,7 @@ function renderNutPhase() {
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🧭</span><h2>In welcher Phase bist du?</h2></div>
       <p class="hint wiz-q-explain">Davon hängt ab, ob du mehr oder weniger essen solltest, als du verbrauchst. Unter jeder Phase
         kannst du eine ausführliche Erklärung aufklappen.</p>
-      ${Object.entries(NUT_PHASES).map(([p, ph]) => `<button class="split-opt cat ${d.phase === p ? 'on' : ''}" data-action="nut-phase" data-p="${p}">
+      ${Object.entries(NUT_PHASES).filter(([p]) => p !== 'minicut' || feat('nut-minicut') || d.phase === p).map(([p, ph]) => `<button class="split-opt cat ${d.phase === p ? 'on' : ''}" data-action="nut-phase" data-p="${p}">
           <span class="cat-icon">${ph.icon}</span><b>${ph.label}</b><small>${ph.short}</small></button>${more(p, ph)}`).join('')}
     </div>
     <details class="card nut-help">${NUT_HELP}</details>`;
@@ -476,7 +477,7 @@ function renderNutGoal() {
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">${ph.icon}</span><h2>${ph.label}: Ziel & Tempo</h2></div>
       <p class="hint wiz-q-explain">Wie schnell soll es gehen? Ausgangspunkt ist dein geschätzter Erhaltungsbedarf von
         <b>${nutKcal(c.tdee)} kcal</b> pro Tag.</p>
-      ${paces}
+      ${feat('nut-pace') ? paces : `<p class="hint nut-small">Tempo: <b>${nutPace(d).label}</b> – der gute Mittelweg für die meisten.</p>`}
       ${weeks}
       ${goal}
     </div>
@@ -582,7 +583,10 @@ function nutTargetCard(n, c, editable = false) {
   const fatLow = kg && c.fat < 0.6 * kg;
   let macros;
   if (editable && nutMacroEdit) macros = nutPctEditor();
-  else {
+  else if (!feat('nut-macros')) {
+    // Einfach: nur Kalorien und Eiweiß
+    macros = `<div class="nut-macros one"><div class="nut-macro p"><span>Eiweiß</span><b>${c.protein} g</b><small>am Tag</small></div></div>`;
+  } else {
     macros = `<div class="nut-macros">
         ${NUT_MACROS.map(([k, l, f]) => {
           const g = { p: c.protein, f: c.fat, c: c.carbs }[k];
@@ -592,7 +596,7 @@ function nutTargetCard(n, c, editable = false) {
       <div class="nut-bar" aria-hidden="true">${[['p', c.protein * 4], ['f', c.fat * 9], ['c', c.carbs * 4]].map(([k, v]) =>
         `<div class="${k}" style="flex:${v}"></div>`).join('')}</div>
       ${fatLow ? `<p class="nut-warn">Sehr wenig Fett: Auf Dauer sollten es mindestens ca. ${Math.round(0.6 * kg / 5) * 5} g am Tag sein (u. a. für die Hormone).</p>` : ''}
-      ${editable ? `<div class="nut-macro-btns">${n.macroPct
+      ${editable && feat('nut-macro-pct') ? `<div class="nut-macro-btns">${n.macroPct
         ? `<span class="hint">Eigene Aufteilung ${n.macroPct.p} / ${n.macroPct.f} / ${n.macroPct.c} %</span>
            <button class="btn" data-action="nut-pct-edit">Ändern</button>
            <button class="btn" data-action="nut-pct-reset">App-Empfehlung</button>`
@@ -601,14 +605,14 @@ function nutTargetCard(n, c, editable = false) {
   return `<div class="card nut-target">
       <span class="lbl">Dein Tagesziel</span>
       <div class="nut-kcal-row"><b class="nut-kcal">${nutKcal(c.kcal)} kcal</b>
-        ${editable && !nutKcalEdit ? '<button class="btn nut-kcal-btn" data-action="nut-kcal-edit">✎ Ändern</button>' : ''}</div>
+        ${editable && !nutKcalEdit && feat('nut-own-kcal') ? '<button class="btn nut-kcal-btn" data-action="nut-kcal-edit">✎ Ändern</button>' : ''}</div>
       <small>${n.kcalOwn != null ? `Von dir festgelegt · berechnet wären ca. ${nutKcal(nutKcalBase(n, n.kg || nutWeight()))} kcal`
         : `Erhaltungsbedarf ca. ${nutKcal(c.tdee)} kcal · ${nutSigned(c.delta, 'kcal')}${adj}`}</small>
       ${editable && nutKcalEdit ? nutKcalEditor(n, c, n.kg || nutWeight()) : ''}
       ${editable && !nutKcalEdit && n.kcalOwn != null ? '<button class="btn nut-kcal-reset" data-action="nut-adjust-reset">↺ Wieder den Wert der App nehmen</button>' : ''}
       ${c.note ? `<p class="nut-warn">${notes[c.note]}</p>` : ''}
       ${macros}
-      ${nutProteinNote(n, c)}
+      ${feat('nut-protein-detail') ? nutProteinNote(n, c) : ''}
       <p class="nut-relax">😌 <b>Kein Stress:</b> Du musst diese Werte nicht aufs Gramm genau treffen. Entscheidend ist, dass Kalorien
         und Eiweiß über die Woche gesehen ungefähr passen – ±10 % sind völlig in Ordnung. Ein Tag mit mehr Kohlenhydraten oder
         weniger Fett macht nichts kaputt; wichtig ist, was du an den meisten Tagen isst.</p>
@@ -678,16 +682,15 @@ function nutIntakeCard(n, c) {
   const body = t
     ? `${nutIntakeBar('Kalorien', t.kcal, c.kcal, 'kcal', 0.1)}
        ${nutIntakeBar('Eiweiß', t.p, c.protein, 'g', 0, c.pLo)}
-       ${nutIntakeBar('Kohlenhydrate', t.c, c.carbs, 'g', 0.25)}
-       ${nutIntakeBar('Fett', t.f, c.fat, 'g', 0.25)}
+       ${feat('nut-macros') ? nutIntakeBar('Kohlenhydrate', t.c, c.carbs, 'g', 0.25) + nutIntakeBar('Fett', t.f, c.fat, 'g', 0.25) : ''}
        <p class="hint nut-small">${{ food: 'Aus deinem Ernährungstagebuch', health: 'Aus Health übernommen', auto: 'Mit dem Tagesziel nachgetragen' }[t.src] || 'Von Hand eingetragen'}${nutHintsOn()
-         ? ' · Grün = passt (Kalorien ±10 %, Eiweiß ab der Untergrenze, Kohlenhydrate und Fett ±25 %).' : '.'}</p>`
+         ? ` · Grün = passt (Kalorien ±10 %, Eiweiß ab der Untergrenze${feat('nut-macros') ? ', Kohlenhydrate und Fett ±25 %' : ''}).` : '.'}</p>`
     : '<p class="hint nut-small">Heute ist noch nichts eingetragen. Trag ins Ernährungstagebuch ein, was du isst – oder füg die Werte aus deiner Ernährungs-App über Health ein bzw. trag die Tagessummen von Hand ein.</p>';
   return `<div class="card nut-intake">
       <p class="nut-intake-head"><b>🍽️ Heute gegessen</b></p>
       ${body}
       ${nutIntakeForm ? nutIntakeFormHtml() : `<button class="btn primary food-open" data-action="food-open">🍎 Ernährungstagebuch</button>
-      <div class="row">
+      <div class="row" ${feat('nut-health') ? '' : 'hidden'}>
         <button class="btn" data-action="health-paste">❤️ Aus Health</button>
         <button class="btn" data-action="nut-intake-open" data-date="${todayISO()}">✏️ Von Hand</button></div>`}
     </div>`;
@@ -767,18 +770,9 @@ function nutMeasured() {
   return { days: days.length, avg, perWeek: slope * 7, tdee: avg - slope * NUT_KCAL_KG, from };
 }
 
-function nutMeasuredCard(n, c) {
-  if (!nutHintsOn()) return '';
-  if (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') return '';
-  const m = nutMeasured();
-  if (m.tdee == null) {
-    return `<div class="card nut-check"><p><b>📏 Gemessener Bedarf</b></p>
-      <p class="hint nut-small">${m.noWeight
-        ? 'Genug Essens-Einträge sind da – jetzt fehlen noch Gewichtswerte: Wiege dich 3–4× pro Woche über mindestens zwei Wochen.'
-        : `Trägst du an mindestens 14 Tagen ein, was du isst (bisher ${m.days} seit dem ${fmtDate(m.from + 'T12:00:00')}), und wiegst dich regelmäßig,
-          rechnet die App deinen <b>echten</b> Erhaltungsbedarf aus: Was du im Schnitt isst, minus das, was sich am Gewicht
-          verändert. Das ist viel genauer als die Schätzformel.`}</p></div>`;
-  }
+// Rechnung zum gemessenen Bedarf: Vorschlag (halber Schritt) und warum ggf. nichts geändert wird
+function nutMeasuredState(n, c, m = nutMeasured()) {
+  if (m.tdee == null) return null;
   const real = Math.round(m.tdee / 10) * 10;
   const used = c.kcal - c.delta;  // Erhaltungsbedarf, mit dem das Tagesziel gerade rechnet
   // schrittweise: nur die Hälfte des Unterschieds übernehmen – die Messung schwankt, so schaukelt sich nichts auf
@@ -792,6 +786,36 @@ function nutMeasuredCard(n, c) {
   const tr = nutTrend(n);
   const onPlan = !close && !atFloor && !minicut && tr && Math.abs(tr.perWeek - c.planned) < 0.15;
   const wait = !close && !atFloor && !minicut && !onPlan && !nutMaySuggest(n);
+  return { real, used, step, adj, close, atFloor, minicut, onPlan, wait, apply: !close && !atFloor && !minicut && !onPlan && !wait };
+}
+
+// Einfach/Standard (ohne Karte „Gemessener Bedarf“): dessen Vorschlag als einfache Frage im Tempo-Check
+function nutMeasuredAsk(n, c) {
+  if (feat('nut-measured') || n.phase === 'minicut' || nutBreakNow(n)) return '';
+  const st = nutMeasuredState(n, c);
+  if (!st || !st.apply) return '';
+  const more = st.step > 0;
+  return `<div class="card nut-check off"><p><b>${more ? '⬆️ Dein Körper braucht etwas mehr als gedacht' : '⬇️ Dein Körper braucht etwas weniger als gedacht'}</b></p>
+    <p class="hint nut-small">${feat('nut-trend-detail')
+      ? `Aus dem, was du in den letzten Wochen gegessen hast, und deinem Gewichtsverlauf ergibt sich ein Bedarf von ca. ${nutKcal(st.real)} kcal
+        (die App rechnet mit ${nutKcal(st.used)}). Sie geht schrittweise vor und passt dein Tagesziel um ${nutSigned(st.step, 'kcal')} an.`
+      : `Das zeigen deine Einträge und dein Gewicht der letzten Wochen.`} Tagesziel um <b>${nutSigned(st.step, 'kcal')}</b> anpassen?</p>
+    <button class="btn primary" data-action="nut-measured-apply" data-v="${st.adj}">Ja, anpassen</button></div>`;
+}
+
+function nutMeasuredCard(n, c) {
+  if (!nutHintsOn() || !feat('nut-measured')) return '';
+  if (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') return '';
+  const m = nutMeasured();
+  if (m.tdee == null) {
+    return `<div class="card nut-check"><p><b>📏 Gemessener Bedarf</b></p>
+      <p class="hint nut-small">${m.noWeight
+        ? 'Genug Essens-Einträge sind da – jetzt fehlen noch Gewichtswerte: Wiege dich 3–4× pro Woche über mindestens zwei Wochen.'
+        : `Trägst du an mindestens 14 Tagen ein, was du isst (bisher ${m.days} seit dem ${fmtDate(m.from + 'T12:00:00')}), und wiegst dich regelmäßig,
+          rechnet die App deinen <b>echten</b> Erhaltungsbedarf aus: Was du im Schnitt isst, minus das, was sich am Gewicht
+          verändert. Das ist viel genauer als die Schätzformel.`}</p></div>`;
+  }
+  const { real, used, step, adj, close, atFloor, minicut, onPlan, wait } = nutMeasuredState(n, c, m);
   return `<div class="card nut-check ${close || onPlan ? 'ok' : 'off'}"><p><b>📏 Gemessener Bedarf: ca. ${nutKcal(real)} kcal</b></p>
       <p class="hint nut-small">Seit dem ${fmtDate(m.from + 'T12:00:00')} hast du an ${m.days} Tagen im Schnitt <b>${nutKcal(m.avg)} kcal</b> gegessen,
         dein Gewicht hat sich dabei um <b>${nutSigned(m.perWeek, 'kg')} pro Woche</b> verändert. Daraus ergibt sich ein Erhaltungsbedarf
@@ -826,7 +850,9 @@ function nutFloorHint(n) {
 function nutTrendCard(n, c) {
   if (!nutHintsOn()) return '';
   if (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') return '';
-  if (nutBreakNow(n)) return '';  // Erhaltungswoche: Wasser verfälscht den Trend  // Erhaltungswoche: Wasser verfälscht den Trend
+  if (nutBreakNow(n)) return '';  // Erhaltungswoche: Wasser verfälscht den Trend
+  const ask = nutMeasuredAsk(n, c);
+  if (ask) return ask;  // Erhaltungswoche: Wasser verfälscht den Trend
   const t = nutTrend(n);
   if (!t) {
     return `<div class="card nut-check"><p><b>📈 Tempo-Check</b></p>
@@ -836,6 +862,7 @@ function nutTrendCard(n, c) {
   const diff = t.perWeek - c.planned;
   const fmt = v => `${nutSigned(v, 'kg')} pro Woche`;
   if (Math.abs(diff) < 0.15) {
+    if (!feat('nut-trend-detail')) return `<div class="card nut-check ok"><p><b>✅ Du liegst im Plan – weiter so!</b></p></div>`;
     return `<div class="card nut-check ok"><p><b>✅ Du liegst im Plan</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Weiter so!</p></div>`;
   }
@@ -845,7 +872,7 @@ function nutTrendCard(n, c) {
     ? (c.planned < 0 ? 'Du nimmst langsamer ab als geplant.' : c.planned > 0 ? 'Du nimmst schneller zu als geplant.' : 'Du nimmst zu, obwohl dein Gewicht gleich bleiben soll.')
     : (c.planned > 0 ? 'Du nimmst langsamer zu als geplant.' : c.planned < 0 ? 'Du nimmst schneller ab als geplant.' : 'Du nimmst ab, obwohl dein Gewicht gleich bleiben soll.');
   // Mit eingetragenem Essen ist der gemessene Bedarf genauer – dann dort anpassen statt hier pauschal
-  if (nutMeasured().tdee != null) {
+  if (nutMeasured().tdee != null && feat('nut-measured')) {
     return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Weil du einträgst, was du isst,
         rechnet die App beim <b>gemessenen Bedarf</b> oben genauer aus, woran es liegt und wie viel du essen solltest.</p></div>`;
@@ -861,6 +888,11 @@ function nutTrendCard(n, c) {
   if (!nutMaySuggest(n)) {
     return `<div class="card nut-check"><p><b>📈 Tempo-Check</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}).</p>${nutWaitHint(n)}</div>`;
+  }
+  if (!feat('nut-trend-detail')) {
+    return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
+      <p class="hint nut-small">Tagesziel um <b>${nutSigned(corr, 'kcal')}</b> anpassen?</p>
+      <button class="btn primary" data-action="nut-adjust" data-v="${corr}">Ja, anpassen</button></div>`;
   }
   return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
     <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Vorschlag: täglich etwa
@@ -1001,7 +1033,7 @@ function renderNutrition() {
       ${nutPhaseHint(n)}
       ${nutTargetCard(n, c, true)}
       ${nutIntakeCard(n, c)}
-      ${nutHistoryCard(n, c)}
+      ${feat('nut-history') ? nutHistoryCard(n, c) : ''}
       ${nutProteinWeekCard(n, c)}
       ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
@@ -1009,7 +1041,7 @@ function renderNutrition() {
       ${nutTrainCard(n)}
       <div class="row nut-actions"><button class="btn" data-action="nut-edit">Angaben ändern</button>
         <button class="btn" data-action="nut-setup">Phase wechseln</button></div>
-      ${nutExplain(n, c, kg)}
+      ${feat('nut-explain') ? nutExplain(n, c, kg) : ''}
       ${nutHintsCard()}
       ${typeof mcAvailable === 'function' && mcAvailable() && !mcOn()
         ? '<button class="btn nav" data-action="mc-onoff" data-v="1">🌸 Zykluskalender einschalten<small>Freiwillig – Periode eintragen, Phasen sehen, Wassertage beim Gewicht herausrechnen</small></button>' : ''}
@@ -1020,7 +1052,7 @@ function renderNutrition() {
   if (!n || !nutReady(n) || kg == null) {
     h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>`;
   }
-  h += `<h2>Körpergewicht</h2>${bwCard()}${healthCard()}${rangeRow()}
+  h += `<h2>Körpergewicht</h2>${bwCard()}${feat('nut-health') ? healthCard() : ''}${rangeRow()}
     <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${bwList()}`;
   return h;
 }
@@ -1134,6 +1166,7 @@ Object.assign(actions, {
   },
   'nut-save': () => {
     const d = nutNumbers(nutDraft);
+    if ((d.phase === 'diet' || d.phase === 'minicut') && d.trainAdapt == null && !feat('nut-train-q')) d.trainAdapt = true;
     if ((d.phase === 'diet' || d.phase === 'minicut') && d.trainAdapt == null) {
       alert('Bitte noch auswählen, ob dein Trainingsplan an die Phase angepasst werden soll.');
       return;

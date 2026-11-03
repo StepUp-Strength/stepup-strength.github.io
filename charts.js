@@ -812,11 +812,12 @@ function bwCard() {
 
 function renderCharts() {
   const s = chartState;
-  let h = `<div class="seg grid two">
-    <button class="${s.mode === 'ex' ? 'on' : ''}" data-action="chart-mode" data-mode="ex">Übungen</button>
-    <button class="${s.mode === 'ton' ? 'on' : ''}" data-action="chart-mode" data-mode="ton">Tonnage</button>
-    <button class="${s.mode === 'steps' ? 'on' : ''}" data-action="chart-mode" data-mode="steps">Schritte</button>
-    <button class="${s.mode === 'awards' ? 'on' : ''}" data-action="chart-mode" data-mode="awards">🏆 Erfolge</button>
+  // Modi: Tonnage und Detail-Schalter nur für Experten, Schritte ab Standard
+  if ((s.mode === 'ton' && !feat('chart-detail')) || (s.mode === 'steps' && !feat('steps'))) s.mode = 'ex';
+  if (!feat('chart-detail')) { s.metric = 'weight'; s.variant = ''; s.withDeload = false; }
+  const tabs = [['ex', 'Übungen'], feat('chart-detail') && ['ton', 'Tonnage'], feat('steps') && ['steps', 'Schritte'], ['awards', '🏆 Erfolge']].filter(Boolean);
+  let h = `<div class="seg grid two">${tabs.map(([m, l]) =>
+    `<button class="${s.mode === m ? 'on' : ''}" data-action="chart-mode" data-mode="${m}">${l}</button>`).join('')}
   </div>`;
 
   if (s.mode === 'awards') return h + renderAwards();
@@ -850,7 +851,7 @@ function renderCharts() {
       return h + '<p class="lbl chips-title">Zuletzt trainiert</p>' + names.slice(0, 8).map(n =>
         `<button class="btn nav" data-action="chart-pick" data-name="${esc(n)}">${esc(n)}</button>`).join('');
     }
-    h += `<div class="seg small">
+    if (feat('chart-detail')) h += `<div class="seg small">
       <button class="${s.metric === 'weight' ? 'on' : ''}" data-action="chart-metric" data-metric="weight">Gewicht</button>
       <button class="${s.metric === 'max10' ? 'on' : ''}" data-action="chart-metric" data-metric="max10">Max. bei 10 Wdh.</button>
     </div>`;
@@ -859,12 +860,12 @@ function renderCharts() {
     for (const ses of data.sessions) {
       for (const e of ses.entries) if (nameKey(e.name) === nameKey(s.name)) e.sets.forEach(x => used.add(variantOf(x)));
     }
-    if ([...used].some(v => v)) {
+    if ([...used].some(v => v) && feat('chart-detail')) {
       h += `<div class="seg small">${Object.entries(VARIANTS).filter(([v]) => v === '' || used.has(v)).map(([v, label]) =>
         `<button class="${s.variant === v ? 'on' : ''}" data-action="chart-variant" data-v="${v}">${label}</button>`).join('')}
       </div>`;
     }
-    h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
+    if (feat('chart-detail')) h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
       ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
   }
 

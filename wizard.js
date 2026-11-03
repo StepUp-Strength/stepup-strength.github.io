@@ -465,16 +465,23 @@ function wizFlow() {
   if (wiz.mode === 'own') return ['mode', 'sessions', 'ownday', 'ownname'];
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
-  const steps = ['mode', 'level', 'sessions', 'split', 'style'];  // style: Volumen-Variante direkt nach der Aufteilung
+  // Modi: Einfach endet nach der Aufteilung (die App stellt den Rest selbst zusammen, siehe wizQuick),
+  // Standard ohne Volumen-Variante und RIR-Tabelle
+  const steps = ['mode', 'level', 'sessions', 'split'];
+  if (feat('wiz-style')) steps.push('style');  // style: Volumen-Variante direkt nach der Aufteilung
   if (custom) steps.push('days', 'freq');
   else {
-    if (tpl && tpl.pairs) steps.push('freq');
-    steps.push('days');
+    if (tpl && tpl.pairs && feat('wiz-freq')) steps.push('freq');
+    if (feat('wiz-days')) steps.push('days');
   }
   // Einstiegswoche wird erst beim ersten Training gefragt (plan.askEntry); nach dem Fokus kommt die Frage
   // „automatisch erstellen?“, danach Volumen und RIR (erst nur zum Ansehen, mit „Bearbeiten“); Deload und Steigerung
   // werden erst ganz am Ende gefragt (Schritte deloadq/progq nach der Vorschau)
-  return [...steps, 'basics', 'prio', 'low', 'auto', 'volume', 'rir'];
+  if (feat('wiz-name')) steps.push('basics');
+  if (feat('wiz-focus')) steps.push('prio', 'low');
+  if (feat('wiz-volume')) steps.push('auto', 'volume');
+  if (feat('wiz-rir')) steps.push('rir');
+  return steps;
 }
 
 // Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
@@ -629,8 +636,8 @@ function renderWizSplit() {
       <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
       <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}</small>
     </button>`).join('') +
-    `<button class="split-opt cat" data-action="wiz-custom">
-      <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>`, false);
+    (feat('wiz-custom') ? `<button class="split-opt cat" data-action="wiz-custom">
+      <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>` : ''), false);
 }
 
 // Schritt „Variante“: mehr Volumen mit mehr im Tank, ausgewogen oder weniger Volumen näher am Muskelversagen
@@ -869,7 +876,8 @@ function renderWizard() {
 
   // Volumen: erst nur ansehen (mit Erklärung), „Bearbeiten“ schaltet auf die Eingabetabelle um (wiz.volEdit)
   if (wiz.step === 'volume') {
-    const next = '<button class="btn primary" data-action="wiz-step" data-to="rir">Weiter</button>';
+    const next = feat('wiz-rir') ? '<button class="btn primary" data-action="wiz-step" data-to="rir">Weiter</button>'
+      : '<button class="btn primary" data-action="wiz-after-rir">Weiter</button>';
     if (!wiz.volEdit) {
       h += `<div class="card wiz-q">
         <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📊</span><h2>Dein Volumen</h2></div>
@@ -886,7 +894,7 @@ function renderWizard() {
           <tr class="vol-week"><td colspan="5">${wizWeekText(g)}</td></tr>`;
       }
       return h + `</table>
-        <button class="btn outline" data-action="wiz-edit" data-k="volEdit">✏️ Volumen bearbeiten</button></div>
+        ${feat('wiz-volume-edit') ? '<button class="btn outline" data-action="wiz-edit" data-k="volEdit">✏️ Volumen bearbeiten</button>' : ''}</div>
         <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>${next}</div>`;
     }
     const inp = (field, g, w, v, cls) =>
@@ -1042,7 +1050,26 @@ function wizAfterSplit() {
   if (tpl && tpl.prio) wiz.prio = [...tpl.prio];  // Klassiker: Schwerpunkt vorab gewählt
   const f = wizFlow();
   wiz.step = f[f.indexOf('split') + 1];
+  if (!wiz.step) { wizQuick(); return; }  // Einfach-Modus
   go('wizard');
+}
+
+// Einfach-Modus: nach der Aufteilung stellt die App den Plan selbst fertig – ausgewogenes Volumen, bei Vorlagen mit
+// Paaren die unkomplizierte Variante (halb so viele Tage, je 2× pro Woche), Übungen automatisch, alles andere Empfehlung
+function wizQuick() {
+  const tpl = SPLITS.find(s => s.id === wiz.split);
+  wiz.style = 'mid';
+  if (tpl && tpl.pairs && wiz.cat !== 'custom') {
+    wiz.perWeek = wiz.volDiv = 2;
+    wiz.days = halfDays(wiz.split);
+    wizResetPlan();
+    if (tpl.prio) wiz.prio = [...tpl.prio];  // Klassiker: Schwerpunkt bleibt
+  }
+  if (tpl) wiz.name = tpl.label;
+  syncGroups();
+  for (const g of wizGroups()) wiz.picks[g] = autoPicks(g);
+  wiz.autoYes = true;
+  actions['wiz-commit']();
 }
 
 // Vorschau: Übung an einem Tag ersetzen – Schnellauswahl verwandter Übungen (ein Tipp tauscht) oder suchen

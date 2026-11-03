@@ -431,8 +431,7 @@ function foodSumHtml(t, c) {
   if (c) {
     return `${nutIntakeBar('Kalorien', Math.round(t.kcal), c.kcal, 'kcal', 0.1)}
       ${nutIntakeBar('Eiweiß', Math.round(t.p), c.protein, 'g', 0, c.pLo)}
-      ${nutIntakeBar('Kohlenhydrate', Math.round(t.c), c.carbs, 'g', 0.25)}
-      ${nutIntakeBar('Fett', Math.round(t.f), c.fat, 'g', 0.25)}`;
+      ${feat('nut-macros') ? nutIntakeBar('Kohlenhydrate', Math.round(t.c), c.carbs, 'g', 0.25) + nutIntakeBar('Fett', Math.round(t.f), c.fat, 'g', 0.25) : ''}`;
   }
   return `<div class="nut-goal-row food-sum"><span>Kalorien<b>${nutKcal(t.kcal)}</b></span><span>Eiweiß<b>${Math.round(t.p)} g</b></span>
       <span>Kohlenh.<b>${Math.round(t.c)} g</b></span><span>Fett<b>${Math.round(t.f)} g</b></span></div>
