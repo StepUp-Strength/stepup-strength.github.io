@@ -205,7 +205,7 @@ function nutSync() {
   const brk = nutBreakNow(n);
   if (brk && !n.breakOn) { n.breakOn = today; changed = true; }
   if (!brk && n.breakOn) {
-    // Erhaltungswoche vorbei: Tempo-Check und gemessener Bedarf beginnen danach neu (Wasser schwankt) –
+    // Erhaltungswoche vorbei: Gewichtsverlauf und gemessener Bedarf beginnen danach neu (Wasser schwankt) –
     // nicht, wenn sie noch am selben Tag abgewählt wurde
     const days = daysSince(n.breakOn);
     n.breakTotal = (n.breakTotal || 0) + days;
@@ -225,7 +225,7 @@ function nutSync() {
 // Wassereinlagerung durch den Menstruationszyklus (menstrual.js) – solche Gewichtswerte zählen nicht für Trend und Bedarf
 const nutWaterDay = d => typeof mcWater === 'function' && mcWater(d);
 
-// Empfehlungen (Tempo-Check, gemessener Bedarf) höchstens alle 2 Wochen: ab Phasenbeginn bzw. letzter Änderung
+// Empfehlungen (Gewichtsverlauf, gemessener Bedarf) höchstens alle 2 Wochen: ab Phasenbeginn bzw. letzter Änderung
 const NUT_SUGGEST_DAYS = 14;
 const nutNextSuggest = n => addDaysISO([n.since, n.adjustAt || '', n.breakEnd ? addDaysISO(n.breakEnd, 7) : ''].sort().pop(), NUT_SUGGEST_DAYS);
 const nutMaySuggest = n => todayISO() >= nutNextSuggest(n) && !n.breakOn;
@@ -317,7 +317,7 @@ function nutHintsCard() {
       <h2>Hinweise zur Ernährung</h2>
       <div class="seg two"><button class="${on ? 'on' : ''}" data-action="nut-hints" data-v="1">An</button>
         <button class="${on ? '' : 'on'}" data-action="nut-hints" data-v="0">Aus</button></div>
-      <p class="hint nut-small">Die App bewertet, was du isst, und schlägt Änderungen vor: Tempo-Check, gemessener Bedarf,
+      <p class="hint nut-small">Die App bewertet, was du isst, und schlägt Änderungen vor: Gewichtsverlauf, gemessener Bedarf,
         Eiweiß-Hinweis und die grünen und orangen Balken bei „Heute gegessen“. Manche Menschen setzt so etwas unter Druck – etwa,
         wenn man ohnehin sehr auf Zahlen achtet oder schon einmal Schwierigkeiten mit dem Essen hatte. <b>Aus</b> heißt: Die App zeigt
         nur noch dein Tagesziel und was du eingetragen hast – ohne Bewertung, ohne Warnungen und ohne Vorschläge. Phasen,
@@ -782,14 +782,14 @@ function nutMeasuredState(n, c, m = nutMeasured()) {
   const after = nutCalc({ ...n, adjust: adj, kcalOwn: null }, n.kg || nutWeight()).kcal;  // Tagesziel nach dem Übernehmen
   const atFloor = !close && after === c.kcal && after <= nutFloor(n);
   const minicut = !close && n.phase === 'minicut';
-  // Läuft das Gewicht laut Tempo-Check genau nach Plan, wird nichts geändert (sonst widersprechen sich die beiden Karten)
+  // Läuft das Gewicht laut Gewichtsverlauf genau nach Plan, wird nichts geändert (sonst widersprechen sich die beiden Karten)
   const tr = nutTrend(n);
   const onPlan = !close && !atFloor && !minicut && tr && Math.abs(tr.perWeek - c.planned) < 0.15;
   const wait = !close && !atFloor && !minicut && !onPlan && !nutMaySuggest(n);
   return { real, used, step, adj, close, atFloor, minicut, onPlan, wait, apply: !close && !atFloor && !minicut && !onPlan && !wait };
 }
 
-// Einfach/Standard (ohne Karte „Gemessener Bedarf“): dessen Vorschlag als einfache Frage im Tempo-Check
+// Einfach/Standard (ohne Karte „Gemessener Bedarf“): dessen Vorschlag als einfache Frage im Gewichtsverlauf
 function nutMeasuredAsk(n, c) {
   if (feat('nut-measured') || n.phase === 'minicut' || nutBreakNow(n)) return '';
   const st = nutMeasuredState(n, c);
@@ -820,7 +820,7 @@ function nutMeasuredCard(n, c) {
       <p class="hint nut-small">Seit dem ${fmtDate(m.from + 'T12:00:00')} hast du an ${m.days} Tagen im Schnitt <b>${nutKcal(m.avg)} kcal</b> gegessen,
         dein Gewicht hat sich dabei um <b>${nutSigned(m.perWeek, 'kg')} pro Woche</b> verändert. Daraus ergibt sich ein Erhaltungsbedarf
         von ca. ${nutKcal(real)} kcal – die App rechnet gerade mit ${nutKcal(used)} kcal${n.kcalOwn != null ? ' (aus deinem eigenen Tagesziel)' : n.adjust ? ' (Formel + Anpassung)' : ' (Schätzformel)'}.
-        ${close ? 'Das passt gut zusammen.' : onPlan ? 'Dein Gewicht läuft aber gerade genau nach Plan (siehe Tempo-Check) – deshalb ändert die App nichts.'
+        ${close ? 'Das passt gut zusammen.' : onPlan ? 'Dein Gewicht läuft aber gerade genau nach Plan (siehe Karte „Gewichtsverlauf“) – deshalb ändert die App nichts.'
           : atFloor || wait || minicut ? '' : `Die App geht schrittweise vor, weil die Messung von Woche zu Woche
           etwas schwankt: Sie verschiebt dein Tagesziel um die Hälfte des Unterschieds (<b>${nutSigned(step, 'kcal')}</b>) und misst dann weiter.`}</p>
       ${atFloor ? nutFloorHint(n) : minicut ? NUT_MINICUT_NOTE : onPlan || close ? '' : wait ? nutWaitHint(n)
@@ -855,7 +855,7 @@ function nutTrendCard(n, c) {
   if (ask) return ask;  // Erhaltungswoche: Wasser verfälscht den Trend
   const t = nutTrend(n);
   if (!t) {
-    return `<div class="card nut-check"><p><b>📈 Tempo-Check</b></p>
+    return `<div class="card nut-check"><p><b>📈 Gewichtsverlauf</b></p>
       <p class="hint nut-small">Wiege dich 3–4× pro Woche, am besten morgens nach dem Aufstehen. Nach gut zwei Wochen in dieser
         Phase vergleicht die App deinen Gewichtsverlauf mit dem Plan und schlägt bei Bedarf eine Anpassung vor.</p></div>`;
   }
@@ -878,7 +878,7 @@ function nutTrendCard(n, c) {
         rechnet die App beim <b>gemessenen Bedarf</b> oben genauer aus, woran es liegt und wie viel du essen solltest.</p></div>`;
   }
   if (n.phase === 'minicut') {
-    return `<div class="card nut-check"><p><b>📈 Tempo-Check</b></p>
+    return `<div class="card nut-check"><p><b>📈 Gewichtsverlauf</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}).</p>${NUT_MINICUT_NOTE}</div>`;
   }
   if (atFloor) {
@@ -886,7 +886,7 @@ function nutTrendCard(n, c) {
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}).</p>${nutFloorHint(n)}</div>`;
   }
   if (!nutMaySuggest(n)) {
-    return `<div class="card nut-check"><p><b>📈 Tempo-Check</b></p>
+    return `<div class="card nut-check"><p><b>📈 Gewichtsverlauf</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}).</p>${nutWaitHint(n)}</div>`;
   }
   if (!feat('nut-trend-detail')) {
@@ -961,16 +961,16 @@ function nutExplain(n, c, kg) {
         automatisch auf Erhaltung – das schützt die Muskeln und macht die Diät auf Dauer leichter.${n.phase === 'minicut'
           ? ' Nach den Minicut-Wochen legt die App den Deload selbst ein, damit Erhaltungswoche und Deload zusammenfallen.' : ''}</p>` : ''}
       ${typeof mcOn === 'function' && mcOn() ? `<p><b>Zykluskalender:</b> Gewichtswerte der letzten 6 Tage vor der Periode und der ersten
-        2 Periodentage zählen nicht für Tempo-Check und gemessenen Bedarf – in diesen Tagen lagert der Körper oft Wasser ein, das sonst
+        2 Periodentage zählen nicht für Gewichtsverlauf und gemessenen Bedarf – in diesen Tagen lagert der Körper oft Wasser ein, das sonst
         wie zugenommenes Fett aussähe. Mehr dazu im Kalender unter „Welchen Einfluss hat der Kalender auf die App?“.</p>` : ''}
-      <p><b>Empfehlungen:</b> Tempo-Check und gemessener Bedarf schlagen höchstens alle zwei Wochen eine Änderung vor – gerechnet ab
+      <p><b>Empfehlungen:</b> Gewichtsverlauf und gemessener Bedarf schlagen höchstens alle zwei Wochen eine Änderung vor – gerechnet ab
         Phasenbeginn, der letzten Änderung des Tagesziels oder dem Ende einer Erhaltungswoche. Vorher würde die App vor allem auf
         Wasserschwankungen reagieren.</p>
       <p><b>Gemessener Bedarf:</b> Trägst du ein, was du isst (aus Health oder von Hand), vergleicht die App über die letzten
         4 Wochen (ohne die erste Woche einer Phase), wie viel du im Schnitt gegessen hast und wie sich dein Gewicht dabei verändert hat. Nimmst du z. B. bei
         2.300 kcal pro Tag 0,25 kg pro Woche ab, liegt dein Bedarf bei etwa 2.300 + 0,25 × ${deNum(NUT_KCAL_KG)} ÷ 7 ≈ 2.580 kcal.</p>
       <p>1 kg Körpergewicht entspricht grob ${deNum(NUT_KCAL_KG)} kcal. Rechne immer nur mit Schätzwerten (±10 %): Entscheidend ist,
-        wie sich dein Gewicht über 2–3 Wochen entwickelt – dafür gibt es den Tempo-Check.</p>
+        wie sich dein Gewicht über 2–3 Wochen entwickelt – dafür gibt es die Karte „Gewichtsverlauf“.</p>
       ${n.kcalOwn != null || n.adjust ? `<button class="btn" data-action="nut-adjust-reset">${n.kcalOwn != null ? 'Eigenes Tagesziel zurücksetzen' : 'Anpassung aus dem Gewichtsverlauf zurücksetzen'}</button>` : ''}
     </details>`;
 }

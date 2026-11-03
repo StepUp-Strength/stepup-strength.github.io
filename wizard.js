@@ -270,7 +270,7 @@ function wizStart() {
     level: null,     // Erfahrungsstufe (LEVELS)
     sessions: null,  // gewünschte Trainings pro Woche (wählt die passenden Vorlagen aus)
     name: `Plan ${data.plans.length + 1}`,
-    weeks: data.cycle.buildWeeks,
+    weeks: data.cycle.defWeeks,
     cat: null,     // gewählte Aufteilung (Kennzeichen) oder 'custom'
     split: null,   // gewählte Vorlage
     days: [],
@@ -1384,6 +1384,8 @@ Object.assign(actions, {
     for (const [g, list] of Object.entries(wiz.weekWanted)) {
       list.forEach((n, w) => { if (n != null && plan.volume[g]) setWeeklyVolume(g, w, n); });
     }
+    data.cycle.defWeeks = wiz.weeks;
+    data.cycle.adj = 0;
     data.cycle.buildWeeks = wiz.weeks;
     if (wiz.deload === 'self') plan.deload = 'self';
     // neuer Zyklus 1 – mit welcher Woche er beginnt, fragt die App beim ersten Training (siehe entryweek in app.js)

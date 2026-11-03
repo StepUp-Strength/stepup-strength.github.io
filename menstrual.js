@@ -1,7 +1,7 @@
 /* ---------- Zykluskalender (nur für Frauen, freiwillig) ----------
    data.mcal = { on, starts: ['JJJJ-MM-TT', …] (erster Tag der Periode), len: übliche Zykluslänge, period: Dauer der Periode }
    Eingetragen wird nur der Beginn der Periode – Zyklustag, Phasen und die nächste Periode rechnet die App aus.
-   Genutzt für: Wassereinlagerungen vor/zu Beginn der Periode im Tempo-Check und gemessenen Bedarf ausblenden (nutrition.js).
+   Genutzt für: Wassereinlagerungen vor/zu Beginn der Periode im Gewichtsverlauf und gemessenen Bedarf ausblenden (nutrition.js).
    Trainingsanpassung je Phase folgt später. (Nicht verwechseln mit data.cycle = Trainingszyklus.) */
 
 const MC_PHASES = {
@@ -73,7 +73,7 @@ function mcCard() {
   return `<div class="card mc-card mc-${i.phase}">
       <p><b>${ph.icon} Zyklustag ${i.day} · ${ph.label}</b></p>
       <p class="hint nut-small">${i.phase === 'late' ? ph.text : `Nächste Periode ca. am ${fmtDate(i.next + 'T12:00:00')}${inDays > 0 ? ` (in ${inDays} Tag${inDays === 1 ? '' : 'en'})` : ''}.`}
-        ${water ? '<br>💧 In diesen Tagen lagert der Körper oft 0,5–2 kg Wasser ein. Die App lässt deine Gewichtswerte von heute beim Tempo-Check und beim gemessenen Bedarf weg – das ist kein Fett.' : ''}</p>
+        ${water ? '<br>💧 In diesen Tagen lagert der Körper oft 0,5–2 kg Wasser ein. Die App lässt deine Gewichtswerte von heute beim Gewichtsverlauf und beim gemessenen Bedarf weg – das ist kein Fett.' : ''}</p>
       <div class="row"><button class="btn" data-action="mc-open">📅 Kalender</button>
         ${i.phase === 'mens' && i.day <= 1 ? '' : '<button class="btn" data-action="mc-today">🩸 Periode heute begonnen</button>'}</div>
     </div>`;
@@ -89,7 +89,7 @@ function mcOptionsCard() {
         <button class="${on ? '' : 'on'}" data-action="mc-onoff" data-v="0">Aus</button></div>
       <p class="hint nut-small">Freiwillig: Trägst du den Beginn deiner Periode ein, rechnet die App Zyklustag, Phasen und die nächste
         Periode aus. In den Tagen vor und zu Beginn der Periode lagert der Körper oft Wasser ein – diese Gewichtswerte lässt die App dann
-        beim Tempo-Check und beim gemessenen Bedarf weg, damit die Kalorien-Empfehlungen nicht danebenliegen. Später soll sich auch das
+        beim Gewichtsverlauf und beim gemessenen Bedarf weg, damit die Kalorien-Empfehlungen nicht danebenliegen. Später soll sich auch das
         Training an den Zyklus anpassen. Alles bleibt nur auf diesem Gerät.</p>
       ${on ? '<button class="btn" data-action="mc-open">📅 Kalender öffnen</button>' : ''}
     </div>`;
@@ -199,7 +199,7 @@ function mcHelp() {
         später liegen, besonders bei unregelmäßigem Zyklus.</p>
     </details>
     <details class="card nut-help mc-help"><summary>Welchen Einfluss hat der Kalender auf die App?</summary>
-      <p><b>💧 Körpergewicht – Tempo-Check und gemessener Bedarf:</b> Diese beiden Funktionen im Ernährungs-Reiter lesen aus deinem
+      <p><b>💧 Körpergewicht – Gewichtsverlauf und gemessener Bedarf:</b> Diese beiden Funktionen im Ernährungs-Reiter lesen aus deinem
         Gewichtsverlauf, ob dein Tagesziel passt. Die Wassereinlagerung vor der Periode sieht auf der Waage aber genauso aus wie
         zugenommenes Fett. Ohne Kalender würde die App dann denken, du nimmst zu langsam ab (oder zu schnell zu), und dir vorschlagen,
         weniger zu essen – und nach der Periode, wenn das Wasser weg ist, wieder mehr. Das Tagesziel würde jeden Monat hin und her springen.</p>

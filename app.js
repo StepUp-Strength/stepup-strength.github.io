@@ -113,8 +113,14 @@ function upgradeData(d) {
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
   if (!d.cycle) d.cycle = { buildWeeks: 4, start: new Date().toLocaleDateString('sv-SE'), week: 1, no: 1 };
-  d.cycle.buildWeeks = Math.min(5, Math.max(4, d.cycle.buildWeeks));  // 4–5 Trainingswochen
   if (d.cycle.week == null) upgradeCycle(d);
+  // defWeeks = Standardlänge (4–10 Aufbauwochen, bestimmt die Verteilung von Sätzen und Tank);
+  // adj = nur für den laufenden Zyklus verlängert/verkürzt (z. B. Urlaub); buildWeeks = Länge des laufenden Zyklus
+  if (d.cycle.defWeeks == null) d.cycle.defWeeks = d.cycle.buildWeeks || 4;
+  d.cycle.defWeeks = Math.min(10, Math.max(4, d.cycle.defWeeks));
+  if (d.cycle.adj == null) d.cycle.adj = 0;
+  if (!d.cycle.lens) d.cycle.lens = {};  // Länge früherer Zyklen: { Kennung: Aufbauwochen }
+  d.cycle.buildWeeks = Math.max(0, d.cycle.defWeeks + d.cycle.adj);
   // „schwer“/„leicht“ im Tagesnamen einmalig in den Wiederholungsbereich umbenennen (nur der Name – Inhalt bleibt;
   // Trainings hängen über die dayId am Tag). User-Wunsch 2026-11-02.
   if (!d.renamedInt) {
@@ -213,7 +219,7 @@ const FEATURE_MODE = {
   'stall-hints': 's', 'week-view': 's', 'session-edit': 's', 'ex-history': 's', 'chart-detail': 'x', 'steps': 's',
   // Plan-Reiter
   'plans-multi': 's', 'plan-add-ex': 's', 'day-reprange': 's', 'ex-kind-group': 'x', 'day-free': 'x', 'day-volume': 'x',
-  'plan-cycle-settings': 'x', 'plan-week-jump': 's', 'plan-week-prog': 'x', 'plan-volume': 'x', 'plan-rir': 'x', 'custom-ex': 's',
+  'plan-cycle-settings': 'x', 'plan-week-jump': 's', 'cycle-len': 's', 'cycle-adjust': 's', 'plan-week-prog': 'x', 'plan-volume': 'x', 'plan-rir': 'x', 'custom-ex': 's',
   'day-templates': 's',
   // Ernährung
   'nut-minicut': 's', 'nut-pace': 's', 'nut-own-kcal': 's', 'nut-macros': 's', 'nut-macro-pct': 'x', 'nut-protein-detail': 's',
@@ -626,8 +632,12 @@ const selfDeload = () => activePlan().deload === 'self' && !ownPlan();
 function isDeloadRound(start, week) {
   if (roundSessions(start, week).some(s => s.deload)) return true;
   if (selfDeload()) return start === data.cycle.start && data.cycle.deloadAt === week;
-  return week === data.cycle.buildWeeks + 1;
+  return week === cycleLenOf(start) + 1;
 }
+
+// Aufbauwochen eines Zyklus: laufender Zyklus wie eingestellt, frühere wie damals, neue mit der Standardlänge
+const cycleLenOf = start => start === data.cycle.start ? data.cycle.buildWeeks
+  : data.cycle.lens[start] != null ? data.cycle.lens[start] : data.cycle.defWeeks;
 const roundLabel = (start, week) => isDeloadRound(start, week) ? 'Deload-Woche' : weekLabel(week);
 const ciLabel = ci => ci.deload ? 'Deload-Woche' : weekLabel(ci.week);
 
@@ -651,14 +661,29 @@ function cycleInfo() {
   const done = data.days.length && roundSessions(ci.cycleStart, ci.week).length && !roundOpen(ci.cycleStart, ci.week).length;
   if (!done) return ci;
   const n = roundAfter(ci);
-  return toCycleInfo(n.start, n.week, n.no, bw);
+  return toCycleInfo(n.start, n.week, n.no, cycleLenOf(n.start));
 }
 
 // Aktuellen Durchlauf festlegen (Assistent, Woche umstellen, nach dem Speichern eines Trainings).
 // Ein selbst eingelegter Deload gilt nur im Zyklus, in dem er eingelegt wurde.
 function setRound(start, week, no) {
-  if (start !== data.cycle.start) delete data.cycle.deloadAt;
+  if (start !== data.cycle.start) {
+    delete data.cycle.deloadAt;
+    // neuer Zyklus: Länge des alten merken, der neue beginnt mit der Standardlänge
+    if (data.cycle.start) data.cycle.lens[data.cycle.start] = data.cycle.buildWeeks;
+    data.cycle.adj = 0;
+    data.cycle.buildWeeks = data.cycle.lens[start] != null ? data.cycle.lens[start] : data.cycle.defWeeks;
+  }
   Object.assign(data.cycle, { start, week, no });
+}
+
+// Laufenden Zyklus verlängern/verkürzen: Länge = Standard + adj, nie kürzer als die laufende Woche
+function setCycleAdj(adj) {
+  const ci = cycleInfo();
+  const min = ci.deload ? data.cycle.buildWeeks : Math.max(1, ci.week);
+  const len = Math.min(12, Math.max(min, data.cycle.defWeeks + adj));
+  data.cycle.adj = len - data.cycle.defWeeks;
+  data.cycle.buildWeeks = len;
 }
 
 // Deload „selbst bestimmen“: ab jetzt Deload-Woche. Wurde in der laufenden Woche schon trainiert, bleibt das dort
@@ -698,7 +723,20 @@ const progChip = (key, on, attrs) =>
 
 // Ziel im Tank pro Trainingswoche (normale Übungen, als Durchschnitt über die Sätze).
 // [min, max] = Bereich; gerechnet wird mit der Mitte.
-const RIR_PLAN = { 4: [2, 1.5, 1, 0.5], 5: [2, 1.5, 1, 0.5, 0.5] };  // 5. Woche: Option, noch offen
+const RIR_PLAN = { 4: [2, 1.5, 1, 0.5] };  // Eckwerte Start … Höhepunkt (siehe curveAt)
+
+// Sätze und Tank sind als 4 Eckwerte gespeichert (Start, 2, 3, Höhepunkt). Bei einer anderen Zykluslänge verteilt die App
+// den Anstieg gleichmäßig auf die Aufbauwochen der Standardlänge (data.cycle.defWeeks); Wochen darüber hinaus
+// (Zyklus verlängert) bleiben auf dem Höhepunkt. curveLenOverride: Eckwerte direkt ansehen (Volumen-Tabelle).
+const ANCHORS = 4;
+let curveLenOverride = null;
+const curveLen = () => curveLenOverride || data.cycle.defWeeks || ANCHORS;
+const anchorPos = (week, len = curveLen()) => len <= 1 ? 0 : (Math.min(Math.max(week, 1), len) - 1) / (len - 1) * (ANCHORS - 1);
+function curveAt(arr, week, len = curveLen()) {
+  const p = anchorPos(week, len), i = Math.floor(p), f = p - i;
+  const at = k => arr[Math.min(k, arr.length - 1)];
+  return at(i) + (at(i + 1) - at(i)) * f;
+}
 
 // Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
 const KINDS = { compound: 'Grundübung', normal: 'Normale Übung', assist: 'Assistenzübung' };
@@ -739,13 +777,11 @@ function kindOf(ex) {
 function rirRange(kind, week, buildWeeks, group) {
   const custom = group && data.rirPlan && data.rirPlan[group];
   let base;
-  if (custom) {
-    base = custom[Math.min(Math.max(week, 1), custom.length) - 1];  // eine 5. Woche übernimmt W4
-  } else {
-    const plan = RIR_PLAN[buildWeeks] || RIR_PLAN[5];
-    base = plan[Math.min(plan.length, Math.max(1, week)) - 1];
-  }
-  const [lo, hi] = Array.isArray(base) ? base : [base, base];
+  const arr = custom || RIR_PLAN[4];
+  // Eckwerte als Kurve über die Zykluswochen, auf halbe Wdh. gerundet (Bereiche [min, max] je Grenze)
+  const half = v => Math.round(v * 2) / 2;
+  const lo = half(curveAt(arr.map(b => Array.isArray(b) ? b[0] : b), week));
+  const hi = half(curveAt(arr.map(b => Array.isArray(b) ? b[1] : b), week));
   const off = KIND_OFFSET[kind || 'normal'];
   return [Math.max(0, lo + off), Math.max(0, hi + off)];
 }
@@ -770,7 +806,7 @@ function weekRirText(kind, group) {
 }
 
 function rirTable(buildWeeks) {
-  const plan = RIR_PLAN[buildWeeks];
+  const plan = Array.from({ length: Math.max(1, buildWeeks) });
   const ci = cycleInfo();
   const custom = Object.keys(data.rirPlan || {});
   if (custom.length) {
@@ -876,8 +912,8 @@ function repRangeText(day, ex) {
   return `${lo}–${hi}`;
 }
 
-const VOL_WEEKS = 4;  // Intro, W2, W3, W4 (eine 5. Woche übernimmt die Werte von W4)
-const volWeekIdx = week => Math.min(Math.max(week, 1), VOL_WEEKS) - 1;
+const VOL_WEEKS = 4;  // Eckwerte Intro, W2, W3, W4 – bei anderer Zykluslänge als Kurve (siehe curveAt)
+const volWeekIdx = week => Math.round(anchorPos(week));  // nächster Eckwert (für Zusatzsätze)
 
 // Trainingstage mit Tag-Typ, die Übungen dieser Muskelgruppe haben (in Plan-Reihenfolge)
 const daysWithGroup = g => data.days.filter(d => dayIntensity(d) && d.exercises.some(e => e.name.trim() && groupOf(e) === g));
@@ -889,8 +925,10 @@ const volExtraFor = (g, w) => ((activePlan().volExtra || {})[g] || [])[w] || 0;
 // Sätze pro Training für eine Muskelgruppe an einem bestimmten Tag (Grundwert + ggf. 1 zusätzlicher Satz).
 // vol = Volumen-Tabelle; der Plan-Assistent rechnet mit seinem Entwurf (dort gibt es keine Zusatzsätze).
 function dayVolume(day, g, week, vol = data.volume) {
-  const w = volWeekIdx(week);
-  let v = vol[g][w];
+  // Plan-Assistent: Eckwerte direkt (Wochen 1–4); sonst Kurve über die Zykluslänge
+  const len = vol === data.volume ? curveLen() : ANCHORS;
+  const w = Math.round(anchorPos(week, len));
+  let v = Math.round(curveAt(vol[g], week, len));
   if (vol === data.volume) {
     const idx = daysWithGroup(g).indexOf(day);
     if (idx >= 0 && idx < volExtraFor(g, w)) v += 1;
@@ -901,7 +939,9 @@ function dayVolume(day, g, week, vol = data.volume) {
 // Geplante Sätze pro Woche (vor der Verteilung auf die Übungen): Summe über die Tage × Durchgänge pro Woche
 function weeklyTarget(g, w) {
   const days = daysWithGroup(g);
-  const sum = days.reduce((a, d) => a + dayVolume(d, g, w + 1), 0);
+  curveLenOverride = ANCHORS;  // Eckwert w direkt
+  let sum;
+  try { sum = days.reduce((a, d) => a + dayVolume(d, g, w + 1), 0); } finally { curveLenOverride = null; }
   return sum * (activePlan().perWeek || 1);
 }
 
@@ -921,6 +961,10 @@ function setWeeklyVolume(g, w, total) {
 // Sätze pro Woche einer Muskelgruppe über alle Trainingstage mit Tag-Typ: [Intro, W2, W3, W4, Deload]
 // (tatsächlich verteilt – kann unter dem Plan liegen, wenn es zu wenige Übungen gibt)
 function weeklyVolume(g) {
+  curveLenOverride = ANCHORS;  // Eckwerte (Volumen-Tabelle)
+  try { return weeklyVolumeAnchors(g); } finally { curveLenOverride = null; }
+}
+function weeklyVolumeAnchors(g) {
   const weeks = [1, 2, 3, 4].map(w => 0);
   let deload = 0;
   for (const day of data.days) {
@@ -1038,7 +1082,7 @@ function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
   for (const [g, exs] of Object.entries(byGroup)) {
     let sets;
     if (deload) {
-      sets = distributeStart(exs, Math.ceil(dayVolume(day, g, VOL_WEEKS, vol) / 2));
+      sets = distributeStart(exs, Math.ceil(dayVolume(day, g, 99, vol) / 2));  // Deload: halber Höhepunkt
     } else {
       sets = distributeStart(exs, dayVolume(day, g, 1, vol));
       const state = { k: 0 };
@@ -1118,7 +1162,7 @@ function findWeekEntry(name, dayId, match, occ = 1) {
 function prevExtension(cycleStart) {
   const before = [...new Set(data.sessions.map(s => s.cycleStart).filter(cs => cs && cs < cycleStart))].sort().pop();
   if (!before) return null;
-  const by = Math.max(0, ...data.sessions.filter(s => s.cycleStart === before && !s.deload).map(s => s.week)) - data.cycle.buildWeeks;
+  const by = Math.max(0, ...data.sessions.filter(s => s.cycleStart === before && !s.deload).map(s => s.week)) - cycleLenOf(before);
   return by > 0 ? { from: before, by } : null;
 }
 
@@ -1907,7 +1951,8 @@ function cycleCard(ci) {
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
       <p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>` : ''}
-    <p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>
+    ${feat('week-view') ? '<p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>' : ''}
+    ${cycleAdjustHtml(ci)}
   </div>`;
 }
 
@@ -2343,21 +2388,70 @@ function renderPlan() {
   return h;
 }
 
+// Standard-Zykluslänge ändern (Regler): gilt ab sofort, auch für den laufenden Zyklus (seine Anpassung bleibt)
+function applyCycleLen(v) {
+  data.cycle.defWeeks = Math.min(10, Math.max(4, v));
+  setCycleAdj(data.cycle.adj);
+  saveData(); render();
+}
+
+let cycAdjustOpen = false;  // „Zyklus anpassen“ aufgeklappt
+let cycEndAsk = false;      // Rückfrage „Zyklus beenden?“
+
+// Regler für die Standard-Zykluslänge (4–10 Aufbauwochen)
+function cycleLenSlider() {
+  const v = data.cycle.defWeeks;
+  return `<div class="cyc-len">
+      <label class="lbl" for="cyc-len">Zykluslänge: <b id="cyc-len-val">${v} Wochen</b> + 1 Deload-Woche</label>
+      <input type="range" id="cyc-len" min="4" max="10" step="1" value="${v}" data-field="cycle-len">
+      <div class="cyc-len-scale"><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span></div>
+      <p class="hint">Aufbauwochen inklusive Intro-Woche, danach folgt 1 Deload-Woche. Start und Höhepunkt (Sätze und Wdh. im Tank)
+        bleiben gleich – die App verteilt den Anstieg auf die Wochen: Bei einem langen Zyklus steigt es langsamer und gleichmäßiger,
+        bei einem kurzen schneller. Gilt ab sofort und für alle folgenden Zyklen.</p>
+    </div>`;
+}
+
+// Laufenden Zyklus anpassen: verlängern, verkürzen, beenden (Startseite und Plan-Reiter)
+function cycleAdjustHtml(ci) {
+  if (!feat('cycle-adjust') || ownPlan()) return '';
+  if (!cycAdjustOpen) return '<button class="btn outline cyc-adjust-btn" data-action="cyc-adjust-open">⚙️ Zyklus anpassen</button>';
+  const len = data.cycle.buildWeeks, def = data.cycle.defWeeks, adj = data.cycle.adj;
+  const min = ci.deload ? len : Math.max(1, ci.week);
+  if (cycEndAsk) {
+    const trained = roundSessions(ci.cycleStart, ci.week).length > 0;
+    return `<div class="cyc-adjust">
+        <p><b>Zyklus jetzt beenden?</b></p>
+        <p class="hint">Alle eingetragenen Trainings bleiben gespeichert. Wie soll es weitergehen?</p>
+        ${ci.deload ? '' : `<button class="btn primary" data-action="cyc-end" data-m="deload">😮‍💨 Mit Deload-Woche abschließen</button>
+        <p class="hint">Empfohlen: ${trained ? 'Nach dieser Woche' : 'Ab jetzt'} kommt die leichte Deload-Woche zum Erholen, danach beginnt der nächste Zyklus.</p>`}
+        <button class="btn" data-action="cyc-end" data-m="new">⏭ Ohne Deload – direkt neuer Zyklus</button>
+        <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche – z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
+        <button class="btn center" data-action="cyc-end-cancel">Abbrechen</button>
+      </div>`;
+  }
+  return `<div class="cyc-adjust">
+      <p><b>Diesen Zyklus anpassen</b> <small class="hint">· z. B. wegen Urlaub</small></p>
+      <div class="row cyc-adj-row">
+        <button class="icon-btn" data-action="cyc-adj" data-d="-1" ${len <= min ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
+        <span><b>${len} Woche${len === 1 ? '' : 'n'}</b> + Deload${adj ? `<small>${adj > 0 ? `${adj} Woche${adj === 1 ? '' : 'n'} verlängert` : `${-adj} Woche${adj === -1 ? '' : 'n'} verkürzt`} · sonst ${def}</small>` : `<small>Standard</small>`}</span>
+        <button class="icon-btn" data-action="cyc-adj" data-d="1" ${len >= 12 ? 'disabled' : ''} aria-label="Eine Woche länger">+</button>
+      </div>
+      <p class="hint"><b>Kürzer:</b> Der Deload kommt früher – praktisch, wenn er genau in den Urlaub fallen soll.
+        <b>Länger:</b> Zusätzliche Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter) – praktisch, wenn du
+        wegen des Urlaubs Trainings verpasst hast und den Deload nach hinten schieben willst. Gilt nur für diesen Zyklus; der nächste hat wieder ${def} Wochen.</p>
+      <button class="btn danger" data-action="cyc-end-ask">⏹ Zyklus beenden</button>
+      <button class="btn center" data-action="cyc-adjust-open">Fertig</button>
+    </div>`;
+}
+
 // Periodisierung im Plan-Reiter – Teile je nach Modus (Wochen/Deload, Woche wechseln, Progression, RIR, Volumen)
 function periodCard(c, active) {
-  const cfg = feat('plan-cycle-settings'), jump = feat('plan-week-jump');
-  if (!cfg && !jump && !feat('plan-volume')) return '';
+  const cfg = feat('plan-cycle-settings'), jump = feat('plan-week-jump'), len = feat('cycle-len');
+  if (!cfg && !jump && !len && !feat('plan-volume')) return '';
   let h = '<h2>Periodisierung</h2><div class="card">';
+  if (len) h += cycleLenSlider() + cycleAdjustHtml(cycleInfo());
   if (cfg) {
-    h += `<div class="row" style="margin-top:0">
-        <span>Trainingswochen<br><small class="hint">inkl. Intro, danach Deload</small></span>
-        <div class="stepper">
-          <button data-action="cycle-weeks" data-delta="-1" aria-label="Weniger Wochen">−</button>
-          <b>${c.buildWeeks}</b>
-          <button data-action="cycle-weeks" data-delta="1" aria-label="Mehr Wochen">+</button>
-        </div>
-      </div>
-      <p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
+    h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
       <p class="lbl chips-title">Deload</p>
       <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
         `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
@@ -3188,7 +3282,7 @@ function askSkipRound(day) {
   const open = roundOpen(ci.cycleStart, ci.week);
   if (!open.length || open.some(x => x.day.id === day.id)) return true;
   const next = roundAfter(ci);
-  const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : ciLabel(toCycleInfo(next.start, next.week, next.no, ci.buildWeeks));
+  const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : ciLabel(toCycleInfo(next.start, next.week, next.no, cycleLenOf(next.start)));
   if (!confirm(`„${day.name}“ war in dieser Woche (${ciLabel(ci)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
     `OK = diese Woche abschließen (offene Trainings auslassen) und mit „${day.name}“ die ${nextLabel} beginnen.\nAbbrechen = nicht starten.`)) return false;
   skipRoundFor = day.id;
@@ -3200,7 +3294,7 @@ function trainingRound(id) {
   const ci = cycleInfo();
   if (skipRoundFor !== id) return ci;
   const n = roundAfter(ci);
-  return toCycleInfo(n.start, n.week, n.no, ci.buildWeeks);
+  return toCycleInfo(n.start, n.week, n.no, cycleLenOf(n.start));
 }
 
 // readiness = { sleptWell, stress }; jede negative Antwort zieht 1 Wdh. pro Übung ab
@@ -4108,8 +4202,36 @@ const actions = {
     findDay(current.params.id).exercises[el.dataset.i].kind = el.dataset.k;
     saveData(); render();
   },
-  'cycle-weeks': el => {
-    data.cycle.buildWeeks = Math.min(5, Math.max(4, data.cycle.buildWeeks + Number(el.dataset.delta)));
+  'cycle-weeks': el => applyCycleLen(data.cycle.defWeeks + Number(el.dataset.delta)),
+  // Laufenden Zyklus anpassen (Urlaub …): verlängern / verkürzen / beenden
+  'cyc-adjust-open': () => { cycAdjustOpen = !cycAdjustOpen; cycEndAsk = false; render(); },
+  'cyc-adj': el => {
+    setCycleAdj(data.cycle.adj + Number(el.dataset.d));
+    saveData(); render();
+  },
+  'cyc-end-ask': () => { cycEndAsk = true; render(); },
+  'cyc-end-cancel': () => { cycEndAsk = false; render(); },
+  'cyc-end': el => {
+    const ci = cycleInfo();
+    if (el.dataset.m === 'deload') {
+      if (ci.deload) { toast('Die Deload-Woche läuft schon'); return; }
+      if (selfDeload()) startDeloadNow();
+      else {
+        // Woche schon angefangen: Zyklus endet nach ihr, dann Deload – sonst Deload ab jetzt
+        const trained = roundSessions(ci.cycleStart, ci.week).length > 0;
+        const len = trained ? ci.week : ci.week - 1;
+        data.cycle.adj = len - data.cycle.defWeeks;
+        data.cycle.buildWeeks = len;
+        if (!trained) setRound(ci.cycleStart, len + 1, ci.cycle);
+      }
+      toast(cycleInfo().deload ? 'Jetzt: Deload-Woche, danach neuer Zyklus' : 'Zyklus endet nach dieser Woche – dann kommt der Deload');
+    } else {
+      // ohne Deload: sofort neuer Zyklus mit der Intro-Woche
+      data.cycle.buildWeeks = Math.max(1, ci.week - (roundSessions(ci.cycleStart, ci.week).length ? 0 : 1));
+      setRound(newCycleId(ci.cycleStart), 1, ci.cycle + 1);
+      toast('Neuer Zyklus – es geht mit der Intro-Woche los');
+    }
+    cycEndAsk = false; cycAdjustOpen = false;
     saveData(); render();
   },
   // ab jetzt mit der gewählten Zykluswoche weitermachen (Intro … Deload). Vorwärts im selben Zyklus;
@@ -4462,6 +4584,8 @@ const fields = {
     if (bubble) bubble.classList.toggle('has', !!el.value.trim());
     saveDraft();
   },
+  // Regler Zykluslänge: Anzeige beim Ziehen, übernommen beim Loslassen (siehe change)
+  'cycle-len': el => { const v = document.getElementById('cyc-len-val'); if (v) v.textContent = `${el.value} Wochen`; },
   'tr-rir': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.rir = el.value;
@@ -4488,6 +4612,7 @@ document.addEventListener('change', e => {
     return;
   }
   if (e.target.dataset && e.target.dataset.field === 'tr-max') { applyTrainingMax(e.target); return; }
+  if (e.target.dataset && e.target.dataset.field === 'cycle-len') { applyCycleLen(Number(e.target.value)); return; }
   if (e.target.id === 'import-file' && e.target.files[0]) {
     importData(e.target.files[0]);
     e.target.value = '';
