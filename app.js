@@ -2065,17 +2065,28 @@ function modeUpCard() {
 }
 
 // Erinnerung an die Sicherung (alle Modi): ab 4 Trainings, wenn die letzte Sicherung über 30 Tage her ist
+// Sicherungs-Erinnerung: ab BACKUP_DAYS Tagen seit der letzten Sicherung (User-Wunsch 2026-11-03, vorher 30 Tage) –
+// auf der Startseite (mit „Später“ für BACKUP_SNOOZE Tage) und direkt nach dem Speichern eines Trainings
+const BACKUP_DAYS = 7, BACKUP_SNOOZE = 3;
+const daysSinceISO = d => d ? Math.round((Date.parse(todayISO() + 'T12:00:00') - Date.parse(d + 'T12:00:00')) / 86400000) : Infinity;
+const backupDue = () => daysSinceISO(data.lastExport) >= BACKUP_DAYS;
+const backupAgoText = () => data.lastExport ? `Deine letzte Sicherung ist ${daysSinceISO(data.lastExport)} Tage her.` : 'Du hast deine Daten noch nie gesichert.';
+
 function backupCard() {
-  if (data.sessions.length < 4) return '';
-  const last = data.lastExport || '', snooze = data.backupSnooze || '';
-  const today = new Date().toLocaleDateString('sv-SE');
-  const days = d => d ? Math.round((Date.parse(today + 'T12:00:00') - Date.parse(d + 'T12:00:00')) / 86400000) : Infinity;
-  if (days(last) < 30 || days(snooze) < 7) return '';
+  if (data.sessions.length < 4 || !backupDue() || daysSinceISO(data.backupSnooze) < BACKUP_SNOOZE) return '';
   return `<div class="card hints"><p><b>💾 Zeit für eine Sicherung</b></p>
-      <p class="hint">${last ? `Deine letzte Sicherung ist ${days(last)} Tage her.` : 'Du hast deine Daten noch nie gesichert.'}
+      <p class="hint">${backupAgoText()}
         Alles liegt nur auf diesem Handy – geht es verloren oder wird die App gelöscht, sind die Daten weg.</p>
       <div class="row"><button class="btn primary" data-action="export">Jetzt sichern</button>
         <button class="btn" data-action="backup-later">Später</button></div></div>`;
+}
+
+// Nach dem Speichern eines Trainings: Sicherung anbieten, wenn sie fällig ist (ab dem 2. Training)
+function backupAfterTrainingCard() {
+  if (data.sessions.length < 2 || !backupDue()) return '';
+  return `<div class="card hints backup-after"><p><b>💾 Gleich mitsichern?</b></p>
+      <p class="hint">${backupAgoText()} Ein Tipp genügt – auf dem iPhone dann „In Dateien sichern“ wählen.</p>
+      <button class="btn primary" data-action="export">Jetzt sichern</button></div>`;
 }
 
 function renderStart() {
@@ -3261,6 +3272,7 @@ function renderSession({ id, fresh, edit, week }) {
   const won = fresh || [];
   const top = (won.length ? `<div class="card award-new">${won.map(a =>
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
+    (fresh ? backupAfterTrainingCard() : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
   const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
@@ -3848,9 +3860,13 @@ function saveTraining() {
   go('session', { id: session.id, fresh });
 }
 
-async function exportData() {
+// Als gesichert gilt erst, was wirklich geteilt bzw. heruntergeladen wurde (Abbrechen im Teilen-Menü zählt nicht)
+function markExported() {
   data.lastExport = new Date().toLocaleDateString('sv-SE');  // für die Sicherungs-Erinnerung
   saveData();
+}
+
+async function exportData() {
   const json = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
   const filename = `training-sicherung-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([json], filename, { type: 'application/json' });
@@ -3859,6 +3875,7 @@ async function exportData() {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: 'Trainings-Sicherung' });
+      markExported();
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
@@ -3871,6 +3888,7 @@ async function exportData() {
   a.download = filename;
   document.body.appendChild(a);
   a.click();
+  markExported();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
@@ -4690,7 +4708,7 @@ const actions = {
     go('session', { id, week });
   },
 
-  export: () => exportData(),
+  export: () => exportData().then(() => render()),  // danach verschwindet die Erinnerung
   'mode-set': el => {
     data.profile = { ...(data.profile || {}), mode: el.dataset.m, modeUpSeen: el.dataset.m };
     saveData();
