@@ -2203,3 +2203,8 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .chart-svg .c-val { font-size: 10px; font-weight: 700; fill: var(--text); }
 .cardio-unit { margin: 2px 6px 6px; font-size: 13px; }
 .cardio-add-btn { margin-top: 6px; }
+/* Grundlagen-Karte (Ernährung) */
+.nut-basics li { margin: 8px 0; }
+.nut-basics .btn.center { margin: 6px 0 4px; }
+.nut-basics ul { list-style: none; padding-left: 0; }
+.nut-basics:not([open]) { padding-top: 4px; padding-bottom: 4px; }

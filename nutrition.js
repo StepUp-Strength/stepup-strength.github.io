@@ -399,6 +399,44 @@ const NUT_HELP = `<summary>Unsicher? So findest du deine Phase</summary>
       </ul>
       <p class="hint">Faustregel: Bist du mit deinem Körperfett zufrieden, baue auf. Wenn nicht, nimm erst ab.</p>`;
 
+// Grundlagen einer ausgewogenen Ernährung (User-Wunsch 2026-11-03): beim ersten Mal aufgeklappt, nach „Verstanden“ bzw.
+// dem ersten Zuklappen dauerhaft zu (data.profile.nutBasicsSeen) – lässt sich jederzeit wieder aufklappen.
+// kcal: Tagesziel (falls bekannt) für die persönliche Ballaststoff-Menge, kg: Körpergewicht für die Trinkmenge.
+// Bewusst ohne Obergrenzen („nicht zu viel“ statt Höchstmengen, User-Wunsch 2026-11-03).
+function nutBasicsCard(kcal, kg) {
+  const seen = !!(data.profile && data.profile.nutBasicsSeen) || !nutHintsOn();
+  const fiber = kcal ? Math.round(kcal / 100) : null;  // 10 g je 1.000 kcal
+  const water = kg ? fmtNum(round1(kg / 20)) : null;   // 1 Liter je 20 kg Körpergewicht
+  return `<details class="card nut-help nut-basics" ${seen ? '' : 'open'}>
+      <summary data-action="nut-basics-sum">🥗 Grundlagen: gut und ausgewogen essen</summary>
+      <p>Kalorien und Eiweiß bestimmen, ob du ab- oder zunimmst und Muskeln aufbaust. <b>Wie gesund</b> du isst, hängt aber
+        vor allem davon ab, <b>was</b> auf dem Teller liegt. Diese Faustregeln helfen:</p>
+      <ul>
+        <li><b>🥦 Gemüse und Obst:</b> jeden Tag mindestens <b>250 g Gemüse</b> und <b>250 g Obst</b> – etwa 3 Handvoll Gemüse
+          und 2 Handvoll Obst. Möglichst bunt gemischt; Tiefkühlware zählt genauso.</li>
+        <li><b>🌾 Ballaststoffe:</b> mindestens <b>10 g je 1.000 kcal</b>${fiber ? ` – bei deinem Tagesziel also ca. <b>${fiber} g</b>` : ''}.
+          Mehr ist ausdrücklich gut. Gute Quellen: Haferflocken, Vollkornbrot und -nudeln, Hülsenfrüchte (Linsen, Bohnen,
+          Kichererbsen), Gemüse, Obst, Nüsse und Leinsamen. Langsam steigern und genug dazu trinken.</li>
+        <li><b>🍞 Vollkorn statt Weißmehl:</b> sättigt länger, liefert mehr Vitamine, Mineralstoffe und Ballaststoffe.</li>
+        <li><b>🥚 Eiweiß zu jeder Mahlzeit:</b> z. B. Magerquark, Skyr, Joghurt, Eier, Fisch, Geflügel, Hülsenfrüchte oder Tofu.</li>
+        <li><b>🥓 Verarbeitete Fleischprodukte meiden:</b> Wurst, Salami, Schinken, Speck und Würstchen nur selten – sie erhöhen
+          nachweislich das Risiko für Darmkrebs und Herz-Kreislauf-Erkrankungen. Auch rotes Fleisch (Rind, Schwein, Lamm) lieber
+          nicht zu oft. Fisch 1–2× pro Woche, davon gern einmal fetter Seefisch (Lachs, Hering, Makrele).</li>
+        <li><b>🫒 Gute Fette:</b> Raps- und Olivenöl, Nüsse, Samen und Fisch. Frittiertes, Fast Food und viel Butter oder
+          Sahne eher selten.</li>
+        <li><b>🍬 Nicht zu viel Zucker und Salz:</b> Softdrinks, Säfte, Süßigkeiten und Gebäck sparsam, beim Salzen lieber
+          zurückhaltend. Fertiggerichte enthalten oft viel von beidem – Faustregel: je kürzer die Zutatenliste, desto besser.</li>
+        <li><b>💧 Trinken:</b> etwa <b>1 Liter je 20 kg Körpergewicht</b>${water ? ` – bei dir also ca. <b>${water} Liter</b>` : ''}
+          am Tag, am besten Wasser oder ungesüßter Tee. An Trainingstagen und bei Hitze etwas mehr. Alkohol nicht zu viel.</li>
+        <li><b>⚖️ Kein Alles-oder-nichts:</b> Es zählt, was du an den meisten Tagen isst. Wenn rund 80 % passen, ist auch mal
+          Kuchen, Pizza oder ein Grillabend völlig in Ordnung.</li>
+      </ul>
+      ${seen ? '' : '<button class="btn center" data-action="nut-basics-ok">✔ Verstanden – zuklappen</button>'}
+      <p class="hint nut-small">Allgemeine Empfehlungen für gesunde Erwachsene (angelehnt an DGE und WHO). Bei Erkrankungen
+        oder Unverträglichkeiten bitte ärztlich beraten lassen.</p>
+    </details>`;
+}
+
 const nutStep = (no, of) => `<p class="sub">Schritt ${no} von ${of}</p>`;
 
 function renderNutPhase() {
@@ -1058,6 +1096,9 @@ function renderNutrition() {
   const kg = nutWeight();
   let h = (typeof foodOpenCard === 'function' ? foodOpenCard() : '') + (typeof mcCard === 'function' ? mcCard() : '');
   const planOn = typeof nutPlanActive === 'function' && nutPlanActive();
+  // Grundlagen-Karte ganz oben (mit dem Tagesziel für die persönliche Ballaststoff-Menge, falls bekannt)
+  const dayKcal = planOn ? nutForDay(null).kcal : n && nutReady(n) && kg != null ? nutForDay(nutCalc(n, kg)).kcal : null;
+  h += nutBasicsCard(dayKcal, kg != null ? kg : currentBodyweight());
   if (planOn && !(n && nutReady(n) && kg != null)) {
     // Ernährungsplan ohne eingerichtete Phase: Ziele kommen nur aus dem Plan
     const pc = nutForDay(null);
@@ -1188,6 +1229,21 @@ Object.assign(actions, {
     saveData();
     toast(el.dataset.v === '1' ? 'Hinweise zur Ernährung an' : 'Hinweise zur Ernährung aus');
     render();
+  },
+  // Grundlagen-Karte: beim ersten Zuklappen bzw. „Verstanden“ als gelesen merken (danach immer zugeklappt)
+  'nut-basics-sum': el => {
+    if (!el.parentElement.open || (data.profile && data.profile.nutBasicsSeen)) return;
+    data.profile = { ...(data.profile || {}), nutBasicsSeen: true };
+    saveData();
+    const ok = el.parentElement.querySelector('[data-action="nut-basics-ok"]');
+    if (ok) ok.remove();
+  },
+  'nut-basics-ok': el => {
+    data.profile = { ...(data.profile || {}), nutBasicsSeen: true };
+    saveData();
+    el.closest('details').open = false;
+    el.remove();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   },
   'nut-setup': () => { nutMacroEdit = null; nutInit('nutphase'); go('nutphase'); },
   'nut-edit': () => { nutMacroEdit = null; nutInit('nutbody'); go('nutbody'); },
