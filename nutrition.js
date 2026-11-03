@@ -153,6 +153,11 @@ function nutTrainQuestion(d, action = 'nut-train-pick') {
 function nutStartLine() {
   const n = data.nutrition;
   const kg = nutWeight();
+  if (typeof nutPlanActive === 'function' && nutPlanActive()) {
+    const c = nutForDay(null), t = intakeOn(todayISO());
+    return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">📋</span>
+      <span><b>${esc(data.nutPlan.name)}</b> · ${esc(c.label)} · Tagesziel ${nutKcal(c.kcal)} kcal${t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : ''}</span></button>`;
+  }
   if (!n) return '';
   const ph = NUT_PHASES[n.phase];
   const maint = (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') || nutBreakNow(n);
@@ -161,7 +166,7 @@ function nutStartLine() {
         ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
   if (kg == null) return '';
   return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
-      <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutCalc(n, kg).kcal)} kcal${(t => t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : "")(intakeOn(todayISO()))}
+      <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutForDay(nutCalc(n, kg)).kcal)} kcal${(t => t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : "")(intakeOn(todayISO()))}
         ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
 }
 
@@ -220,6 +225,16 @@ function nutSync() {
     changed = true;
   }
   if (changed) saveData();
+}
+
+// Cardio (cardio.js): Verbrauch eines Tages, der ins Tagesziel einfließt (nur wenn eingeschaltet)
+const nutCardio = date => data.nutrition && data.nutrition.cardioAdd && typeof cardioKcalOn === 'function' ? cardioKcalOn(date) : 0;
+// Tagesziel für einen bestimmten Tag: Grundziel + Cardio (zusätzliche Kalorien vor allem als Kohlenhydrate)
+function nutForDay(c, date = todayISO()) {
+  // importierter Ernährungsplan (nutplan.js) ist maßgeblich
+  if (typeof nutPlanActive === 'function' && nutPlanActive()) c = nutPlanTarget(date);
+  const x = c ? nutCardio(date) : 0;
+  return x ? { ...c, kcal: c.kcal + x, carbs: c.carbs + Math.round(x / 4 / 5) * 5, cardio: x } : c;
 }
 
 // Wassereinlagerung durch den Menstruationszyklus (menstrual.js) – solche Gewichtswerte zählen nicht für Trend und Bedarf
@@ -609,6 +624,7 @@ function nutTargetCard(n, c, editable = false) {
       <small>${n.kcalOwn != null ? `Von dir festgelegt · berechnet wären ca. ${nutKcal(nutKcalBase(n, n.kg || nutWeight()))} kcal`
         : `Erhaltungsbedarf ca. ${nutKcal(c.tdee)} kcal · ${nutSigned(c.delta, 'kcal')}${adj}`}</small>
       ${editable && nutKcalEdit ? nutKcalEditor(n, c, n.kg || nutWeight()) : ''}
+      ${editable ? nutCardioLine(n, c) : ''}
       ${editable && !nutKcalEdit && n.kcalOwn != null ? '<button class="btn nut-kcal-reset" data-action="nut-adjust-reset">↺ Wieder den Wert der App nehmen</button>' : ''}
       ${c.note ? `<p class="nut-warn">${notes[c.note]}</p>` : ''}
       ${macros}
@@ -617,6 +633,16 @@ function nutTargetCard(n, c, editable = false) {
         und Eiweiß über die Woche gesehen ungefähr passen – ±10 % sind völlig in Ordnung. Ein Tag mit mehr Kohlenhydraten oder
         weniger Fett macht nichts kaputt; wichtig ist, was du an den meisten Tagen isst.</p>
     </div>`;
+}
+
+// Zeile unter dem Tagesziel: Cardio heute (eingerechnet oder nicht)
+function nutCardioLine(n, c) {
+  const x = typeof cardioKcalOn === 'function' ? cardioKcalOn(todayISO()) : 0;
+  if (!x) return '';
+  return n.cardioAdd
+    ? `<p class="nut-cardio">🏃 Heute <b>+${deNum(x)} kcal</b> Cardio → Ziel heute <b>${nutKcal(c.kcal + x)} kcal</b></p>`
+    : `<p class="nut-cardio off">🏃 Heute ca. ${deNum(x)} kcal Cardio – nicht ins Tagesziel eingerechnet
+        <button class="link-btn" data-action="cardio-open">ändern</button></p>`;
 }
 
 // Fortschritt zum Zielgewicht
@@ -678,6 +704,7 @@ function nutIntakeFormHtml() {
 
 // Heute: Ist ↔ Soll
 function nutIntakeCard(n, c) {
+  c = nutForDay(c);
   const t = intakeOn(todayISO());
   const body = t
     ? `${nutIntakeBar('Kalorien', t.kcal, c.kcal, 'kcal', 0.1)}
@@ -766,7 +793,8 @@ function nutMeasured() {
   if (pts.length < 4 || span < 12) return { days: days.length, noWeight: true, from };
   const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length, my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
   const slope = pts.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0) / pts.reduce((a, p) => a + (p.x - mx) ** 2, 0);  // kg pro Tag
-  const avg = days.reduce((a, x) => a + x.kcal, 0) / days.length;
+  // Cardio, das ins Tagesziel eingerechnet wird, abziehen – der gemessene Bedarf gilt für Tage ohne Cardio
+  const avg = days.reduce((a, x) => a + x.kcal - nutCardio(x.date), 0) / days.length;
   return { days: days.length, avg, perWeek: slope * 7, tdee: avg - slope * NUT_KCAL_KG, from };
 }
 
@@ -786,7 +814,8 @@ function nutMeasuredState(n, c, m = nutMeasured()) {
   const tr = nutTrend(n);
   const onPlan = !close && !atFloor && !minicut && tr && Math.abs(tr.perWeek - c.planned) < 0.15;
   const wait = !close && !atFloor && !minicut && !onPlan && !nutMaySuggest(n);
-  return { real, used, step, adj, close, atFloor, minicut, onPlan, wait, apply: !close && !atFloor && !minicut && !onPlan && !wait };
+  const plan = typeof nutPlanActive === 'function' && nutPlanActive();  // Ernährungsplan ist maßgeblich: nur Hinweis
+  return { real, used, step, adj, close, atFloor, minicut, onPlan, wait, plan, apply: !close && !atFloor && !minicut && !onPlan && !wait && !plan };
 }
 
 // Einfach/Standard (ohne Karte „Gemessener Bedarf“): dessen Vorschlag als einfache Frage im Gewichtsverlauf
@@ -815,15 +844,16 @@ function nutMeasuredCard(n, c) {
           rechnet die App deinen <b>echten</b> Erhaltungsbedarf aus: Was du im Schnitt isst, minus das, was sich am Gewicht
           verändert. Das ist viel genauer als die Schätzformel.`}</p></div>`;
   }
-  const { real, used, step, adj, close, atFloor, minicut, onPlan, wait } = nutMeasuredState(n, c, m);
+  const { real, used, step, adj, close, atFloor, minicut, onPlan, wait, plan } = nutMeasuredState(n, c, m);
   return `<div class="card nut-check ${close || onPlan ? 'ok' : 'off'}"><p><b>📏 Gemessener Bedarf: ca. ${nutKcal(real)} kcal</b></p>
       <p class="hint nut-small">Seit dem ${fmtDate(m.from + 'T12:00:00')} hast du an ${m.days} Tagen im Schnitt <b>${nutKcal(m.avg)} kcal</b> gegessen,
         dein Gewicht hat sich dabei um <b>${nutSigned(m.perWeek, 'kg')} pro Woche</b> verändert. Daraus ergibt sich ein Erhaltungsbedarf
         von ca. ${nutKcal(real)} kcal – die App rechnet gerade mit ${nutKcal(used)} kcal${n.kcalOwn != null ? ' (aus deinem eigenen Tagesziel)' : n.adjust ? ' (Formel + Anpassung)' : ' (Schätzformel)'}.
-        ${close ? 'Das passt gut zusammen.' : onPlan ? 'Dein Gewicht läuft aber gerade genau nach Plan (siehe Karte „Gewichtsverlauf“) – deshalb ändert die App nichts.'
+        ${close ? 'Das passt gut zusammen.' : plan ? `Dein Ernährungsplan ist maßgeblich – die App ändert nichts. Weicht dein Gewicht länger vom Ziel ab, sprich eine Anpassung mit deinem Berater ab (Richtung: ${nutSigned(step, 'kcal')}).`
+          : onPlan ? 'Dein Gewicht läuft aber gerade genau nach Plan (siehe Karte „Gewichtsverlauf“) – deshalb ändert die App nichts.'
           : atFloor || wait || minicut ? '' : `Die App geht schrittweise vor, weil die Messung von Woche zu Woche
           etwas schwankt: Sie verschiebt dein Tagesziel um die Hälfte des Unterschieds (<b>${nutSigned(step, 'kcal')}</b>) und misst dann weiter.`}</p>
-      ${atFloor ? nutFloorHint(n) : minicut ? NUT_MINICUT_NOTE : onPlan || close ? '' : wait ? nutWaitHint(n)
+      ${atFloor ? nutFloorHint(n) : minicut ? NUT_MINICUT_NOTE : onPlan || close || plan ? '' : wait ? nutWaitHint(n)
         : `<button class="btn primary" data-action="nut-measured-apply" data-v="${adj}">${nutSigned(step, 'kcal')} übernehmen</button>`}
       <p class="hint nut-small">Es zählen nur vollständige Tage: abgeschlossene Tage im Ernährungstagebuch sowie Tage aus Health, von Hand oder nachgetragen.</p></div>`;
 }
@@ -880,6 +910,11 @@ function nutTrendCard(n, c) {
   if (n.phase === 'minicut') {
     return `<div class="card nut-check"><p><b>📈 Gewichtsverlauf</b></p>
       <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}).</p>${NUT_MINICUT_NOTE}</div>`;
+  }
+  if (typeof nutPlanActive === 'function' && nutPlanActive()) {
+    return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
+      <p class="hint nut-small">Letzte ${t.days} Tage: ${fmt(t.perWeek)} (geplant ${fmt(c.planned)}). Dein Ernährungsplan ist maßgeblich – die App
+        ändert nichts. Bleibt das so, sprich eine Anpassung (etwa ${nutSigned(corr, 'kcal')} am Tag) mit deinem Ernährungsberater ab.</p></div>`;
   }
   if (atFloor) {
     return `<div class="card nut-check off"><p><b>⚠️ ${what}</b></p>
@@ -1010,7 +1045,12 @@ function renderNutrition() {
   const n = data.nutrition;
   const kg = nutWeight();
   let h = (typeof foodOpenCard === 'function' ? foodOpenCard() : '') + (typeof mcCard === 'function' ? mcCard() : '');
-  if (n && !nutReady(n)) {
+  const planOn = typeof nutPlanActive === 'function' && nutPlanActive();
+  if (planOn && !(n && nutReady(n) && kg != null)) {
+    // Ernährungsplan ohne eingerichtete Phase: Ziele kommen nur aus dem Plan
+    const pc = nutForDay(null);
+    h += nutPlanCard() + nutIntakeCard(n || {}, pc) + (feat('nut-history') ? nutHistoryCard(n || {}, pc) : '');
+  } else if (n && !nutReady(n)) {
     h += nutPhaseOnly(n);
   } else if (!n) {
     h += `<div class="card wiz-q">
@@ -1031,10 +1071,10 @@ function renderNutrition() {
     h += `<div class="nut-phase-head"><span class="wiz-q-icon" aria-hidden="true">${ph.icon}</span>
         <div><b>${ph.label}</b><small>seit ${fmtDate(n.since + 'T12:00:00')} · ${weekText} · ${nutPace(n).label}</small></div></div>
       ${nutPhaseHint(n)}
-      ${nutTargetCard(n, c, true)}
+      ${typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanCard() : nutTargetCard(n, c, true)}
       ${nutIntakeCard(n, c)}
-      ${feat('nut-history') ? nutHistoryCard(n, c) : ''}
-      ${nutProteinWeekCard(n, c)}
+      ${feat('nut-history') ? nutHistoryCard(n, nutForDay(c)) : ''}
+      ${nutProteinWeekCard(n, nutForDay(c))}
       ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
       ${nutTrendCard(n, c)}
@@ -1048,8 +1088,11 @@ function renderNutrition() {
       <p class="hint nut-small nut-disclaimer">Alle Werte sind Richtwerte für gesunde Erwachsene. Bei Vorerkrankungen, in
         Schwangerschaft und Stillzeit oder bei Essstörungen bitte vorher ärztlich abklären.</p>`;
   }
+  if (!planOn) {
+    h += `<button class="btn nav" data-action="np-open">📋 Eigenen Ernährungsplan übernehmen<small>Aus Excel, Google Sheets oder als Tabelle einfügen – z. B. vom Ernährungsberater</small></button>`;
+  }
   // Ernährungstagebuch auch ohne fertig eingerichtete Phase erreichbar
-  if (!n || !nutReady(n) || kg == null) {
+  if (!planOn && (!n || !nutReady(n) || kg == null)) {
     h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>`;
   }
   h += `<h2>Körpergewicht</h2>${bwCard()}${feat('nut-health') ? healthCard() : ''}${rangeRow()}

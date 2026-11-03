@@ -97,7 +97,8 @@ function upgradeData(d) {
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.foodLog)) d.foodLog = [];       // Ernährungstagebuch (food.js)
   if (!d.foods || typeof d.foods !== 'object' || Array.isArray(d.foods)) d.foods = {};  // gemerkte Lebensmittel
-  if (!Array.isArray(d.foodMeals)) d.foodMeals = [];  // gespeicherte Mahlzeiten (Schnellauswahl)
+  if (!Array.isArray(d.foodMeals)) d.foodMeals = [];
+  if (!Array.isArray(d.cardio)) d.cardio = [];  // Cardio-Einheiten (cardio.js)  // gespeicherte Mahlzeiten (Schnellauswahl)
   if (!d.foodClosed || typeof d.foodClosed !== 'object') {
     // abgeschlossene Tagebuch-Tage; beim Einführen gelten alle bisherigen Tage vor heute als abgeschlossen
     d.foodClosed = {};
@@ -1973,8 +1974,21 @@ function hintsCard() {
   return h + '</div>';
 }
 
+// Bisherige Nutzer (vor den Modi): einmal fragen, wie viel die App zeigen soll – bis dahin Experte (alles wie gewohnt)
+function modeAskCard() {
+  const p = data.profile || {};
+  if (p.mode || (!data.sessions.length && !data.plans.length)) return '';
+  return `<div class="card hints mode-ask"><p><b>✨ Neu: Wähle, wie viel die App zeigt</b></p>
+      <div class="mode-opts">${Object.entries(APP_MODES).map(([k, x]) =>
+        `<button class="split-opt ${k === 'x' ? 'on' : ''}" data-action="mode-set" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
+      <p class="hint">Bisher siehst du alles (Experte). Deine Daten und dein Plan bleiben in jedem Modus gleich – auch die Steigerung im
+        Training. Wechseln kannst du jederzeit in den Optionen.</p>
+      <button class="btn" data-action="mode-set" data-m="x">So lassen</button></div>`;
+}
+
 // Einfach/Standard: nach dem zweiten abgeschlossenen Zyklus einmal anbieten, mehr Einstellungen zu zeigen
 function modeUpCard() {
+  if (!(data.profile || {}).mode) return modeAskCard();
   const m = appMode();
   if (m === 'x' || (data.profile || {}).modeUpSeen === m) return '';
   if (new Set(data.sessions.filter(x => x.cycleStart).map(x => x.cycleStart)).size < 3) return '';
@@ -2044,6 +2058,7 @@ function renderStart() {
       <span class="day-no">${done ? '✓' : i + 1}</span>
       <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}${done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   });
+  if (typeof cardioStartHtml === 'function') h += `<h2>Cardio</h2>${cardioStartHtml()}`;
   return h;
 }
 
@@ -2724,8 +2739,9 @@ function renderDay({ id }) {
 }
 
 function renderHistory() {
+  const cardio = typeof cardioStartHtml === 'function' ? cardioStartHtml() : '';
   if (!data.sessions.length) {
-    return '<p class="hint">Noch keine Trainings gespeichert.</p>';
+    return cardio + '<p class="hint">Noch keine Trainings gespeichert.</p>';
   }
   // Übungen nach Namen zusammenfassen
   const map = new Map();
@@ -2738,7 +2754,7 @@ function renderHistory() {
   }
   const exercises = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
-  let h = feat('ex-history') ? '<h2>Übungen</h2>' : '';
+  let h = cardio + (feat('ex-history') ? '<h2>Übungen</h2>' : '');
   for (const ex of feat('ex-history') ? exercises : []) {
     h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
       ${esc(ex.name)}<small>${ex.count}× trainiert · zuletzt ${fmtDate(ex.last)}</small></button>`;
@@ -3708,7 +3724,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal,
+      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4490,7 +4506,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, complaints: [], hintsDismissed: {}, cycleShift: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);

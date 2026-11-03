@@ -332,7 +332,7 @@ const foodReopenToast = () => toast('Tag wieder geöffnet – schließ ihn am En
 
 // Rest bis zum Tagesziel (null ohne Ziel oder wenn nichts fehlt)
 function foodRest(date) {
-  const c = foodGoal();
+  const c = foodGoal(date);
   if (!c) return null;
   const t = foodTotals(foodOn(date).filter(e => e.key !== FOOD_FILL));
   const r = { kcal: Math.round(c.kcal - t.kcal), p: Math.max(0, Math.round(c.protein - t.p)), c: Math.max(0, Math.round(c.carbs - t.c)), f: Math.max(0, Math.round(c.fat - t.f)) };
@@ -399,7 +399,7 @@ function foodCloseHtml(date, list) {
   }
   const rest = foodRest(date);
   const miss = foodUsualMissing(date);
-  const c = foodGoal();
+  const c = foodGoal(date);
   return `<div class="card food-close">
       <p><b>Hast du ${date === todayISO() ? 'heute' : 'an diesem Tag'} alles eingetragen?</b></p>
       ${miss.length ? `<p class="food-miss">⚠️ ${miss.join(' und ')} ${miss.length > 1 ? 'sind' : 'ist'} leer – sonst trägst du ${miss.length > 1 ? 'sie' : 'es'} fast immer ein.</p>` : ''}
@@ -421,10 +421,11 @@ function foodDayLabel(date) {
 }
 
 // Tagesziel (falls die Ernährung eingerichtet ist)
-function foodGoal() {
+function foodGoal(date = todayISO()) {
+  if (typeof nutPlanActive === 'function' && nutPlanActive()) return nutForDay(null, date);  // Ernährungsplan
   const n = data.nutrition;
   const kg = nutWeight();
-  return n && nutReady(n) && kg != null ? nutCalc(n, kg) : null;
+  return n && nutReady(n) && kg != null ? nutForDay(nutCalc(n, kg), date) : null;  // inkl. Cardio (wenn eingerechnet)
 }
 
 function foodSumHtml(t, c) {
@@ -450,8 +451,10 @@ function renderFood(p) {
       <b>${foodDayLabel(date)}</b>
       <button class="icon-btn" data-action="food-day" data-d="1" ${date >= todayISO() ? 'disabled' : ''} aria-label="Nächster Tag">›</button>
     </div>
-    <div class="card nut-intake">${foodSumHtml(t, foodGoal())}</div>
+    <div class="card nut-intake">${foodSumHtml(t, foodGoal(date))}</div>
     ${date === todayISO() ? foodOpenCard() : ''}`;
+  const planDay = typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanDay(date) : null;
+  const planMeals = (planDay && planDay.meals) || {};
   for (const [k, [icon, label]] of Object.entries(MEALS)) {
     const items = list.filter(e => e.meal === k);
     const kcal = foodTotals(items).kcal;
@@ -463,7 +466,9 @@ function renderFood(p) {
             <span>${esc(e.name)}<small>${e.brand ? esc(e.brand) + ' · ' : ''}${foodNum(e.g)} g</small></span>
             <b>${foodKcal(foodVal(e.per, e.g)[0])} kcal</b></button>
           <button class="icon-btn danger" data-action="food-del" data-id="${e.id}" aria-label="Entfernen">✕</button></div>`).join('')}
+        ${!items.length && planMeals[k] ? `<p class="hint nut-small np-plan-hint">📋 Plan: ${planMeals[k].map(i => `${esc(i.name)}${i.g ? ` ${fmtNum(i.g)} g` : ''}`).join(' · ')}</p>` : ''}
         <div class="row">
+          ${!items.length && planMeals[k] ? `<button class="btn primary" data-action="food-plan-meal" data-meal="${k}">✔ Wie geplant</button>` : ''}
           <button class="btn" data-action="food-add" data-meal="${k}">＋ Hinzufügen</button>
           ${!items.length && prev.length ? `<button class="btn" data-action="food-copy" data-meal="${k}">↺ Wie gestern</button>` : ''}
           ${items.length ? `<button class="btn" data-action="food-meal-save" data-meal="${k}">💾 Speichern</button>` : ''}

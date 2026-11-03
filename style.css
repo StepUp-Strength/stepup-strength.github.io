@@ -2097,3 +2097,32 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .split-opt.on small .freq-ok, .split-opt.on small .freq-bad { color: inherit; }
 .quick-picks .vchip.swap-prev { background: var(--accent-soft); color: var(--accent-text); }
 .quick-picks .vchip.swap-prev small { display: block; font-size: 12px; font-weight: 600; opacity: .8; }
+
+/* Cardio (cardio.js) */
+.cardio-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 14px; }
+.cardio-type { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 76px; padding: 6px 4px;
+  border: 0; border-radius: 14px; background: var(--fill); color: var(--text); font: inherit; font-size: 13px; font-weight: 650; line-height: 1.2; text-align: center; }
+.cardio-type span { font-size: 26px; }
+.cardio-type.on { background: var(--accent); color: #fff; }
+.cardio-form .seg { margin: 4px 0 6px; }
+.cardio-form .row > span { flex: 1; }
+.cardio-row span { flex: 1; }
+.cardio-row small { display: block; }
+.nut-cardio { margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--success-soft); font-size: 15px; }
+.nut-cardio.off { background: var(--fill); color: var(--muted); }
+.nut-cardio .link-btn { margin-left: 4px; }
+.mode-ask .mode-opts { margin: 8px 0; }
+.mode-ask .btn { text-align: center; }
+
+/* Ernährungsplan (nutplan.js) */
+.np-card .nut-macros { margin-top: 10px; }
+.np-type { margin: 12px 0 4px; }
+.np-card .link-btn { margin-left: 2px; }
+.np-day.now { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow); }
+.np-day p { margin: 0 0 8px; }
+.np-meal { margin: 8px 0 0; font-size: 15px; line-height: 1.45; }
+.np-prev { font-size: 13px; }
+.np-prev th, .np-prev td { white-space: nowrap; padding: 4px 8px; }
+.np-sum { margin: 0 0 10px; font-size: 15.5px; }
+.np-plan-hint { margin: 2px 4px 4px; }
+.np-assign .vchip { flex: 1 1 45%; min-height: 48px; }
