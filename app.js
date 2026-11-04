@@ -95,6 +95,7 @@ function upgradeData(d) {
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};
+  if (d.home === undefined) d.home = null;              // Heim-Ausrüstung { db:[kg], kb:[kg], bands:[1–4], anchor, bar, bench 0/1/2, dip }
   if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.foodLog)) d.foodLog = [];       // Ernährungstagebuch (food.js)
@@ -376,10 +377,32 @@ const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht v
 const round2 = x => Math.round(x * 100) / 100;
 const roundTo = (w, step, fn = Math.round) => round2(fn(w / step) * step);
 
+// Heimtraining: t.weights = vorhandene Gewichte (sortiert). Dann gibt es nur diese – liegt ein Vorschlag dazwischen,
+// gilt das leichtere (mit mehr Wdh., User-Regel 2026-11-04). Sonst das Raster in Schritten von t.step.
+function wUp(w, t) {
+  if (t.weights) { const x = t.weights.find(v => v > w + 1e-9); return x == null ? null : x; }
+  return round2(w + (t.step || 2.5));
+}
+function wDown(w, t) {
+  if (t.weights) { const x = [...t.weights].reverse().find(v => v < w - 1e-9); return x == null ? null : x; }
+  const d = round2(w - (t.step || 2.5));
+  return d > 0 ? d : null;
+}
+function wSnap(w, t, fn = Math.round) {
+  const L = t.weights;
+  if (!L || !L.length) return roundTo(w, t.step || 2.5, fn);
+  if (fn === Math.ceil) { const x = L.find(v => v >= w - 1e-9); return x == null ? L[L.length - 1] : x; }
+  const f = [...L].reverse().find(v => v <= w + 1e-9);
+  return f == null ? L[0] : f;
+}
+// Plan „Zu Hause“: Gewichte der Übung aus der Ausrüstung (null = freies Raster)
+const homePlan = () => hasActivePlan() && activePlan().equip === 'home';
+const weightsFor = name => homePlan() ? homeWeights(name, data.home) : null;
+
 // Startgewicht aus „Max. bei 10 Wdh.“ und den Zielvorgaben
 function targetWeight(t) {
   if (t.max10 == null) return null;
-  return roundTo(t.max10 * repFactor(t.reps + t.rir), t.step);
+  return wSnap(t.max10 * repFactor(t.reps + t.rir), t);
 }
 
 // Nach einem Satz: Abweichung vom Ziel (in Wdh.) und passendes Gewicht für den nächsten Satz
@@ -387,8 +410,8 @@ function adjustAfterSet(weight, reps, rir, t) {
   const diff = (reps + rir) - (t.reps + t.rir);
   const raw = Math.min(weight * 1.05, Math.max(weight * 0.9,
     weight * repFactor(t.reps + t.rir) / repFactor(reps + rir)));
-  let w = roundTo(raw, t.step);
-  if (w > weight * 1.05) w = roundTo(raw, t.step, Math.floor);
+  let w = wSnap(raw, t);
+  if (w > weight * 1.05) w = wSnap(raw, t, Math.floor);
   return { diff, weight: w };
 }
 
@@ -398,9 +421,10 @@ function progression(first, t) {
   const rir = first.rir != null ? first.rir : t.rir;
   const { diff, weight } = adjustAfterSet(first.weight, first.reps, rir, t);
   let next, deload = false;
-  if (diff >= 1) next = Math.max(weight, first.weight + t.step);     // klar übertroffen
-  else if (diff >= 0) next = first.weight + t.step;                  // genau erreicht
-  else if (diff <= -MISS_REPS) { next = Math.min(weight, first.weight - t.step); deload = true; }  // deutlich verfehlt
+  const up = wUp(first.weight, t), down = wDown(first.weight, t);
+  if (diff >= 1) next = Math.max(weight, up != null ? up : first.weight);     // klar übertroffen
+  else if (diff >= 0) next = up != null ? up : first.weight;                  // genau erreicht
+  else if (diff <= -MISS_REPS) { next = Math.min(weight, down != null ? down : first.weight); deload = true; }  // deutlich verfehlt
   else next = first.weight;                                          // knapp verfehlt: halten
   return { diff, next: round2(next), deload };
 }
@@ -436,7 +460,9 @@ function planSet(cap, w, t, k, fixedWeight, startWeight, keepWeight = false) {
   if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(MIN_REPS, repsAt(fixedWeight)) };
   if (w == null) return { weight: null, reps: Math.max(MIN_REPS, repsAt(null)) };  // ohne Gewicht (Eigengewicht)
   let wt = startWeight != null ? startWeight : w;
-  if (!keepWeight || repsAt(wt) < MIN_REPS - 1) while (repsAt(wt) < MIN_REPS && wt - t.step > 0) wt = round2(wt - t.step);
+  if (!keepWeight || repsAt(wt) < MIN_REPS - 1) {
+    while (repsAt(wt) < MIN_REPS) { const d = wDown(wt, t); if (d == null) break; wt = d; }
+  }
   return { weight: wt, reps: Math.max(MIN_REPS, repsAt(wt)) };
 }
 
@@ -446,8 +472,8 @@ function atLeastMinReps(p, t) {
   if (p.reps == null || p.reps >= MIN_REPS) return p;
   if (p.weight == null) return t.bodyweight ? { ...p, reps: MIN_REPS } : p;
   const step = t.step || 2.5;
-  const w = roundTo(p.weight * repFactor(MIN_REPS + t.rir) / repFactor(p.reps + t.rir), step, Math.floor);
-  return { weight: Math.max(step, w), reps: MIN_REPS };
+  const w = wSnap(p.weight * repFactor(MIN_REPS + t.rir) / repFactor(p.reps + t.rir), t, Math.floor);
+  return { weight: Math.max(t.weights ? t.weights[0] : step, w), reps: MIN_REPS };
 }
 
 // Satzziel laut Plan: Satz 1 = Ziel-Wdh., danach je Satz FATIGUE weniger (mind. MIN_REPS)
@@ -456,8 +482,9 @@ const goalReps = (t, i) => Math.max(MIN_REPS, t.reps - FATIGUE * i);
 // Nächste Gewichtsstufe, sobald die Leistung (cap Wdh. bis zum Versagen bei w) reicht,
 // um mit w + step noch goal Wdh. mit Ziel-Tank (nach k Sätzen Ermüdung) zu schaffen.
 function stepUp(cap, w, t, k, goal) {
-  if (w == null || !t.step) return null;
-  const up = round2(w + t.step);
+  if (w == null || (!t.step && !t.weights)) return null;
+  const up = wUp(w, t);
+  if (up == null) return null;  // schon das schwerste vorhandene Gewicht -> weiter über die Wdh.
   const reps = Math.floor(capacityAt(cap, w, up) - t.rir - FATIGUE * k + 1e-9);
   return reps >= goal ? { weight: up, reps } : null;
 }
@@ -774,8 +801,9 @@ const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken
 
 // Eigengewichtsübungen: Steigerung nur über die Wdh. (kg-Spalte = Körpergewicht), kein automatisches Aufwärmen.
 // ex.bwLoad = true: Gewichtsprogression trotzdem an (z. B. mit Zusatzgewicht) – dann wie eine normale Übung.
-const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic curls|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge)/;
-const isBodyweightName = name => BODYWEIGHT.test(norm(String(name || '').trim()));
+const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic curls|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge|pike-liegestutze|diamant-liegestutze|rudern umgekehrt|kniebeugen eigengewicht|einbeinige kniebeugen|bulgarian split squats ohne|ausfallschritte eigengewicht|beincurls am boden|hip thrust am sofa|seitliches beinheben|clamshells|copenhagen|wadenheben an der treppe|dead bug|superman|y-t-w)/;
+// Bandübungen laufen wie Eigengewicht (ohne kg, Steigerung über die Wdh.), dazu die Bandstufe (siehe bandShift)
+const isBodyweightName = name => BODYWEIGHT.test(norm(String(name || '').trim())) || isBandName(name);
 const isBodyweight = ex => !!ex && !ex.bwLoad && isBodyweightName(ex.name);
 
 // Bezugstraining ohne Gewichte (für Eigengewichtsübungen: nur die Wdh. zählen)
@@ -1211,7 +1239,7 @@ function deloadTarget(t, ref) {
     ...(ref ? { reps: Math.max(MIN_REPS, ref.reps) } : {}),
     sets: t.fixedSets ? t.sets : deloadSets(t.sets),  // automatisch verteilt: schon halbiert
     rir: Math.max(t.rir, DELOAD_RIR),
-    weight: normal != null ? roundTo(normal * DELOAD_WEIGHT, t.step) : null,
+    weight: normal != null ? wSnap(normal * DELOAD_WEIGHT, t) : null,
     deload: true,
     base: t,
   };
@@ -1358,9 +1386,10 @@ function weightForGoal(cap, w, t, k, goal) {
   const repsAt = x => Math.floor(capacityAt(cap, w, x) - t.rir - FATIGUE * k + 1e-9);
   // Leichtes Gewicht (eine Stufe ist ein großer Sprung): erst die Wdh. senken, solange es höchstens 3 unter dem
   // Ziel und mind. MIN_REPS sind – statt zwischen zwei Gewichten hin- und herzuspringen (User-Regel 2026-11-03)
-  if (bigStep(w, t.step) && repsAt(w) >= Math.max(MIN_REPS, goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
+  const below = wDown(w, t);
+  if ((below == null || bigStep(w, w - below)) && repsAt(w) >= Math.max(MIN_REPS, goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
   let wt = w;
-  while (repsAt(wt) < goal && wt - t.step > 0) wt = round2(wt - t.step);
+  while (repsAt(wt) < goal) { const d = wDown(wt, t); if (d == null) break; wt = d; }
   return { weight: wt, reps: Math.max(MIN_REPS, Math.min(goal, repsAt(wt))) };
 }
 
@@ -1802,7 +1831,8 @@ const firstWorkWeight = en => parseNum(en.sets[0] && en.sets[0].weight);
 
 function warmWeight(en, pct, work) {
   const step = (en.target && en.target.step) || stepFor(planExercise(en.name) || { name: en.name, step: null });
-  const w = Math.max(step, roundTo(pct * work, step));
+  const tw = en.target && en.target.weights;
+  const w = tw ? wSnap(pct * work, en.target, Math.floor) : Math.max(step, roundTo(pct * work, step));
   return warmupKind(en) === 'barbell' ? Math.max(BAR_KG, w) : w;
 }
 
@@ -1928,6 +1958,7 @@ const views = {
   exercise: { title: p => p.name,     tab: 'history', back: p => [p.from || 'history', p.fromParams || {}], render: renderExercise },
   week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
   library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
+  homeeq:   { title: 'Deine Ausrüstung', tab: 'plan', back: 'plan', render: () => renderHomeEq() },  // steht in wizard.js (später geladen)
   // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
   libadd:   { title: p => p.name ? 'Eigene Übung bearbeiten' : 'Eigene Übung', tab: 'plan',
     back: p => p.name ? ['libex', { name: p.name }] : ['library', {}], render: renderLibAdd },
@@ -2355,8 +2386,10 @@ function renderTraining() {
     }
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
     if (en.replacing) h += renderReplace(en, ei);
-    if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
-    if (body) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
+    const bandEx = body && en.target && en.target.band;
+    if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen – ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
+    else if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
+    if (body || (en.target && en.target.weights)) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
     if (en.target && en.target.own) {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
@@ -2372,7 +2405,7 @@ function renderTraining() {
     if (withMax || feat('tr-variants')) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.</span>
           <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
             data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>` : ''}
-        <div class="ex-chips">${withMax && feat('tr-step') ? stepChip(en, ei) : ''}
+        <div class="ex-chips">${withMax && feat('tr-step') && !t.weights ? stepChip(en, ei) : ''}
           ${feat('tr-variants') ? `<button class="step-chip" data-action="ex-variant-open" data-ei="${ei}" aria-expanded="${!!en.variantOpen}">Ausführung:
             <b>${vAll != null ? VARIANTS[vAll] : 'gemischt'}</b> <span aria-hidden="true">✎</span></button>` : ''}</div>
       </div>`;
@@ -2431,7 +2464,8 @@ function renderTraining() {
       h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
           aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>`
           : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</span>`) + `
-        ${body ? `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`
+        ${body ? (en.target && en.target.band ? `<span class="bw-cell">Band<small>${BAND_LEVELS[en.target.band]}</small></span>`
+          : `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`)
         : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
@@ -2505,8 +2539,14 @@ function relatedExercises(name, n = 6, skip = draft ? draft.entries.map(e => e.n
   const taken = new Set([nameKey(name), ...skip.map(nameKey)]);
   const trained = new Set(data.sessions.flatMap(s => s.entries.map(e => nameKey(e.name))));
   const pool = [...new Map([...EXERCISE_LIST.map(([x]) => x), ...ownExerciseNames()].map(x => [nameKey(x), x])).values()];
+  // Plan „Nur Maschinentraining“ (auch gerade im Assistenten): Maschinen zuerst
+  const inWiz = current.view === 'wizard' && typeof wiz !== 'undefined' && wiz;
+  const machines = inWiz ? wizMachines() : (activePlan() || {}).equip === 'machine';
+  // Plan „Zu Hause“: zuerst Übungen, die mit der eingetragenen Ausrüstung gehen
+  const home = inWiz ? wiz.equip === 'home' : homePlan();
   const score = c => (lib && libEntry(c) && libEntry(c).pattern === lib.pattern ? 4 : 0) + (word(c) === word(name) ? 3 : 0)
-    + (kindOf({ name: c }) === kind ? 2 : 0) + (trained.has(nameKey(c)) ? 1 : 0);
+    + (kindOf({ name: c }) === kind ? 2 : 0) + (trained.has(nameKey(c)) ? 1 : 0) + (machines && isMachine(c) ? 20 : 0)
+    + (home && homeOk(c, data.home) ? 20 : 0);
   return pool.filter(c => !taken.has(nameKey(c)) && groupOf({ name: c }) === g)
     .map(c => [c, score(c)]).sort((a, b) => b[1] - a[1]).slice(0, n).map(([c]) => c);
 }
@@ -2600,6 +2640,7 @@ function renderPlan() {
     h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
       <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}${hi ? `<small>${estText(lo, hi)}${lo !== hi ? ' (Intro bis Höhepunkt)' : ''}</small>` : ''}</span></button>`;
   });
+  if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
     h += `<p class="hint">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
       Isolationsübungen 2 Minuten (ohne Aufwärmen).</p>`;
@@ -3743,7 +3784,7 @@ function draftEntries(day) {
     // (Deload: Sätze der letzten Woche, werden dort halbiert)
     const fixedSets = auto.has(ex.id);
     const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw, adapt);
-    const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex) };
+    const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex), weights: weightsFor(ex.name) };
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
     if (adapt) target.noLoadUp = true;  // Diät/Minicut angepasst: Gewicht nicht steigern, höchstens 1 Wdh. mehr
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
@@ -3758,8 +3799,10 @@ function draftEntries(day) {
 function setupEntry(en, target, variantFor = () => '') {
   // Eigengewichtsübung: ohne Gewicht rechnen – Steigerung nur über die Wdh.
   const body = isBodyweight(planExercise(en.name) || { name: en.name });
-  target = body ? { ...target, bodyweight: true, max10: null } : (({ bodyweight, ...t }) => t)(target);
-  const strip = e => body ? withoutWeight(e) : e;
+  const band = body && isBandName(en.name) ? en.bandPick || bandFor(planExercise(en.name)) : null;
+  target = (({ bodyweight, band: b, ...t }) => t)(target);
+  if (body) target = { ...target, bodyweight: true, max10: null, ...(band ? { band } : {}) };
+  const strip = e => body ? bandShift(withoutWeight(e), band) : e;
   en.plan = target;
   if (draft.deload) target = deloadTarget(target, body ? null : lastWorkSet(en.name, draft.dayId));
   else if (draft.intro) target = { ...target, intro: true };
@@ -3781,6 +3824,20 @@ function setupEntry(en, target, variantFor = () => '') {
   en.note = null;
   en.warmup = null;  // Aufwärmen wird beim Anzeigen passend zum ersten Arbeitssatz vorgeschlagen
   en.warmupEdited = false;
+}
+
+// Bandstufe einer Übung: im Plan gespeichert, sonst das leichteste vorhandene Band
+const bandLevels = () => (data.home && data.home.bands && data.home.bands.length ? [...data.home.bands].sort() : [1, 2, 3, 4]);
+const bandFor = ex => (ex && ex.band) || bandLevels()[0];
+// Bandstufe gewechselt: Wdh. des Bezugstrainings aufs aktuelle Band umrechnen – je Stufe etwa BAND_STEP_REPS Wdh.
+// (vom User bestätigt: ab ~20 Wdh. nächstes Band, dann mit etwas weniger Wdh.)
+const BAND_STEP_REPS = 8, BAND_MAX_REPS = 20;
+function bandShift(e, band) {
+  const from = e && e.target && e.target.band;
+  if (!e || !band || !from || from === band) return e;
+  const d = (band - from) * BAND_STEP_REPS;
+  const sh = x => x && x.reps != null ? { ...x, reps: Math.max(1, x.reps - d) } : x;
+  return { ...e, sets: (e.sets || []).map(sh), planned: (e.planned || []).map(sh) };
 }
 
 // Deload mit Gewicht: erster normaler Satz (mit Gewicht) im letzten Training ohne Deload – bevorzugt neuester Zyklus
@@ -3822,9 +3879,54 @@ function bwVariants(name) {
 
 // Hinweis bei Eigengewicht: unter MIN_REPS Wdh. geschafft -> leichtere Variante; über BW_MAX_REPS -> schwerere
 const BW_MAX_REPS = 15;
+// Zu Hause mit vorhandenen Gewichten: ab MAXED_REPS Wdh. mit dem schwersten Gewicht eine schwerere Variante vorschlagen
+const MAXED_REPS = 20;
+const HOME_HARDER = [
+  [/goblet|kniebeugen/, '„Bulgarian Split Squats“ oder „Einbeinige Kniebeugen zum Stuhl“'],
+  [/kreuzheben rumanisch \((kurzhantel|kettlebell)\)/, '„Kreuzheben rumänisch einbeinig (Kurzhantel)“'],
+  [/hip thrust|glute bridge/, 'einbeinig ausführen oder oben 2 Sekunden halten'],
+  [/bankdrucken|floor press|fliegende/, 'langsamer (3 Sekunden absenken) oder mit Pause unten – oder „Liegestütze Füße erhöht“'],
+  [/rudern/, 'oben 2 Sekunden halten und langsam absenken'],
+  [/ausfallschritte|bulgarian|step-ups/, 'langsamer (3 Sekunden absenken) oder mit Pause unten'],
+];
+function maxedHint(en) {
+  const t = en.target, top = t.weights[t.weights.length - 1];
+  const last = lastEntry(en.name);
+  const hit = en.sets.some(x => isDone(x) && parseNum(x.weight) >= top && parseNum(x.reps) >= MAXED_REPS)
+    || (!en.sets.some(isDone) && last && !last.deload && last.sets.some(x => x.weight >= top && x.reps >= MAXED_REPS));
+  if (!hit) return '';
+  const n = norm(en.name), h = HOME_HARDER.find(([re]) => re.test(n));
+  return `💡 ${MAXED_REPS} Wdh. mit deinem schwersten Gewicht (${fmtNum(top)} kg): Zeit für eine schwerere Variante – ${h ? h[1]
+    : 'einarmig bzw. einbeinig ausführen oder langsamer (3 Sekunden absenken)'}. Oder trag schwerere Gewichte unter „Plan → 🏠 Deine Ausrüstung“ ein.
+    Tauschen kannst du die Übung oben über „⇄ Ersetzen“.`;
+}
+// Band: ab BAND_MAX_REPS Wdh. das nächststärkere Band vorschlagen (Knopf wechselt es)
+function bandHint(en) {
+  const t = en.target, ei = draft.entries.indexOf(en);
+  const last = lastEntry(en.name);
+  const lastSame = last && !last.deload && (last.target || {}).band === t.band;
+  const hit = en.sets.some(x => isDone(x) && parseNum(x.reps) >= BAND_MAX_REPS)
+    || (!en.sets.some(isDone) && lastSame && last.sets.some(x => x.reps >= BAND_MAX_REPS));
+  if (!hit || en.bandNext) return '';
+  const next = bandLevels().find(b => b > t.band);
+  return next ? `💡 ${BAND_MAX_REPS} Wdh. geschafft – Zeit fürs nächststärkere Band. Die App rechnet dann mit etwa ${BAND_STEP_REPS} Wdh. weniger.
+      <button class="vchip" data-action="tr-band" data-ei="${ei}" data-v="${next}">Band „${BAND_LEVELS[next]}“ nehmen</button>`
+    : `💡 ${BAND_MAX_REPS} Wdh. mit deinem stärksten Band: Nimm zwei Bänder zusammen, greif das Band kürzer oder führe die Bewegung langsamer aus (3 Sekunden absenken).`;
+}
+// Bandstufe im Training wählen: ohne erledigten Satz gilt sie sofort, sonst ab dem nächsten Training
+function bandRow(en, ei) {
+  const cur = en.bandNext || en.target.band;
+  return `<div class="variants plan band-row"><span>Band</span>${bandLevels().map(b =>
+    `<button class="vchip ${cur === b ? 'on' : ''}" data-action="tr-band" data-ei="${ei}" data-v="${b}">${BAND_LEVELS[b]}</button>`).join('')}</div>
+    ${en.bandNext ? `<p class="hint">Ab dem nächsten Training: Band „${BAND_LEVELS[en.bandNext]}“ (heute „${BAND_LEVELS[en.target.band]}“).</p>` : ''}`;
+}
+
 function bwHint(en) {
   const t = en.target;
-  if (!t || !t.bodyweight || t.own || t.deload) return '';
+  if (!t || t.own || t.deload) return '';
+  if (t.weights && !t.bodyweight) return maxedHint(en);
+  if (!t.bodyweight) return '';
+  if (t.band) return bandHint(en);
   const done = en.sets.filter(isDone).map(x => parseNum(x.reps));
   const last = lastEntry(en.name);
   const lastReps = last && !last.deload ? last.sets.map(x => x.reps).filter(r => r != null) : [];
@@ -3847,6 +3949,12 @@ function buildSets(name, target) {
   const tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(target);
   const sets = [];
   const lastSets = last && !target.bodyweight ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
+  // Zu Hause: liegt das passende Gewicht zwischen zwei vorhandenen, gilt das leichtere – dafür mehr Wdh.
+  let reps0 = target.reps;
+  if (target.weights && tw != null && target.max10 != null && !target.deload) {
+    const ideal = target.max10 * repFactor(target.reps + target.rir);
+    reps0 = Math.min(MAXED_REPS, Math.max(target.reps, repsAtWeight(target.reps, target.rir, ideal, tw)));
+  }
   for (let i = 0; i < target.sets; i++) {
     const ls = lastSets[i] || lastSets[lastSets.length - 1];
     const lw = ls && ls.weight != null ? ls.weight : null;
@@ -3869,14 +3977,14 @@ function buildSets(name, target) {
       continue;
     }
     const w = tw != null ? tw
-      : lw != null && target.deload ? roundTo(lw * DELOAD_WEIGHT, target.step || 2.5) : lw;
+      : lw != null && target.deload ? wSnap(lw * DELOAD_WEIGHT, target) : lw;
     if (target.deload) {
       // Deload: gleiche Wdh. in allen Sätzen, das leichtere Gewicht reicht als Entlastung
       sets.push({ weight: w != null ? fmtNum(w) : '', reps: String(target.reps), rir: '', auto: true });
       continue;
     }
     // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. MIN_REPS
-    const p = i === 0 ? { weight: w, reps: target.reps } : planSet(target.reps + target.rir, w, target, i);
+    const p = i === 0 ? { weight: w, reps: reps0 } : planSet(reps0 + target.rir, w, target, i);
     sets.push({ weight: p.weight != null ? fmtNum(p.weight) : '', reps: String(p.reps), rir: '', auto: true });
   }
   return sets;
@@ -3919,7 +4027,7 @@ function replaceExercise(en, name, max10) {
   en.name = name;
   en.replacedFrom = nameKey(name) === nameKey(original) ? null : original;
   const variants = en.sets.map(variantOf);
-  setupEntry(en, { ...plan, max10, step: stepFor(ex || { name, step: null }) },
+  setupEntry(en, { ...plan, max10, step: stepFor(ex || { name, step: null }), weights: weightsFor(name) },
     i => variants[Math.min(i, variants.length - 1)]);
 }
 
@@ -4068,7 +4176,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4403,6 +4511,19 @@ const actions = {
     }
     saveDraft(); render();
   },
+  // Bandstufe: im Plan speichern; ohne erledigten Satz sofort neu rechnen, sonst gilt sie ab dem nächsten Training
+  'tr-band': el => {
+    const en = draft.entries[el.dataset.ei];
+    const v = Number(el.dataset.v);
+    const ex = planExercise(en.name);
+    if (ex) { ex.band = v; saveData(); }
+    if (!en.sets.some(isDone) && en.plan) {
+      en.bandPick = v; en.bandNext = null;
+      const variants = en.sets.map(variantOf);
+      setupEntry(en, en.plan, i => variants[Math.min(i, variants.length - 1)]);
+    } else en.bandNext = v === en.target.band ? null : v;
+    saveDraft(); render();
+  },
   'comment-toggle': el => {
     const en = draft.entries[el.dataset.ei];
     en.commentOpen = !en.commentOpen;
@@ -4530,7 +4651,7 @@ const actions = {
     setupEntry(en, {
       sets, fixedSets: true, reps: repsFor(day, ex),
       rir: rirFor(kindOf(ex), week, bw, groupOf(ex)), rirText: rirLabel(kindOf(ex), week, bw, groupOf(ex)),
-      max10, step: stepFor(ex),
+      max10, step: stepFor(ex), weights: weightsFor(name),
     });
     draft.entries.push(en);
     draft.adding = false;

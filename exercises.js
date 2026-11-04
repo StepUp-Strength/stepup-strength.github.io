@@ -40,6 +40,13 @@ const EXERCISE_LIST = [
   ['Liegestütze eng', N, 'brust'],
   ['Liegestütze erhöht', N, 'brust'],
   ['Überzüge / Pullover (Kurzhantel)', A, 'lat'],
+  // Brust zu Hause
+  ['Liegestütze auf Knien', N, 'brust'],
+  ['Liegestütze Füße erhöht', N, 'brust'],
+  ['Floor Press Kurzhantel', N, 'brust'],
+  ['Fliegende am Boden (Kurzhantel)', A, 'brust'],
+  ['Brustpresse Band', N, 'brust'],
+  ['Fliegende Band (Türanker)', A, 'brust'],
 
   // Rücken (Grundübung ist hier nur das Langhantelrudern; breites Rudern = Trapez, sonst Lat)
   ['Klimmzüge', N, 'lat'],
@@ -103,6 +110,19 @@ const EXERCISE_LIST = [
   ['Shrugs Maschine', A, 'trapez'],
   ['Shrugs Kabelzug', A, 'trapez'],
   ['Face Pulls', A, 'schulter_hinten'],
+  // Rücken zu Hause
+  ['Klimmzüge mit Band (unterstützt)', N, 'lat'],
+  ['Rudern umgekehrt (Tisch oder Stange)', N, 'lat'],
+  ['Rudern Kettlebell einarmig', N, 'lat'],
+  ['Rudern Band sitzend', N, 'lat'],
+  ['Rudern Band breit', N, 'trapez'],
+  ['Latziehen Band (Türanker)', N, 'lat'],
+  ['Überzüge Band (Türanker)', A, 'lat'],
+  ['Band Pull-Aparts', A, 'schulter_hinten'],
+  ['Face Pulls Band (Türanker)', A, 'schulter_hinten'],
+  ['Y-T-W-Raises (Bauchlage)', A, 'schulter_hinten'],
+  ['Superman (Bauchlage)', A, 'ruecken_unten'],
+  ['Good Mornings Band', A, 'ruecken_unten'],
 
   // Schultern
   ['Schulterdrücken Langhantel stehend (Military Press)', G, 'schulter_vorne'],
@@ -130,6 +150,11 @@ const EXERCISE_LIST = [
   ['Reverse Flys Kabelzug', A, 'schulter_hinten'],
   ['Aufrechtes Rudern Langhantel', N, 'schulter_seite'],
   ['Aufrechtes Rudern Kabelzug', N, 'schulter_seite'],
+  // Schultern zu Hause
+  ['Schulterdrücken Kettlebell', N, 'schulter_vorne'],
+  ['Schulterdrücken Band', N, 'schulter_vorne'],
+  ['Pike-Liegestütze', N, 'schulter_vorne'],
+  ['Seitheben Band', A, 'schulter_seite'],
 
   // Bizeps & Unterarme
   ['Bizepscurls Langhantel', A, 'bizeps'],
@@ -150,6 +175,8 @@ const EXERCISE_LIST = [
   ['Scottcurls Kabelzug', A, 'bizeps'],
   ['Scottcurls Maschine', A, 'bizeps'],
   ['Spider Curls', A, 'bizeps'],
+  ['Bizepscurls Band', A, 'bizeps'],
+  ['Bizepscurls Kettlebell', A, 'bizeps'],
   ['Reverse Curls', A, 'unterarme'],
   ['Handgelenkcurls (Unterarme)', A, 'unterarme'],
   ['Reverse Handgelenkcurls (Unterarme)', A, 'unterarme'],
@@ -174,6 +201,9 @@ const EXERCISE_LIST = [
   ['Trizeps-Kickbacks Kurzhantel', A, 'trizeps'],
   ['Trizeps-Kickbacks Kabelzug', A, 'trizeps'],
   ['Trizepsmaschine', A, 'trizeps'],
+  ['Diamant-Liegestütze', A, 'trizeps'],
+  ['Trizepsdrücken Band (Türanker)', A, 'trizeps'],
+  ['Trizepsdrücken über Kopf Band', A, 'trizeps'],
 
   // Beine
   ['Kniebeugen (Langhantel)', G, 'quadrizeps'],
@@ -225,6 +255,23 @@ const EXERCISE_LIST = [
   ['Wadenheben Multipresse', A, 'waden'],
   ['Sissy Squats', A, 'quadrizeps'],
   ['Nordic Curls', A, 'beinbeuger'],
+  // Beine zu Hause
+  ['Kniebeugen Eigengewicht', N, 'quadrizeps'],
+  ['Einbeinige Kniebeugen zum Stuhl', N, 'quadrizeps'],
+  ['Bulgarian Split Squats ohne Gewicht', N, 'quadrizeps'],
+  ['Ausfallschritte Eigengewicht', N, 'quadrizeps'],
+  ['Kreuzheben rumänisch (Kettlebell)', N, 'beinbeuger'],
+  ['Kreuzheben rumänisch einbeinig (Kurzhantel)', N, 'beinbeuger'],
+  ['Beincurls am Boden (Handtuch)', A, 'beinbeuger'],
+  ['Beinbeuger Band (Bauchlage)', A, 'beinbeuger'],
+  ['Hip Thrust am Sofa', N, 'gesaess'],
+  ['Glute Bridge einbeinig', A, 'gesaess'],
+  ['Kickbacks Band (Gesäß)', A, 'gesaess'],
+  ['Monster Walk (Band)', A, 'abduktoren'],
+  ['Seitliches Beinheben liegend', A, 'abduktoren'],
+  ['Clamshells', A, 'abduktoren'],
+  ['Copenhagen Plank', A, 'adduktoren'],
+  ['Wadenheben an der Treppe', A, 'waden'],
 
   // Bauch
   ['Crunches', A, 'bauch'],
@@ -243,6 +290,7 @@ const EXERCISE_LIST = [
   ['Bauchroller (Ab Wheel)', A, 'bauch'],
   ['Rotationsmaschine', A, 'bauch'],
   ['Holzhacker Kabelzug', A, 'bauch'],
+  ['Dead Bug', A, 'bauch'],
 
   // Ganzkörper
   ['Kettlebell Swings', N, 'ganzkoerper'],
@@ -262,6 +310,75 @@ const EXERCISE_LIST = [
 ];
 
 const EXERCISES = EXERCISE_LIST.map(([name]) => name);
+
+// „Nur Maschinentraining“: Geräte mit geführter Bewegung, Kabelzüge und Multipresse – keine Lang- und Kurzhanteln
+// („Wadenheben stehend“ fehlt bewusst, das geht auch frei)
+const MACHINE_RE = /maschine|kabelzug|multipresse|beinpresse|beinstrecker|beinbeuger|hackenschmidt|pendulum|belt squat|latziehen|face pulls|low row|high row|wadenheben sitzend/i;
+const isMachine = name => MACHINE_RE.test(String(name)) && !/\bband\b/i.test(String(name));
+
+// Widerstandsband-Übungen: statt kg eine Bandstufe, Steigerung über die Wdh. (Klimmzüge mit Band = Eigengewicht)
+const isBandName = name => /\bband\b|pull-aparts|monster walk/i.test(String(name)) && !/^klimmz/i.test(String(name).trim());
+const BAND_LEVELS = { 1: 'leicht', 2: 'mittel', 3: 'stark', 4: 'extra stark' };
+
+// Heimtraining: was eine Übung braucht – db Kurzhanteln, kb Kettlebell, band Widerstandsband, anchor Türanker,
+// bar Klimmzugstange, bench Flachbank, incline Schrägbank, dip Dip-Barren; 'db|kb' = eines von beiden; [] = nichts
+// (Boden, Stuhl, Sofa, Treppe). Nur Übungen aus dieser Liste schlägt die App für Pläne „Zu Hause“ vor.
+const HOME_EX = {
+  'Liegestütze': [], 'Liegestütze eng': [], 'Liegestütze erhöht': [], 'Liegestütze auf Knien': [], 'Liegestütze Füße erhöht': [],
+  'Bankdrücken Flachbank (Kurzhantel)': ['db', 'bench'], 'Bankdrücken Schrägbank (Kurzhantel)': ['db', 'incline'],
+  'Floor Press Kurzhantel': ['db'], 'Fliegende Flachbank (Kurzhantel)': ['db', 'bench'],
+  'Fliegende Schrägbank (Kurzhantel)': ['db', 'incline'], 'Fliegende am Boden (Kurzhantel)': ['db'],
+  'Brustpresse Band': ['band'], 'Fliegende Band (Türanker)': ['band', 'anchor'], 'Dips (Brust)': ['dip'],
+  'Überzüge / Pullover (Kurzhantel)': ['db', 'bench'],
+  'Klimmzüge': ['bar'], 'Klimmzüge Untergriff (Chin-ups)': ['bar'], 'Klimmzüge Neutralgriff': ['bar'],
+  'Klimmzüge mit Band (unterstützt)': ['bar', 'band'], 'Rudern umgekehrt (Tisch oder Stange)': [],
+  'Rudern Kurzhantel einarmig': ['db'], 'Rudern Kurzhantel beidarmig vorgebeugt': ['db'],
+  'Rudern Kurzhantel brustgestützt (Schrägbank)': ['db', 'incline'], 'Rudern Kettlebell einarmig': ['kb'],
+  'Rudern Band sitzend': ['band'], 'Rudern Band breit': ['band'], 'Latziehen Band (Türanker)': ['band', 'anchor'],
+  'Überzüge Band (Türanker)': ['band', 'anchor'], 'Shrugs Kurzhantel': ['db'],
+  'Band Pull-Aparts': ['band'], 'Face Pulls Band (Türanker)': ['band', 'anchor'], 'Vorgebeugtes Seitheben (Kurzhantel)': ['db'],
+  'Y-T-W-Raises (Bauchlage)': [], 'Superman (Bauchlage)': [], 'Good Mornings Band': ['band'],
+  'Schulterdrücken Kurzhantel sitzend': ['db'], 'Schulterdrücken Kurzhantel stehend': ['db'], 'Arnold Press': ['db'],
+  'Schulterdrücken Kettlebell': ['kb'], 'Schulterdrücken Band': ['band'], 'Pike-Liegestütze': [],
+  'Seitheben Kurzhantel': ['db'], 'Seitheben Kurzhantel sitzend': ['db'], 'Seitheben liegend (Schrägbank)': ['db', 'incline'],
+  'Seitheben Band': ['band'], 'Frontheben Kurzhantel': ['db'],
+  'Bizepscurls Kurzhantel': ['db'], 'Hammercurls Kurzhantel': ['db'], 'Konzentrationscurls': ['db'],
+  'Bizepscurls Kurzhantel Schrägbank': ['db', 'incline'], 'Bizepscurls Band': ['band'], 'Bizepscurls Kettlebell': ['kb'],
+  'Handgelenkcurls (Unterarme)': ['db'], "Farmer's Walk": ['db|kb'],
+  'Trizepsdrücken über Kopf Kurzhantel': ['db'], 'Stirndrücken Kurzhantel': ['db'], 'Trizeps-Kickbacks Kurzhantel': ['db'],
+  'Bankdips': [], 'Diamant-Liegestütze': [], 'Trizepsdrücken Band (Türanker)': ['band', 'anchor'],
+  'Trizepsdrücken über Kopf Band': ['band'], 'Dips (Trizeps)': ['dip'],
+  'Goblet Squats': ['db|kb'], 'Kniebeugen Eigengewicht': [], 'Einbeinige Kniebeugen zum Stuhl': [],
+  'Bulgarian Split Squats': ['db'], 'Bulgarian Split Squats ohne Gewicht': [], 'Ausfallschritte Kurzhantel': ['db'],
+  'Ausfallschritte Eigengewicht': [], 'Step-ups': ['db'], 'Sissy Squats': [],
+  'Kreuzheben rumänisch (Kurzhantel)': ['db'], 'Kreuzheben rumänisch (Kettlebell)': ['kb'],
+  'Kreuzheben rumänisch einbeinig (Kurzhantel)': ['db'], 'Beincurls am Boden (Handtuch)': [], 'Nordic Curls': [],
+  'Beinbeuger Band (Bauchlage)': ['band', 'anchor'],
+  'Hip Thrust Kurzhantel': ['db'], 'Hip Thrust am Sofa': [], 'Glute Bridge': [], 'Glute Bridge einbeinig': [],
+  'Kickbacks Band (Gesäß)': ['band'], 'Monster Walk (Band)': ['band'], 'Seitliches Beinheben liegend': [], 'Clamshells': [],
+  'Copenhagen Plank': [], 'Wadenheben an der Treppe': [], 'Wadenheben einbeinig': ['db'],
+  'Crunches': [], 'Sit-ups': [], 'Beinheben liegend': [], 'Plank (Unterarmstütz)': [], 'Seitstütz': [], 'Dead Bug': [],
+  'Beinheben hängend': ['bar'], 'Knieheben hängend': ['bar'], 'Russian Twists': ['db|kb'],
+};
+const HOME_INDEX = new Map(Object.entries(HOME_EX).map(([n, needs]) => [n.toLowerCase(), needs]));
+// Heim-Ausrüstung (data.home): Kurzhantel-/Kettlebell-Gewichte, Bänder (Stufen 1–4), Türanker, Stange, Bank 0/1/2, Dips
+const homeHas = (h, tok) => tok.split('|').some(x => ({
+  db: (h.db || []).length > 0, kb: (h.kb || []).length > 0, band: (h.bands || []).length > 0,
+  anchor: !!h.anchor && (h.bands || []).length > 0, bar: !!h.bar, bench: h.bench >= 1, incline: h.bench >= 2, dip: !!h.dip,
+})[x]);
+// Geht die Übung mit dieser Ausrüstung? (false auch für Übungen, die keine Heim-Übung sind)
+function homeOk(name, h) {
+  const needs = HOME_INDEX.get(String(name).trim().toLowerCase());
+  return needs ? needs.every(t => homeHas(h || {}, t)) : false;
+}
+// Gewichte, mit denen die Übung zu Hause gerechnet wird (Kurzhanteln, Kettlebells oder beides), sonst null
+function homeWeights(name, h) {
+  const needs = HOME_INDEX.get(String(name).trim().toLowerCase()) || [];
+  const tok = needs.find(t => /db|kb/.test(t));
+  if (!tok || !h) return null;
+  const list = [...(/db/.test(tok) ? h.db || [] : []), ...(/kb/.test(tok) ? h.kb || [] : [])];
+  return list.length ? [...new Set(list)].sort((a, b) => a - b) : null;
+}
 
 // Übungsart und Muskelgruppe nach Name (klein geschrieben) für die automatische Einordnung
 const EXERCISE_KINDS = new Map(EXERCISE_LIST.map(([name, kind]) => [name.trim().toLowerCase(), kind]));

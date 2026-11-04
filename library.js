@@ -53,6 +53,7 @@ function figGear(g, J, cls) {
     case 'plate': return [{ tag: 'circle', cls: 'fg-plate ' + cls, a: { cx: p[0], cy: p[1], r: g.r || 10 } }];
     case 'db': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1], r: 5 } }];
     case 'kb': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1] + 7, r: 6.5 } }];
+    case 'none': return [];  // Eigengewicht: nichts in der Hand
     case 'pad': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1], r: g.r || 4.5 } }];
     case 'line': {
       const v = figVec(g.ang || 0, (g.len || 24) / 2);
@@ -1331,6 +1332,52 @@ const LIB_EX = {
   'Rudergerät': ['rower', 'Ganzkörper-Ausdauer.'],
   'Stepper': ['stepup', 'Treppensteigen auf der Stelle.'],
   'Seilspringen': ['jumprope', 'Koordination und Ausdauer.'],
+
+  // Zu Hause (Eigengewicht, Kurzhantel, Kettlebell, Widerstandsband)
+  'Liegestütze auf Knien': ['pushup', 'Knie bleiben am Boden – leichtere Variante, gut zum Einstieg.', 'none'],
+  'Liegestütze Füße erhöht': ['pushup', 'Füße auf Stuhl oder Sofa – schwerer, mehr obere Brust.', 'none'],
+  'Floor Press Kurzhantel': ['bench', 'Mit Kurzhanteln auf dem Boden liegend – die Ellbogen stoppen am Boden, das schont die Schultern.', 'db'],
+  'Fliegende am Boden (Kurzhantel)': ['flyLying', 'Auf dem Boden liegend – die Oberarme stoppen am Boden, das schont die Schultern.', 'db'],
+  'Brustpresse Band': ['crossoverMid', 'Band hinter dem Rücken bzw. am Türanker auf Brusthöhe – nach vorn drücken.'],
+  'Fliegende Band (Türanker)': ['crossoverMid', 'Band am Türanker auf Brusthöhe – Arme im Bogen nach vorn zusammenführen.'],
+  'Klimmzüge mit Band (unterstützt)': ['pullup', 'Band an der Stange, Knie oder Fuß ins Band – ein stärkeres Band hilft mehr.', 'none'],
+  'Rudern umgekehrt (Tisch oder Stange)': ['rowSeated', 'Unter einem stabilen Tisch oder einer tiefen Stange liegen, Körper gestreckt – Brust zur Kante ziehen. Füße näher heran = leichter.', 'none'],
+  'Rudern Kettlebell einarmig': ['rowBent', 'Eine Hand und ein Knie abstützen – Kettlebell zur Hüfte ziehen.', 'kb'],
+  'Rudern Band sitzend': ['rowSeated', 'Im Sitzen, Band um die Füße – Griffe zur Hüfte ziehen.'],
+  'Rudern Band breit': ['rowSeated', 'Wie Rudern mit Band, Ellbogen weit nach außen – mehr oberer Rücken.'],
+  'Latziehen Band (Türanker)': ['pulldown', 'Band oben an der Tür befestigt, kniend oder sitzend zur Brust ziehen.'],
+  'Überzüge Band (Türanker)': ['straightarm', 'Band oben an der Tür, Arme gestreckt bis zu den Oberschenkeln führen.'],
+  'Band Pull-Aparts': ['facepull', 'Band mit gestreckten Armen vor der Brust auseinanderziehen.'],
+  'Face Pulls Band (Türanker)': ['facepull', 'Band auf Kopfhöhe am Türanker – zum Gesicht ziehen, Ellbogen hoch.'],
+  'Y-T-W-Raises (Bauchlage)': ['revfly', 'Auf dem Bauch liegend die Arme als Y, T und W anheben – ohne Gewicht.', 'none'],
+  'Superman (Bauchlage)': ['hyperext', 'Auf dem Bauch liegend Arme und Beine leicht anheben, kurz halten.', 'none'],
+  'Good Mornings Band': ['rdl', 'Band unter den Füßen und über den Nacken – Hüfte nach hinten schieben, Rücken gerade.', 'pad'],
+  'Schulterdrücken Kettlebell': ['ohp', 'Kettlebell liegt auf dem Unterarm – nach oben drücken.', 'kb'],
+  'Schulterdrücken Band': ['ohp', 'Band unter den Füßen – Griffe über den Kopf drücken.', 'pad'],
+  'Pike-Liegestütze': ['pushup', 'Hüfte hoch (umgedrehtes V), Kopf Richtung Boden senken – trainiert die Schultern.', 'none'],
+  'Seitheben Band': ['lateral', 'Band unter den Füßen – seitlich bis Schulterhöhe heben.', 'pad'],
+  'Bizepscurls Band': ['curl', 'Band unter den Füßen – Ellbogen bleiben am Körper.', 'pad'],
+  'Bizepscurls Kettlebell': ['curl', 'Kettlebell am Griff oder an den Hörnern.', 'kb'],
+  'Diamant-Liegestütze': ['pushup', 'Hände eng, Daumen und Zeigefinger bilden ein Dreieck – viel Trizeps.', 'none'],
+  'Trizepsdrücken Band (Türanker)': ['pushdown', 'Band oben an der Tür – Ellbogen am Körper, nach unten strecken.'],
+  'Trizepsdrücken über Kopf Band': ['ohext', 'Band unter dem hinteren Fuß – hinter dem Kopf nach oben strecken.', 'pad'],
+  'Kniebeugen Eigengewicht': ['squat', 'Ohne Gewicht, Arme nach vorn – gut zum Lernen der Kniebeuge.', 'none'],
+  'Einbeinige Kniebeugen zum Stuhl': ['squat', 'Auf einem Bein langsam auf den Stuhl setzen und wieder aufstehen.', 'none'],
+  'Bulgarian Split Squats ohne Gewicht': ['lunge', 'Hinterer Fuß auf Stuhl oder Sofa – sehr effektiv auch ohne Gewicht.', 'none'],
+  'Ausfallschritte Eigengewicht': ['lunge', 'Ohne Gewicht, abwechselnd links und rechts.', 'none'],
+  'Kreuzheben rumänisch (Kettlebell)': ['rdl', 'Kettlebell vor den Oberschenkeln – Hüfte nach hinten schieben.', 'kb'],
+  'Kreuzheben rumänisch einbeinig (Kurzhantel)': ['rdl', 'Auf einem Bein, das andere nach hinten strecken – trainiert auch das Gleichgewicht.', 'db'],
+  'Beincurls am Boden (Handtuch)': ['bridge', 'Rückenlage, Fersen auf einem Handtuch (glatter Boden) – Hüfte hoch und Fersen heranziehen.', 'none'],
+  'Beinbeuger Band (Bauchlage)': ['legcurlLying', 'Band unten am Türanker, in Bauchlage – Ferse Richtung Gesäß.'],
+  'Hip Thrust am Sofa': ['hipthrust', 'Schulterblätter ans Sofa, ohne Gewicht – oben kurz halten.', 'none'],
+  'Glute Bridge einbeinig': ['bridge', 'Ein Bein gestreckt in der Luft – doppelt so schwer.', 'none'],
+  'Kickbacks Band (Gesäß)': ['glutekick', 'Band um den Fuß bzw. unten am Türanker – Bein nach hinten strecken.'],
+  'Monster Walk (Band)': ['abductor', 'Band um Knie oder Knöchel – in leichter Hocke seitlich gehen.', 'none'],
+  'Seitliches Beinheben liegend': ['abductor', 'Auf der Seite liegend das obere Bein gestreckt anheben.', 'none'],
+  'Clamshells': ['abductor', 'Auf der Seite liegend, Knie gebeugt – oberes Knie öffnen, Füße bleiben zusammen. Mit Band schwerer.', 'none'],
+  'Copenhagen Plank': ['sideplank', 'Seitstütz mit dem oberen Bein auf Sofa oder Stuhl – trainiert die Innenseite der Oberschenkel.', 'none'],
+  'Wadenheben an der Treppe': ['calf', 'Fußballen auf der Stufe, festhalten – Fersen tief absenken und hoch.', 'none'],
+  'Dead Bug': ['legraiseLying', 'Rückenlage, gegenüberliegenden Arm und Bein langsam strecken – unterer Rücken bleibt am Boden.', 'none'],
 };
 
 /* ---------- Abwandlungen für einzelne Übungen ---------- */
@@ -1627,6 +1674,12 @@ const LIB_MOD = {
     ],
   },
 };
+
+// Heim-Übungen mit derselben Abwandlung wie ihr Vorbild im Studio
+Object.assign(LIB_MOD, {
+  'Rudern Kettlebell einarmig': LIB_MOD['Rudern Kurzhantel einarmig'],
+  'Bulgarian Split Squats ohne Gewicht': LIB_MOD['Bulgarian Split Squats'],
+});
 
 /* ---------- Nachschlagen ---------- */
 // Eintrag: [Muster, Hinweis, Gerät, Abwandlung]. Abwandlung (LIB_MOD) passt das Muster an die Übung an.

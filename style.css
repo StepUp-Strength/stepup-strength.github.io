@@ -2227,3 +2227,16 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .time-strip span { flex: 1; min-width: 0; }
 .time-strip .btn { width: auto; min-height: 40px; margin: 0; padding: 0 12px; font-size: 14.5px; }
 .time-note small { font-weight: 500; }
+
+/* Heimtraining: Ausrüstung (Gewichte antippen) und Bandstufe im Training */
+.heq-block { margin: 4px 0 18px; }
+.heq-block .lbl { font-weight: 700; margin-bottom: 2px; }
+.heq-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 6px; margin: 8px 0; }
+.heq-grid .vchip { min-height: 40px; padding: 4px 0; justify-content: center; text-align: center; font-variant-numeric: tabular-nums; }
+.heq-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.heq-add .inp.kg { width: 84px; flex: 0 0 auto; margin: 0; }
+.heq-add .btn { width: auto; flex: 0 0 auto; margin: 0; padding: 8px 12px; min-height: 44px; font-size: 15px; }
+.heq-block .variants { margin: 8px 0; }
+.heq-sum { margin-top: 4px; }
+.band-row { margin: 6px 0; }
+.bw-hint .vchip { margin-top: 6px; }

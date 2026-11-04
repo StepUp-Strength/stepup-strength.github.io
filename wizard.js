@@ -182,6 +182,70 @@ const DEFAULT_PICKS = {
   bauch: ['Crunches Kabelzug (kniend)', 'Beinheben hängend'],
   ruecken_unten: ['Hyperextensions (Rückenstrecker)', 'Rückenstrecker Maschine'],
 };
+// … bei „Nur Maschinentraining“ (Gruppen ohne Maschinen-Übung, z. B. Unterarme, nehmen die normale Auswahl)
+const MACHINE_PICKS = {
+  brust: ['Brustpresse Maschine', 'Bankdrücken Schrägmaschine', 'Butterfly Maschine', 'Kabelzug Crossover'],
+  lat: ['Latziehen breit', 'Rudern Maschine', 'Rudern Kabelzug eng (V-Griff)', 'Überzüge Maschine (Pullover)'],
+  trapez: ['Rudern Maschine breit', 'Shrugs Maschine'],
+  schulter_vorne: ['Schulterdrücken Maschine', 'Schulterdrücken Multipresse', 'Frontheben Kabelzug'],
+  schulter_seite: ['Seitheben Maschine', 'Seitheben Kabelzug'],
+  schulter_hinten: ['Reverse Butterfly Maschine', 'Face Pulls', 'Reverse Flys Kabelzug'],
+  bizeps: ['Bizepscurls Maschine', 'Bizepscurls Kabelzug', 'Scottcurls Maschine'],
+  trizeps: ['Trizepsdrücken Kabelzug (Seil)', 'Trizepsmaschine', 'Trizepsdrücken über Kopf Kabelzug'],
+  quadrizeps: ['Beinpresse 45°', 'Hackenschmidt-Kniebeugen (Hack Squat)', 'Beinstrecker', 'Kniebeugen Multipresse'],
+  beinbeuger: ['Beinbeuger sitzend', 'Beinbeuger liegend'],
+  gesaess: ['Hip Thrust Maschine', 'Gesäßmaschine (Glute Kickback)'],
+  adduktoren: ['Adduktoren Maschine'],
+  abduktoren: ['Abduktoren Maschine'],
+  waden: ['Wadenheben sitzend', 'Wadenheben an der Beinpresse'],
+  bauch: ['Crunches Maschine', 'Crunches Kabelzug (kniend)'],
+  ruecken_unten: ['Rückenstrecker Maschine'],
+};
+// … zu Hause: in dieser Reihenfolge, soweit die Ausrüstung reicht (Gewichte vor Band vor Eigengewicht)
+const HOME_PICKS = {
+  brust: ['Bankdrücken Flachbank (Kurzhantel)', 'Floor Press Kurzhantel', 'Liegestütze', 'Fliegende Flachbank (Kurzhantel)',
+    'Fliegende am Boden (Kurzhantel)', 'Brustpresse Band', 'Liegestütze auf Knien', 'Fliegende Band (Türanker)'],
+  lat: ['Rudern Kurzhantel einarmig', 'Latziehen Band (Türanker)', 'Klimmzüge', 'Rudern Kettlebell einarmig', 'Rudern Band sitzend',
+    'Rudern umgekehrt (Tisch oder Stange)', 'Klimmzüge mit Band (unterstützt)', 'Überzüge Band (Türanker)', 'Überzüge / Pullover (Kurzhantel)'],
+  trapez: ['Shrugs Kurzhantel', 'Rudern Band breit'],
+  schulter_vorne: ['Schulterdrücken Kurzhantel sitzend', 'Schulterdrücken Kettlebell', 'Schulterdrücken Band', 'Pike-Liegestütze', 'Arnold Press'],
+  schulter_seite: ['Seitheben Kurzhantel', 'Seitheben Band', 'Seitheben Kurzhantel sitzend'],
+  schulter_hinten: ['Vorgebeugtes Seitheben (Kurzhantel)', 'Face Pulls Band (Türanker)', 'Band Pull-Aparts', 'Y-T-W-Raises (Bauchlage)'],
+  bizeps: ['Bizepscurls Kurzhantel', 'Hammercurls Kurzhantel', 'Bizepscurls Kettlebell', 'Bizepscurls Band', 'Klimmzüge Untergriff (Chin-ups)'],
+  trizeps: ['Trizepsdrücken über Kopf Kurzhantel', 'Trizepsdrücken Band (Türanker)', 'Trizepsdrücken über Kopf Band', 'Bankdips',
+    'Stirndrücken Kurzhantel', 'Diamant-Liegestütze'],
+  unterarme: ['Handgelenkcurls (Unterarme)', "Farmer's Walk"],
+  quadrizeps: ['Goblet Squats', 'Bulgarian Split Squats', 'Ausfallschritte Kurzhantel', 'Kniebeugen Eigengewicht',
+    'Bulgarian Split Squats ohne Gewicht', 'Ausfallschritte Eigengewicht', 'Einbeinige Kniebeugen zum Stuhl'],
+  beinbeuger: ['Kreuzheben rumänisch (Kurzhantel)', 'Kreuzheben rumänisch (Kettlebell)', 'Beincurls am Boden (Handtuch)',
+    'Kreuzheben rumänisch einbeinig (Kurzhantel)', 'Beinbeuger Band (Bauchlage)', 'Nordic Curls'],
+  gesaess: ['Hip Thrust Kurzhantel', 'Hip Thrust am Sofa', 'Glute Bridge einbeinig', 'Kickbacks Band (Gesäß)', 'Glute Bridge'],
+  abduktoren: ['Monster Walk (Band)', 'Clamshells', 'Seitliches Beinheben liegend'],
+  adduktoren: ['Copenhagen Plank'],
+  waden: ['Wadenheben einbeinig', 'Wadenheben an der Treppe'],
+  bauch: ['Crunches', 'Dead Bug', 'Beinheben liegend', 'Plank (Unterarmstütz)'],
+  ruecken_unten: ['Superman (Bauchlage)', 'Good Mornings Band'],
+};
+// Ausweich-Übung -> Vorbild: zu Hause nur gewählt, wenn das Vorbild mit der Ausrüstung nicht geht
+const HOME_ALT = {
+  'Floor Press Kurzhantel': 'Bankdrücken Flachbank (Kurzhantel)', 'Fliegende am Boden (Kurzhantel)': 'Fliegende Flachbank (Kurzhantel)',
+  'Liegestütze auf Knien': 'Liegestütze', 'Klimmzüge mit Band (unterstützt)': 'Klimmzüge',
+  'Rudern Kettlebell einarmig': 'Rudern Kurzhantel einarmig', 'Schulterdrücken Kettlebell': 'Schulterdrücken Kurzhantel sitzend',
+  'Bizepscurls Kettlebell': 'Bizepscurls Kurzhantel', 'Kreuzheben rumänisch (Kettlebell)': 'Kreuzheben rumänisch (Kurzhantel)',
+  'Bulgarian Split Squats ohne Gewicht': 'Bulgarian Split Squats', 'Ausfallschritte Eigengewicht': 'Ausfallschritte Kurzhantel',
+  'Hip Thrust am Sofa': 'Hip Thrust Kurzhantel',
+};
+const wizMachines = () => !!wiz && wiz.equip === 'machine' && appMode() !== 'x';
+const wizHome = () => !!wiz && wiz.equip === 'home';
+// Nur Maschinen: Liste auf Maschinen-Übungen beschränken – gibt es für die Muskelgruppe keine, bleibt sie, wie sie ist.
+// Zu Hause: nur Übungen, die mit der Ausrüstung gehen (gibt es keine, bleibt die Muskelgruppe ohne Übung)
+function machineFilter(list, g) {
+  if (wizHome()) return list.filter(n => homeOk(n, data.home));
+  if (!wizMachines()) return list;
+  const any = EXERCISE_LIST.some(([n, , gr]) => gr === g && isMachine(n));
+  return any ? list.filter(isMachine) : list;
+}
+const defaultPicks = g => (wizHome() && HOME_PICKS[g]) || (wizMachines() && MACHINE_PICKS[g]) || DEFAULT_PICKS[g];
 
 let wiz = null;  // Entwurf des Assistenten – erst „Plan speichern“ schreibt den Plan in data
 
@@ -189,8 +253,8 @@ const byKind = names => [...names].sort((a, b) => KIND_ORDER[kindOf({ name: a })
 const uniqueNames = names => names.filter((n, i) => names.findIndex(m => nameKey(m) === nameKey(n)) === i);
 
 // Übungen dieser Muskelgruppe aus dem aktiven Plan
-const existingFor = g => byKind(uniqueNames(data.days.flatMap(d => d.exercises)
-  .filter(e => e.name.trim() && groupOf(e) === g).map(e => e.name.trim())));
+const existingFor = g => machineFilter(byKind(uniqueNames(data.days.flatMap(d => d.exercises)
+  .filter(e => e.name.trim() && groupOf(e) === g).map(e => e.name.trim()))), g);
 
 // Muskelgruppen, die an mindestens einem Tag trainiert werden (in fester Reihenfolge)
 const wizGroups = () => PLAN_GROUPS.filter(g => wiz.days.some(d => d.groups.includes(g)));
@@ -218,7 +282,9 @@ function autoPicks(g) {
   const n = exercisesNeeded(g);
   const existing = existingFor(g);
   // Standard-Vorschläge zuerst, danach alle übrigen Übungen der Muskelgruppe aus der Liste
-  const pool = uniqueNames([...(DEFAULT_PICKS[g] || []), ...byKind(EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name))]);
+  let pool = machineFilter(uniqueNames([...(defaultPicks(g) || []), ...byKind(EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name))]), g);
+  // zu Hause: Ausweich-Übung nur, wenn ihr Vorbild nicht geht (z. B. Floor Press nur ohne Bank)
+  if (wizHome()) pool = pool.filter(x => !(HOME_ALT[x] && pool.includes(HOME_ALT[x])));
   const picks = [];
   const free = list => list.filter(x => !picks.some(p => nameKey(p) === nameKey(x)));
   const ofKind = (list, k) => free(list).find(x => kindOf({ name: x }) === k);
@@ -226,8 +292,22 @@ function autoPicks(g) {
   const slots = ['compound', 'normal', 'assist', 'normal', 'assist', 'normal', 'assist'];
   for (let i = 0; i < n; i++) {
     const k = slots[Math.min(i, slots.length - 1)];
-    const pick = ofKind(existing, k) || ofKind(pool, k) || free(existing)[0] || free(pool)[0];
+    // zu Hause zählt die Reihenfolge in HOME_PICKS (sonst z. B. Dips für Brust und Trizeps am selben Tag)
+    const pick = wizHome() ? free(existing)[0] || free(pool)[0]
+      : ofKind(existing, k) || ofKind(pool, k) || free(existing)[0] || free(pool)[0];
     if (pick) picks.push(pick);
+  }
+  // Neulinge und Einsteiger: am Rückentag immer eine Latzug-Variante (lieber eine aus dem aktiven Plan). Fehlt sie,
+  // ersetzt sie die einzige Übung bzw. die letzte normale (z. B. Klimmzüge) – sonst die letzte
+  const LATZUG = /latziehen/i;
+  if (g === 'lat' && needsCoach() && picks.length && !picks.some(p => LATZUG.test(p)) && (existing.concat(pool)).some(x => LATZUG.test(x))) {
+    const lz = existing.find(x => LATZUG.test(x)) || pool.find(x => LATZUG.test(x));  // zu Hause nur mit Band + Türanker
+    let i = picks.length - 1;
+    if (picks.length > 1) {
+      const ni = picks.map(p => kindOf({ name: p })).lastIndexOf('normal');
+      if (ni >= 0) i = ni;
+    }
+    picks[i] = lz;
   }
   return byKind(picks);
 }
@@ -281,6 +361,7 @@ function wizStart() {
     own: [],         // eigener Plan: [{ name, exercises: [{ name, sets, reps, kg }] }] (Werte als eingetippter Text)
     oi: 0,           // eigener Plan: gerade bearbeiteter Tag
     level: null,     // Erfahrungsstufe (LEVELS)
+    equip: ['machine', 'home'].includes((activePlan() || {}).equip) ? activePlan().equip : 'free',  // 'machine' = nur Maschinen, 'home' = zu Hause
     sessions: null,  // gewünschte Trainings pro Woche (wählt die passenden Vorlagen aus)
     name: `Plan ${data.plans.length + 1}`,
     weeks: data.cycle.defWeeks,
@@ -461,7 +542,7 @@ function buildPlanDays() {
 
 /* --- Darstellung --- */
 
-const STEP_PILL = { mode: 0, level: 0, sessions: 0, cat: 0, split: 0, style: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
+const STEP_PILL = { mode: 0, level: 0, equip: 0, homeeq: 0, sessions: 0, cat: 0, split: 0, style: 0, freq: 0, days: 0, basics: 1, prio: 2, low: 2, auto: 2,
   volume: 3, rir: 4, manual: 5, preview: 5, intq: 6, deloadq: 6, progq: 6 };
 const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
@@ -481,6 +562,8 @@ function wizFlow() {
   // Modi: Einfach endet nach der Aufteilung (die App stellt den Rest selbst zusammen, siehe wizQuick),
   // Standard ohne Volumen-Variante und RIR-Tabelle
   const steps = ['mode', 'level', 'sessions', 'split'];
+  // „Womit trainierst du?“ (alle Modi; „Nur Maschinen“ nur Einfach/Standard) – zu Hause danach die Ausrüstung
+  steps.splice(2, 0, ...(wiz.equip === 'home' ? ['equip', 'homeeq'] : ['equip']));
   if (feat('wiz-style')) steps.push('style');  // style: Volumen-Variante direkt nach der Aufteilung
   if (custom) steps.push('days', 'freq');
   else {
@@ -561,6 +644,88 @@ function renderWizLevel() {
       ${opts}
     </div>${navRow(wizPrev(), null)}`;
 }
+
+// Schritt „Geräte“ (Einfach und Standard): bei „Nur Maschinen“ wählt die App nur Maschinen, Kabelzug und Multipresse
+function renderWizEquip() {
+  const opt = (k, icon, title, text) => `<button class="split-opt cat ${wiz.equip === k ? 'on' : ''}" data-action="wiz-equip" data-k="${k}">
+      <span class="cat-icon">${icon}</span><b>${title}</b><small>${text}</small></button>`;
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Womit möchtest du trainieren?</h2></div>
+      <p class="hint wiz-q-explain">Danach wählt die App die Übungen für deinen Plan aus. Einzelne Übungen kannst du später jederzeit ersetzen.</p>
+      ${opt('free', '🏋️', 'Freie Gewichte und Maschinen', 'Lang- und Kurzhanteln, Maschinen und Kabelzug – die App nimmt je Muskelgruppe die passendste Übung.')}
+      ${appMode() !== 'x' ? opt('machine', '⚙️', 'Nur Maschinentraining', 'Nur Geräte mit geführter Bewegung, Kabelzüge und die Multipresse – keine Lang- und Kurzhanteln. Leichter zu lernen und gut für den Start.') : ''}
+      ${opt('home', '🏠', 'Zu Hause', 'Mit dem, was du daheim hast – Kurzhanteln, Kettlebells, Widerstandsbänder, Klimmzugstange oder ganz ohne Geräte. Als Nächstes trägst du deine Ausrüstung ein.')}
+    </div>${navRow(wizPrev(), null)}`;
+}
+
+/* --- Heim-Ausrüstung (Assistent und Plan-Reiter): data.home --- */
+const DB_CHOICES = [1, 2, 2.5, 3, 4, 5, 6, 7, 7.5, 8, 9, 10, 11, 12, 12.5, 14, 15, 16, 17.5, 18, 20, 22, 22.5, 24, 25, 26, 27.5, 28, 30, 32, 32.5, 34, 35, 36, 40];
+const KB_CHOICES = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 28, 32];
+const homeData = () => {
+  if (!data.home) data.home = { db: [], kb: [], bands: [], anchor: false, bar: false, bench: 0, dip: false };
+  return data.home;
+};
+// Kurzfassung, z. B. „Kurzhanteln 2–20 kg (8 Gewichte) · Bänder leicht–stark mit Türanker · Klimmzugstange“
+function homeSummary(h) {
+  if (!h) return 'Noch nichts eingetragen – nur Übungen ohne Geräte.';
+  const kg = l => l.length === 1 ? `${fmtNum(l[0])} kg` : `${fmtNum(l[0])}–${fmtNum(l[l.length - 1])} kg (${l.length} Gewichte)`;
+  const srt = l => [...l].sort((a, b) => a - b);
+  const parts = [];
+  if ((h.db || []).length) parts.push(`Kurzhanteln ${kg(srt(h.db))}`);
+  if ((h.kb || []).length) parts.push(`Kettlebells ${srt(h.kb).map(fmtNum).join(' / ')} kg`);
+  if ((h.bands || []).length) {
+    const b = srt(h.bands);
+    parts.push(`Bänder ${b.length > 1 ? `${BAND_LEVELS[b[0]]}–${BAND_LEVELS[b[b.length - 1]]}` : BAND_LEVELS[b[0]]}${h.anchor ? ' mit Türanker' : ''}`);
+  }
+  if (h.bar) parts.push('Klimmzugstange');
+  if (h.bench) parts.push(h.bench >= 2 ? 'Flach- und Schrägbank' : 'Flachbank');
+  if (h.dip) parts.push('Dip-Barren');
+  return parts.length ? parts.join(' · ') : 'Keine Geräte – nur Übungen mit dem eigenen Körpergewicht.';
+}
+const homeExCount = h => Object.keys(HOME_EX).filter(n => homeOk(n, h)).length;
+
+// Auswahlfenster: genaue Gewichte antippen (eigene dazu), Bänder, Stange, Bank, Dip-Barren
+function homeEqHtml() {
+  const h = homeData();
+  const chip = (on, act, attrs, label) => `<button class="vchip ${on ? 'on' : ''}" data-action="${act}" ${attrs}>${label}</button>`;
+  const weights = (k, choices, title, hint) => {
+    const own = (h[k] || []).filter(v => !choices.includes(v));
+    return `<div class="heq-block"><p class="lbl">${title}</p><p class="hint">${hint}</p>
+      <div class="heq-grid">${[...choices, ...own].sort((a, b) => a - b).map(v =>
+        chip((h[k] || []).includes(v), 'heq-w', `data-k="${k}" data-v="${v}"`, `${fmtNum(v)}`)).join('')}</div>
+      <div class="heq-add"><input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="heq-${k}" placeholder="kg">
+        <button class="btn" data-action="heq-add" data-k="${k}">+ anderes Gewicht</button>
+        ${(h[k] || []).length ? `<button class="btn" data-action="heq-clear" data-k="${k}">Keine</button>` : ''}</div></div>`;
+  };
+  const flag = (k, label) => chip(!!h[k], 'heq-flag', `data-k="${k}"`, label);
+  return `${weights('db', DB_CHOICES, '🏋️ Kurzhanteln – welche Gewichte hast du?', 'Gewicht je Hantel in kg. Tipp alle an, die du einstellen bzw. greifen kannst – die App schlägt nur diese vor.')}
+    ${weights('kb', KB_CHOICES, '🔔 Kettlebells', 'Tipp die Gewichte an, die du hast.')}
+    <div class="heq-block"><p class="lbl">🎗️ Widerstandsbänder</p><p class="hint">Welche Stärken hast du? Statt kg trägst du im Training die Bandstufe ein.</p>
+      <div class="variants">${[1, 2, 3, 4].map(b => chip((h.bands || []).includes(b), 'heq-band', `data-v="${b}"`, BAND_LEVELS[b])).join('')}</div>
+      ${(h.bands || []).length ? `<div class="variants">${flag('anchor', '🚪 Türanker (Band an der Tür befestigen)')}</div>` : ''}</div>
+    <div class="heq-block"><p class="lbl">🧰 Weitere Ausrüstung</p>
+      <div class="variants">${flag('bar', 'Klimmzugstange')}${flag('dip', 'Dip-Barren')}</div>
+      <p class="hint">Hantelbank:</p>
+      <div class="variants">${['Keine', 'Flachbank', 'Flach- und Schrägbank'].map((l, i) => chip((h.bench || 0) === i, 'heq-bench', `data-v="${i}"`, l)).join('')}</div></div>
+    <p class="hint heq-sum">Damit gehen <b>${homeExCount(h)}</b> Übungen aus der Bibliothek – Stuhl, Sofa, Tisch und Treppe sind immer dabei.</p>`;
+}
+// Plan-Reiter (Plan „Zu Hause“): Kurzfassung mit „Ändern“
+const homeEqCard = () => `<div class="card per-week home-eq-card">
+    <p class="per-week-title">🏠 Deine Ausrüstung</p><p class="hint">${esc(homeSummary(data.home))}</p>
+    <button class="btn outline" data-action="heq-open">Ausrüstung ändern</button></div>`;
+function renderHomeEq() {
+  return `<div class="card wiz-q">${homeEqHtml()}</div>
+    <p class="hint">Gilt sofort für deine Pläne „Zu Hause“: Die App schlägt nur noch Gewichte vor, die du hast. Die Übungen im Plan bleiben –
+      tauschen kannst du sie im Trainingstag oder im Training über „⇄ Ersetzen“ (passende Übungen stehen dort vorn).</p>
+    <button class="btn primary" data-action="heq-done">Fertig</button>`;
+}
+// Assistent: Schritt Ausrüstung
+const renderWizHomeEq = () => `<div class="card wiz-q">
+    <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏠</span><h2>Was hast du zu Hause?</h2></div>
+    <p class="hint wiz-q-explain">Die App wählt nur Übungen, die mit deiner Ausrüstung gehen, und schlägt nur Gewichte vor, die du wirklich hast.
+      Ändern kannst du das später im Plan-Reiter.</p>
+    ${homeEqHtml()}
+  </div>${navRow(wizPrev(), wizNext())}`;
 
 // Erster Schritt: Plan mit Steigerung der App oder eigenen Plan übernehmen
 function renderWizMode() {
@@ -911,7 +1076,7 @@ function renderWizFocus(kind) {
 function renderWizard() {
   if (!wiz) return '<p class="hint">Der Assistent wurde beendet.</p><button class="btn primary" data-action="wiz-start">Neu starten</button>';
   let h = wizSteps();
-  const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, sessions: renderWizSessions, split: renderWizSplit, style: renderWizStyle, freq: renderWizFreq, days: renderWizDays,
+  const simple = { mode: renderWizMode, ownday: renderWizOwnDay, ownname: renderWizOwnName, level: renderWizLevel, equip: renderWizEquip, homeeq: renderWizHomeEq, sessions: renderWizSessions, split: renderWizSplit, style: renderWizStyle, freq: renderWizFreq, days: renderWizDays,
     basics: renderWizBasics, intq: renderWizInt, deloadq: renderWizDeload, progq: renderWizProg };
   if (simple[wiz.step]) return h + simple[wiz.step]();
   if (wiz.step === 'prio' || wiz.step === 'low') return h + renderWizFocus(wiz.step);
@@ -1005,7 +1170,7 @@ function renderWizard() {
   if (wiz.step === 'manual') {
     const g = groups[wiz.gi];
     const picks = wiz.picks[g] || [];
-    const sugg = (DEFAULT_PICKS[g] || EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([n]) => n).slice(0, 5))
+    const sugg = machineFilter(defaultPicks(g) || EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([n]) => n).slice(0, 5), g)
       .filter(n => !picks.some(p => nameKey(p) === nameKey(n)));
     const n = exercisesNeeded(g);
     return h + `<div class="card"><h2>${MUSCLES[g]}${focusBadge(g)}</h2>
@@ -1231,9 +1396,46 @@ Object.assign(actions, {
       wiz.sessions = null; wiz.cat = null; wiz.split = null; wiz.days = [];
       wizResetPlan();
     }
-    wiz.step = 'sessions';
+    const f = wizFlow();
+    wiz.step = f[f.indexOf('level') + 1];
     go('wizard');
   },
+  // Geräte: freie Gewichte + Maschinen oder nur Maschinen -> Übungen werden danach neu gewählt
+  'wiz-equip': el => {
+    if (wiz.equip !== el.dataset.k) { wiz.equip = el.dataset.k; wiz.picks = {}; wiz.swaps = {}; }
+    if (wiz.equip === 'home') homeData();
+    const f = wizFlow();
+    wiz.step = f[f.indexOf('equip') + 1];
+    go('wizard');
+  },
+  // Heim-Ausrüstung (Assistent und Plan-Reiter)
+  'heq-w': el => {
+    const h = homeData(), k = el.dataset.k, v = Number(el.dataset.v);
+    h[k] = h[k].includes(v) ? h[k].filter(x => x !== v) : [...h[k], v].sort((a, b) => a - b);
+    if (wiz) wiz.picks = {};
+    saveData(); render();
+  },
+  'heq-add': el => {
+    const h = homeData(), k = el.dataset.k;
+    const inp = document.querySelector(`[data-field="heq-${k}"]`);
+    const v = parseNum(inp && inp.value);
+    if (v == null || v <= 0 || v > 100) { alert('Bitte ein Gewicht zwischen 0,5 und 100 kg eintragen.'); return; }
+    const r = Math.round(v * 4) / 4;
+    if (!h[k].includes(r)) h[k] = [...h[k], r].sort((a, b) => a - b);
+    if (wiz) wiz.picks = {};
+    saveData(); render();
+  },
+  'heq-clear': el => { homeData()[el.dataset.k] = []; if (wiz) wiz.picks = {}; saveData(); render(); },
+  'heq-band': el => {
+    const h = homeData(), v = Number(el.dataset.v);
+    h.bands = h.bands.includes(v) ? h.bands.filter(x => x !== v) : [...h.bands, v].sort();
+    if (wiz) wiz.picks = {};
+    saveData(); render();
+  },
+  'heq-flag': el => { const h = homeData(); h[el.dataset.k] = !h[el.dataset.k]; if (wiz) wiz.picks = {}; saveData(); render(); },
+  'heq-bench': el => { homeData().bench = Number(el.dataset.v); if (wiz) wiz.picks = {}; saveData(); render(); },
+  'heq-open': () => go('homeeq'),
+  'heq-done': () => go('plan'),
   // App-Plan oder eigenen Plan übernehmen
   'wiz-mode': el => {
     wiz.mode = el.dataset.m;
@@ -1425,6 +1627,8 @@ Object.assign(actions, {
     plan.perWeek = wiz.rotate ? 1 : wiz.perWeek;
     if (wiz.rotate) plan.rotate = wiz.rotate;  // Wechsel-Plan (siehe dayTimes in app.js)
     if (wiz.level) plan.level = wiz.level;
+    if (wizMachines()) plan.equip = 'machine';  // Ersetzen schlägt dann zuerst Maschinen vor
+    if (wizHome()) plan.equip = 'home';          // nur vorhandene Gewichte, Ersetzen zuerst passende Heim-Übungen
     data.plans.push(plan);
     data.activePlanId = plan.id;
     // eingetippte Wochenzahlen jetzt mit den echten Tagen genau verteilen (ggf. 1 Satz mehr an einzelnen Tagen)
