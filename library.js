@@ -1297,7 +1297,7 @@ const LIB_EX = {
   'Wadenheben Hackenschmidt': ['calf', 'In der Hackenschmidt-Maschine, Fußballen auf der Kante.'],
   'Wadenheben Multipresse': ['calf', 'Stange auf dem Rücken, Fußballen auf einer Erhöhung.'],
   'Sissy Squats': ['sissy', 'Anspruchsvolle Übung für den vorderen Oberschenkel.'],
-  'Nordic Curls': ['nordic', 'Sehr wirksam für die Beinrückseite – langsam steigern.'],
+  'Nordic Hamstring Curls': ['nordic', 'Kniend, Füße fixiert (Partner, Sofa oder Sprossenwand) – Oberkörper so langsam wie möglich nach vorn absenken, mit den Händen abfangen. Sehr wirksam für die Beinrückseite, langsam steigern.'],
 
   // Bauch
   'Crunches': ['crunch', 'Der Klassiker – kleine, saubere Bewegung.'],
@@ -1363,6 +1363,7 @@ const LIB_EX = {
   'Trizepsdrücken über Kopf Band': ['ohext', 'Band unter dem hinteren Fuß – hinter dem Kopf nach oben strecken.', 'pad'],
   'Kniebeugen Eigengewicht': ['squat', 'Ohne Gewicht, Arme nach vorn – gut zum Lernen der Kniebeuge.', 'none'],
   'Einbeinige Kniebeugen zum Stuhl': ['squat', 'Auf einem Bein langsam auf den Stuhl setzen und wieder aufstehen.', 'none'],
+  'Einbeinige Kniebeugen (Pistol Squats)': ['squat', 'Auf einem Bein ganz tief in die Hocke, das andere Bein gestreckt nach vorn – Arme nach vorn als Gegengewicht. Anfangs an einem Türrahmen festhalten.', 'none'],
   'Bulgarian Split Squats ohne Gewicht': ['lunge', 'Hinterer Fuß auf Stuhl oder Sofa – sehr effektiv auch ohne Gewicht.', 'none'],
   'Ausfallschritte Eigengewicht': ['lunge', 'Ohne Gewicht, abwechselnd links und rechts.', 'none'],
   'Kreuzheben rumänisch (Kettlebell)': ['rdl', 'Kettlebell vor den Oberschenkeln – Hüfte nach hinten schieben.', 'kb'],

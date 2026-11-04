@@ -95,6 +95,15 @@ function upgradeData(d) {
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};
+  // Umbenannte Übungen: Pläne und Trainings ziehen mit, damit Verlauf und Vergleich weiter passen
+  // (läuft schon beim Laden ganz oben – daher hier keine Hilfsfunktionen von weiter unten)
+  const renamed = { 'nordic curls': 'Nordic Hamstring Curls' };
+  for (const [from, to] of Object.entries(renamed)) {
+    const key = x => String(x || '').trim().toLowerCase();
+    const fix = o => { if (o && key(o.name) === from) o.name = to; if (o && key(o.replacedFrom) === from) o.replacedFrom = to; };
+    for (const p of d.plans) for (const day of p.days || []) (day.exercises || []).forEach(fix);
+    for (const s of d.sessions || []) (s.entries || []).forEach(fix);
+  }
   if (d.home === undefined) d.home = null;              // Heim-Ausrüstung { db:[kg], kb:[kg], bands:[1–4], anchor, bar, bench 0/1/2, dip }
   if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
@@ -801,7 +810,7 @@ const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken
 
 // Eigengewichtsübungen: Steigerung nur über die Wdh. (kg-Spalte = Körpergewicht), kein automatisches Aufwärmen.
 // ex.bwLoad = true: Gewichtsprogression trotzdem an (z. B. mit Zusatzgewicht) – dann wie eine normale Übung.
-const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic curls|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge|pike-liegestutze|diamant-liegestutze|rudern umgekehrt|kniebeugen eigengewicht|einbeinige kniebeugen|bulgarian split squats ohne|ausfallschritte eigengewicht|beincurls am boden|hip thrust am sofa|seitliches beinheben|clamshells|copenhagen|wadenheben an der treppe|dead bug|superman|y-t-w)/;
+const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge|pike-liegestutze|diamant-liegestutze|rudern umgekehrt|kniebeugen eigengewicht|einbeinige kniebeugen|bulgarian split squats ohne|ausfallschritte eigengewicht|beincurls am boden|hip thrust am sofa|seitliches beinheben|clamshells|copenhagen|wadenheben an der treppe|dead bug|superman|y-t-w)/;
 // Bandübungen laufen wie Eigengewicht (ohne kg, Steigerung über die Wdh.), dazu die Bandstufe (siehe bandShift)
 const isBodyweightName = name => BODYWEIGHT.test(norm(String(name || '').trim())) || isBandName(name);
 const isBodyweight = ex => !!ex && !ex.bwLoad && isBodyweightName(ex.name);
@@ -3197,7 +3206,7 @@ function renderLibEx({ name }) {
   const c = customExercise(name);
   if (c) return renderCustomEx(c, e);
   if (!e) return `<p class="hint">Für „${esc(name)}“ gibt es noch keine Erklärung in der Bibliothek.</p>`;
-  const t = FIG_TEXT[e.pattern] || {};
+  const t = typeof shortFor === 'function' ? shortFor(e.name, e.pattern) : FIG_TEXT[e.pattern] || {};
   const kind = KINDS[kindOf(planExercise(name) || { name })];
   const group = MUSCLES[groupOf(planExercise(name) || { name })] || '';
   const trained = data.sessions.some(s => s.entries.some(en => nameKey(en.name) === nameKey(name)));
@@ -3210,6 +3219,7 @@ function renderLibEx({ name }) {
       ${t.tips && t.tips.length ? `<h2>Darauf achten</h2><ul class="lib-tips">${t.tips.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
       <p class="hint lib-muscles"><b>Zielmuskel:</b> ${group || '–'}${t.also ? ` · <b>mit dabei:</b> ${esc(t.also)}` : ''}</p>
     </div>
+    ${typeof guideHtml === 'function' ? guideHtml(e.name, e.pattern) : ''}
     ${trained ? `<button class="btn nav" data-action="open-exercise" data-name="${esc(name)}">Deine Einträge zu dieser Übung</button>` : ''}
     ${['neuling', 'einsteiger'].includes(activePlan().level) ? coachNote()
       : '<p class="hint">Die Figur zeigt das Bewegungsprinzip. Bei Unsicherheit lass dir die Übung im Studio zeigen.</p>'}`;
@@ -3247,7 +3257,7 @@ function registerCustomExercises() {
 }
 
 function renderCustomEx(c, e) {
-  const t = e ? FIG_TEXT[e.pattern] || {} : {};
+  const t = !e ? {} : typeof shortFor === 'function' ? shortFor(c.like, e.pattern) : FIG_TEXT[e.pattern] || {};
   const trained = data.sessions.some(s => s.entries.some(en => nameKey(en.name) === nameKey(c.name)));
   let h = e ? `<div class="card lib-fig">${libFigure(c.name, true)}</div>` : '';
   h += `<div class="lib-chips"><span class="lib-chip">★ Eigene Übung</span><span class="lib-chip">${KINDS[c.kind]}</span>
@@ -3259,7 +3269,7 @@ function renderCustomEx(c, e) {
       <p class="hint">Figur und Tipps von der ähnlichen Übung „${esc(c.like)}“.</p>
       <ol class="lib-steps">${(t.steps || []).map(x => `<li>${esc(x)}</li>`).join('')}</ol>
       ${t.tips && t.tips.length ? `<h2>Darauf achten</h2><ul class="lib-tips">${t.tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    </div>`;
+    </div>${typeof guideHtml === 'function' ? guideHtml(c.like, e.pattern) : ''}`;
   } else {
     h += `<p class="hint">Zu dieser Übung gibt es keine Figur. Wenn du unter „Bearbeiten“ eine ähnliche Übung auswählst,
       zeigt die Bibliothek deren Ausführung und Tipps.</p>`;
@@ -3861,6 +3871,9 @@ function bwDeloadRef(name) {
 
 // Eigengewicht: leichtere / schwerere Variante je Übung (Name ohne Umlaute, wie BODYWEIGHT)
 const BW_VARIANTS = [
+  [/^einbeinige kniebeugen zum stuhl/, '„Kniebeugen Eigengewicht“', '„Einbeinige Kniebeugen (Pistol Squats)“ – ganz ohne Stuhl'],
+  [/^einbeinige kniebeugen/, '„Einbeinige Kniebeugen zum Stuhl“', 'eine Kurzhantel oder Kettlebell vor der Brust halten'],
+  [/^nordic/, '„Beincurls am Boden (Handtuch)“ – oder nur langsam absenken und mit den Händen wieder hochdrücken', 'noch langsamer absenken (5 Sekunden) oder eine Gewichtsscheibe vor der Brust halten'],
   [/^klimmzuge/, '„Klimmzüge assistiert (Maschine)“ oder mit Widerstandsband', '„Klimmzüge mit Zusatzgewicht“ (Dip-Gürtel oder Gewichtsweste)'],
   [/^(dips|bankdips)/, '„Dips assistiert (Maschine)“ oder „Dips Maschine“', 'Dips mit Zusatzgewicht (Dip-Gürtel oder Gewichtsweste)'],
   [/^liegestutze/, '„Liegestütze erhöht“ (Hände auf Bank oder Kasten)', 'Liegestütze mit Gewichtsweste oder Füßen erhöht – oder „Bankdrücken“'],

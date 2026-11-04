@@ -216,9 +216,9 @@ const HOME_PICKS = {
     'Stirndrücken Kurzhantel', 'Diamant-Liegestütze'],
   unterarme: ['Handgelenkcurls (Unterarme)', "Farmer's Walk"],
   quadrizeps: ['Goblet Squats', 'Bulgarian Split Squats', 'Ausfallschritte Kurzhantel', 'Kniebeugen Eigengewicht',
-    'Bulgarian Split Squats ohne Gewicht', 'Ausfallschritte Eigengewicht', 'Einbeinige Kniebeugen zum Stuhl'],
+    'Bulgarian Split Squats ohne Gewicht', 'Ausfallschritte Eigengewicht', 'Einbeinige Kniebeugen zum Stuhl', 'Einbeinige Kniebeugen (Pistol Squats)'],
   beinbeuger: ['Kreuzheben rumänisch (Kurzhantel)', 'Kreuzheben rumänisch (Kettlebell)', 'Beincurls am Boden (Handtuch)',
-    'Kreuzheben rumänisch einbeinig (Kurzhantel)', 'Beinbeuger Band (Bauchlage)', 'Nordic Curls'],
+    'Kreuzheben rumänisch einbeinig (Kurzhantel)', 'Beinbeuger Band (Bauchlage)', 'Nordic Hamstring Curls'],
   gesaess: ['Hip Thrust Kurzhantel', 'Hip Thrust am Sofa', 'Glute Bridge einbeinig', 'Kickbacks Band (Gesäß)', 'Glute Bridge'],
   abduktoren: ['Monster Walk (Band)', 'Clamshells', 'Seitliches Beinheben liegend'],
   adduktoren: ['Copenhagen Plank'],
@@ -356,7 +356,7 @@ const SPLIT_CATS = [
 
 function wizStart() {
   wiz = {
-    step: 'mode',
+    step: 'equip',   // erste Frage: womit trainieren (User-Wunsch: vor „automatisch oder eigener Plan“)
     mode: null,      // 'app' = Plan mit Steigerung der App, 'own' = eigenen Plan übernehmen (ohne Progression)
     own: [],         // eigener Plan: [{ name, exercises: [{ name, sets, reps, kg }] }] (Werte als eingetippter Text)
     oi: 0,           // eigener Plan: gerade bearbeiteter Tag
@@ -556,14 +556,14 @@ function wizSteps() {
 
 // Reihenfolge der Schritte bis zur Übungsauswahl (hängt von Aufteilung und Vorlage ab)
 function wizFlow() {
-  if (wiz.mode === 'own') return ['mode', 'sessions', 'ownday', 'ownname'];
+  // „Womit trainierst du?“ kommt zuerst (alle Modi; „Nur Maschinen“ nur Einfach/Standard) – zu Hause danach die Ausrüstung
+  const eq = wiz.equip === 'home' ? ['equip', 'homeeq'] : ['equip'];
+  if (wiz.mode === 'own') return [...eq, 'mode', 'sessions', 'ownday', 'ownname'];
   const custom = wiz.cat === 'custom';
   const tpl = SPLITS.find(s => s.id === wiz.split);
   // Modi: Einfach endet nach der Aufteilung (die App stellt den Rest selbst zusammen, siehe wizQuick),
   // Standard ohne Volumen-Variante und RIR-Tabelle
-  const steps = ['mode', 'level', 'sessions', 'split'];
-  // „Womit trainierst du?“ (alle Modi; „Nur Maschinen“ nur Einfach/Standard) – zu Hause danach die Ausrüstung
-  steps.splice(2, 0, ...(wiz.equip === 'home' ? ['equip', 'homeeq'] : ['equip']));
+  const steps = [...eq, 'mode', 'level', 'sessions', 'split'];
   if (feat('wiz-style')) steps.push('style');  // style: Volumen-Variante direkt nach der Aufteilung
   if (custom) steps.push('days', 'freq');
   else {
@@ -651,7 +651,7 @@ function renderWizEquip() {
       <span class="cat-icon">${icon}</span><b>${title}</b><small>${text}</small></button>`;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Womit möchtest du trainieren?</h2></div>
-      <p class="hint wiz-q-explain">Danach wählt die App die Übungen für deinen Plan aus. Einzelne Übungen kannst du später jederzeit ersetzen.</p>
+      <p class="hint wiz-q-explain">Danach richtet die App die Übungsauswahl aus – beim automatisch erstellten Plan und bei den Vorschlägen zum Ersetzen. Einzelne Übungen kannst du später jederzeit tauschen.</p>
       ${opt('free', '🏋️', 'Freie Gewichte und Maschinen', 'Lang- und Kurzhanteln, Maschinen und Kabelzug – die App nimmt je Muskelgruppe die passendste Übung.')}
       ${appMode() !== 'x' ? opt('machine', '⚙️', 'Nur Maschinentraining', 'Nur Geräte mit geführter Bewegung, Kabelzüge und die Multipresse – keine Lang- und Kurzhanteln. Leichter zu lernen und gut für den Start.') : ''}
       ${opt('home', '🏠', 'Zu Hause', 'Mit dem, was du daheim hast – Kurzhanteln, Kettlebells, Widerstandsbänder, Klimmzugstange oder ganz ohne Geräte. Als Nächstes trägst du deine Ausrüstung ein.')}
@@ -736,7 +736,7 @@ function renderWizMode() {
       <p class="hint wiz-q-explain">Die App kann einen Plan für dich zusammenstellen – oder du übernimmst einfach einen Plan, den du schon hast.</p>
       ${opt('app', '📈', 'Automatisch erstellter Plan', 'Die App erstellt mit deiner Hilfe automatisiert einen Plan, der auf dich abgestimmt ist – den du aber später immer weiter für dich komplett individualisieren kannst. Im Training schlägt sie dir passende Steigerungen vor, in Zyklen mit leichten Deload-Wochen.')}
       ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal.')}
-    </div>${navRow('cancel', null)}`;
+    </div>${navRow(wizPrev(), null)}`;
 }
 
 // Eigener Plan: Übungen eines Tages mit Sätzen × Wdh. und optionalem Startgewicht
@@ -1330,7 +1330,7 @@ function wizOwnPick(input, name) {
 // „Zurück“ oben (und die Zurück-Taste des Handys): einen Schritt zurück wie der Zurück-Knopf unten,
 // erst bei der ersten Frage raus aus dem Assistenten
 function wizBack() {
-  if (!wiz || wiz.step === 'mode') return ['plan', {}];
+  if (!wiz || wiz.step === 'equip') return ['plan', {}];
   if (wiz.step === 'ownday' && wiz.oi > 0) {
     wiz.oi--;
   } else if (wiz.step === 'ownname') {
@@ -1505,6 +1505,8 @@ Object.assign(actions, {
     }));
     const plan = newPlan(wiz.name.trim() || 'Mein Plan', days);
     Object.assign(plan, { own: true, progression: { volume: false, load: false } });
+    if (wizMachines()) plan.equip = 'machine';  // Ersetzen: passende Übungen zuerst
+    if (wizHome()) plan.equip = 'home';
     data.plans.push(plan);
     data.activePlanId = plan.id;
     setRound(newCycleId(), 1, 1);
