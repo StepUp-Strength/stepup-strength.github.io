@@ -102,6 +102,16 @@ const SPLITS = [
     days: [['Push A', 'heavy', G_PUSH], ['Pull A', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER], ['Push B', 'light', G_PUSH], ['Pull B', 'light', G_PULL]] },
   { id: 'ul5', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 3×, Unterkörper 2× pro Woche', days: UL(5) },
   { id: 'fbpp5', tag: '2er-Split', label: 'Ganzkörper Push/Pull', note: 'Push 3×, Pull 2× pro Woche', days: FBPP(5) },
+  // Im Wechsel (rotate = Trainings pro Woche, weniger Tage): die Tage laufen über die Wochen weiter, z. B. O·U·O | U·O·U
+  { id: 'ulx3', tag: '2er-Split', label: 'Ober-/Unterkörper im Wechsel', rotate: 3,
+    note: 'Ober- und Unterkörper wechseln sich ab: Woche 1 O · U · O, Woche 2 U · O · U …',
+    days: [['Oberkörper', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER]] },
+  { id: 'fbppx3', tag: '2er-Split', label: 'Ganzkörper Push/Pull im Wechsel', rotate: 3,
+    note: 'Push und Pull wechseln sich ab: Woche 1 Push · Pull · Push, Woche 2 Pull · Push · Pull …',
+    days: [['Ganzkörper Push', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL]] },
+  { id: 'pplx5', tag: '3er-Split', label: 'Push/Pull/Beine im Wechsel', rotate: 5,
+    note: 'Push, Pull und Beine laufen der Reihe nach durch: Woche 1 Push · Pull · Beine · Push · Pull, Woche 2 Beine · Push · Pull · Beine · Push …',
+    days: [['Push', 'heavy', G_PUSH], ['Pull', 'heavy', G_PULL], ['Beine', 'heavy', G_LOWER]] },
   // 6
   { id: 'ppl2', tag: '3er-Split', label: 'Push/Pull/Beine ×2', pairs: true, days: [['Push A', 'heavy', G_PUSH], ['Pull A', 'heavy', G_PULL], ['Beine A', 'heavy', G_LOWER],
     ['Push B', 'light', G_PUSH], ['Pull B', 'light', G_PULL], ['Beine B', 'light', G_LOWER]] },
@@ -488,7 +498,7 @@ function wizFlow() {
 }
 
 // Vorlagen mit genau so vielen Trainings pro Woche (Neulinge: nur Ganzkörper und 2er-Split)
-const splitsFor = n => SPLITS.filter(s => s.days.length === n && (!wizLevel().tags || wizLevel().tags.includes(s.tag)) && !classicHidden(s.id));
+const splitsFor = n => SPLITS.filter(s => (s.rotate || s.days.length) === n && (!wizLevel().tags || wizLevel().tags.includes(s.tag)) && !classicHidden(s.id));
 const wizPrev = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) - 1] || 'cancel'; };
 const wizNext = () => { const f = wizFlow(); return f[f.indexOf(wiz.step) + 1]; };
 
@@ -508,14 +518,14 @@ const weekHead = () => '<tr><th></th><th>Intro</th><th>W2</th><th>W3</th><th>W4<
 // Gewünschte Sätze pro Woche (eingetippt) bzw. sonst Sätze pro Training × Trainings
 const wizWeekly = (g, w) => {
   const want = (wiz.weekWanted[g] || [])[w];
-  return want != null ? want : wiz.volume[g][w] * sessionsWith(g);
+  return want != null ? want : Math.round(wiz.volume[g][w] * sessionsWith(g));
 };
 
 function wizWeekText(g) {
   const n = sessionsWith(g);
   const v = wiz.volume[g];
-  let t = `${n} Training${n === 1 ? '' : 's'} pro Woche · Deload ${Math.ceil(v[3] / 2) * n}`;
-  const uneven = [0, 1, 2, 3].filter(w => wizWeekly(g, w) !== v[w] * n);
+  let t = `${n % 1 ? 'Ø ' : ''}${fmtNum(round1(n))} Training${n === 1 ? '' : 's'} pro Woche · Deload ${fmtNum(Math.round(Math.ceil(v[3] / 2) * n))}`;
+  const uneven = [0, 1, 2, 3].filter(w => wizWeekly(g, w) !== Math.round(v[w] * n));
   if (uneven.length) t += ' · nicht glatt teilbar: beim Speichern bekommen einzelne Tage 1 Satz mehr';
   return t;
 }
@@ -628,32 +638,40 @@ function renderWizSessions() {
     </div>${needsCoach() ? coachNote() : ''}${navRow('level', null)}`;
 }
 
-// Wie oft kommen die großen Muskelgruppen pro Woche dran? (Brust, Rücken, Schultern, Beine)
+// Wie oft kommen die großen Muskelgruppen pro Woche dran? Schnitt über Brust, Rücken, Schultern und Beine (nur die, die
+// der Plan trainiert); Wechsel-Pläne: Tage × Trainings ÷ Tage. Abgerundet auf halbe: ab 2 optimal, 1,5 okay, darunter
+// nicht so optimal (User-Vorgabe 2026-11-04: nur den Schnitt angeben, nicht je Muskelgruppe)
 const MAIN_REGIONS = [['Brust', ['brust']], ['Rücken', ['lat']], ['Schultern', ['schulter_seite']], ['Beine', ['quadrizeps', 'beinbeuger']]];
 function splitFreq(s) {
-  const per = (g) => s.days.filter(d => d[2].includes(g)).length;
-  const low = [];
-  for (const [label, gs] of MAIN_REGIONS) {
+  const factor = s.rotate ? s.rotate / s.days.length : 1;
+  const per = g => s.days.filter(d => d[2].includes(g)).length * factor;
+  const vals = [];
+  for (const [, gs] of MAIN_REGIONS) {
     const present = gs.filter(g => s.days.some(d => d[2].includes(g)));
-    if (present.length && Math.min(...present.map(per)) < 2) low.push(label);
+    if (present.length) vals.push(present.reduce((a, g) => a + per(g), 0) / present.length);
   }
-  return low;
+  const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  return Math.floor(avg * 2 + 1e-9) / 2;
 }
+const freqRank = f => f >= 2 ? 0 : f >= 1.5 ? 1 : 2;
 
 // Schritt „Vorlage“: passende Vorlagen zur Zahl der Trainings, dazu „Eigene Aufteilung“
 function renderWizSplit() {
   const n = wiz.sessions;
-  // Vorlagen, bei denen jeder große Muskel mind. 2× pro Woche dran ist, zuerst
-  const list = splitsFor(n).map((s, i) => [s, i]).sort((a, b) => (splitFreq(a[0]).length > 0) - (splitFreq(b[0]).length > 0) || a[1] - b[1]).map(x => x[0]);
-  const freqLine = s => { const low = splitFreq(s);
-    return low.length ? `<span class="freq-bad">1× pro Woche: ${low.join(', ')}</span>` : '<span class="freq-ok">✓ jeder große Muskel 2× pro Woche</span>'; };
+  // optimal (Ø mind. 2×) zuerst, dann okay (1,5×), dann der Rest
+  const list = splitsFor(n).map((s, i) => [s, i]).sort((a, b) => freqRank(splitFreq(a[0])) - freqRank(splitFreq(b[0])) || a[1] - b[1]).map(x => x[0]);
+  const freqLine = s => {
+    const f = splitFreq(s), txt = `Ø ${fmtNum(f)}× pro Woche je Muskel`;
+    return f >= 2 ? `<span class="freq-ok">✓ ${txt} – optimal</span>` : f >= 1.5 ? `<span class="freq-mid">${txt} – okay</span>`
+      : `<span class="freq-bad">${txt} – nicht so optimal</span>`;
+  };
   const catOf = s => SPLIT_CATS.find(c => c.tag === s.tag) || {};
   const simpleOnly = wizLevel().tags
     ? `<p class="hint">Für den Anfang schlägt die App nur Ganzkörper-Pläne, 2er-Splits und die Klassiker vor – damit lernst du die Übungen am schnellsten.${list.length ? '' : ` Für ${n} Trainings pro Woche gibt es dafür keine Vorlage – wähle eine andere Zahl oder stelle deine Tage selbst zusammen.`}</p>`
     : '';
   return wizCard('🗂️', `Pläne für ${n} Training${n === 1 ? '' : 's'} pro Woche`,
     `Jede Vorlage bringt fertige Trainingstage mit passenden Muskelgruppen mit – im Laufe des Assistenten kannst du alles anpassen. Oder du stellst deine Trainingstage selbst zusammen.
-      <br><b>💡 Tipp:</b> Am meisten bringt es, jeden Muskel <b>mindestens 2× pro Woche</b> zu trainieren. Gerade wenn du nicht so oft ins Training
+      <br><b>💡 Tipp:</b> Am meisten bringt es, jeden Muskel <b>mindestens 2× pro Woche</b> zu trainieren – im Schnitt 1,5× (z. B. Pläne „im Wechsel“) ist auch okay. Gerade wenn du nicht so oft ins Training
       gehen kannst, sind deshalb Pläne besser, bei denen jeder Muskel an mehreren Tagen dran ist (z. B. Ganzkörper oder Ober-/Unterkörper) –
       statt Pläne, bei denen jede Muskelgruppe nur einen eigenen Tag hat. Solche Vorlagen stehen oben.`,
     simpleOnly + list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
@@ -745,7 +763,8 @@ function renderWizDays() {
   let days = `<h2 class="wiz-days-title">Trainingstage im neuen Plan (${wiz.days.length})</h2>`;
   if (!wiz.days.length) days += '<p class="hint">Noch keine Tage – oben einen vorhandenen Tag antippen oder einen neuen erstellen.</p>';
   wiz.days.forEach((d, di) => { days += dayCard(d, di, custom); });
-  const freq = wiz.perWeek > 1 ? ' Jeder Tag wird 2× pro Woche trainiert.' : '';
+  const freq = wiz.rotate ? ` Die Tage wechseln sich ab – ${wiz.rotate} Trainings pro Woche, jeder Tag im Schnitt ${fmtNum(round1(wiz.perWeek))}× pro Woche.`
+    : wiz.perWeek > 1 ? ' Jeder Tag wird 2× pro Woche trainiert.' : '';
   return wizCard('📋', custom ? 'Deine Trainingstage' : 'Passen die Trainingstage?',
     (custom
       ? 'Tippe vorhandene Tage an oder erstelle neue. Für jeden Tag legst du fest, welche Muskelgruppen trainiert werden. In welchem Wiederholungsbereich die Tage trainiert werden, fragt die App am Ende, wenn dein Plan fertig ist.'
@@ -1071,6 +1090,9 @@ function wizAfterSplit() {
   wiz.perWeek = wiz.volDiv = 1;
   wizResetPlan();
   const tpl = SPLITS.find(s => s.id === wiz.split);
+  // Wechsel-Plan: jeder Tag im Schnitt rotate ÷ Tage pro Woche (z. B. 1,5×) – Sätze pro Training entsprechend aufgeteilt
+  wiz.rotate = wiz.cat !== 'custom' && tpl && tpl.rotate ? tpl.rotate : null;
+  if (wiz.rotate) wiz.perWeek = wiz.volDiv = wiz.rotate / tpl.days.length;
   if (tpl && tpl.prio) wiz.prio = [...tpl.prio];  // Klassiker: Schwerpunkt vorab gewählt
   const f = wizFlow();
   wiz.step = f[f.indexOf('split') + 1];
@@ -1400,7 +1422,8 @@ Object.assign(actions, {
     plan.volume = wiz.volume;
     plan.rirPlan = wiz.rir;
     plan.progression = { ...wiz.progression };
-    plan.perWeek = wiz.perWeek;
+    plan.perWeek = wiz.rotate ? 1 : wiz.perWeek;
+    if (wiz.rotate) plan.rotate = wiz.rotate;  // Wechsel-Plan (siehe dayTimes in app.js)
     if (wiz.level) plan.level = wiz.level;
     data.plans.push(plan);
     data.activePlanId = plan.id;

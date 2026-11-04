@@ -84,6 +84,7 @@ function upgradeData(d) {
     if (!p.weekProgression) p.weekProgression = {};
     if (!p.volExtra) p.volExtra = {};  // Muskelgruppe -> [Intro…W4]: so viele Tage bekommen 1 Satz mehr
     if (![1, 2].includes(p.perWeek)) p.perWeek = 1;  // wie oft jeder Trainingstag pro Woche absolviert wird
+    if (p.rotate != null && !(p.rotate >= 1)) delete p.rotate;  // Wechsel-Plan: Trainings pro Woche (siehe dayTimes)
   }
   // null = bewusst kein Plan aktiv; fehlt die Angabe (ältere Daten) oder gibt es den Plan nicht mehr -> erster Plan
   if (d.activePlanId !== null && !d.plans.some(p => p.id === d.activePlanId)) d.activePlanId = d.plans.length ? d.plans[0].id : null;
@@ -93,7 +94,8 @@ function upgradeData(d) {
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
-  if (!d.cycleShift) d.cycleShift = {};                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
+  if (!d.cycleShift) d.cycleShift = {};
+  if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
   if (!Array.isArray(d.foodLog)) d.foodLog = [];       // Ernährungstagebuch (food.js)
   if (!d.foods || typeof d.foods !== 'object' || Array.isArray(d.foods)) d.foods = {};  // gemerkte Lebensmittel
@@ -608,12 +610,34 @@ function legacyCycleInfo(c, date) {
 const roundKey = (start, week) => `${start}|${week}`;
 const roundSessions = (start, week) => data.sessions.filter(s => s.cycleStart === start && s.week === week);
 
+// Wie oft kommt ein Trainingstag in Durchlauf week dran? Sonst plan.perWeek (1 oder 2). Wechsel-Pläne (plan.rotate =
+// Trainings pro Woche, User-Wunsch 2026-11-04): die Tage laufen über die Wochen der Reihe nach weiter – z. B. Ober-/
+// Unterkörper bei 3 Trainings: Woche 1 O·U·O, Woche 2 U·O·U … (jeder Muskel im Schnitt 1,5× pro Woche); neuer Zyklus beginnt vorn
+const activeDays = (p = activePlan()) => p.days.filter(d => d.exercises.some(e => e.name.trim()));
+function dayTimes(day, week, p = activePlan()) {
+  if (!p.rotate) return p.perWeek || 1;
+  const list = activeDays(p), m = list.length, j = list.indexOf(day);
+  if (j < 0) return 0;
+  const t0 = (Math.max(1, week) - 1) * p.rotate;
+  let n = 0;
+  for (let t = t0; t < t0 + p.rotate; t++) if (t % m === j) n++;
+  return n;
+}
+// durchschnittlich je Tag pro Woche (für Wochenvolumen): Wechsel-Plan = Trainings ÷ Tage, z. B. 3 ÷ 2 = 1,5
+const perWeekAvg = (p = activePlan()) => p.rotate ? p.rotate / Math.max(1, activeDays(p).length) : (p.perWeek || 1);
+// „Eine Woche ist geschafft, sobald …“
+const roundDoneText = (p = activePlan()) => p.rotate ? `die ${p.rotate} Trainings der Woche gemacht sind (die Tage wechseln sich ab)`
+  : `jeder Trainingstag einmal${(p.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} dran war`;
+
+// In einem Durchlauf ausgelassene Tage (ungeplante Pause, User-Wunsch 2026-11-04): je Eintrag ein ausgelassenes Training
+// dieses Tages – sie zählen für „Woche geschafft“ wie erledigt, haben aber kein Training (keine Werte, kein Vergleich)
+const roundSkipped = (start, week) => (data.roundSkips || {})[roundKey(start, week)] || [];
+
 // Noch offene Trainings eines Durchlaufs: [{ day, left }] für die Tage des aktiven Plans
 function roundOpen(start, week) {
-  const per = activePlan().perWeek || 1;
-  const done = roundSessions(start, week);
-  return data.days.filter(d => d.exercises.some(e => e.name.trim()))
-    .map(day => ({ day, left: per - done.filter(s => s.dayId === day.id).length }))
+  const done = roundSessions(start, week), skipped = roundSkipped(start, week);
+  return activeDays()
+    .map(day => ({ day, left: dayTimes(day, week) - done.filter(s => s.dayId === day.id).length - skipped.filter(id => id === day.id).length }))
     .filter(x => x.left > 0);
 }
 
@@ -661,7 +685,8 @@ function cycleInfo() {
   const c = data.cycle;
   const bw = c.buildWeeks;
   const ci = toCycleInfo(c.start, selfDeload() ? c.week : Math.min(c.week, bw + 1), c.no || 1, bw);
-  const done = data.days.length && roundSessions(ci.cycleStart, ci.week).length && !roundOpen(ci.cycleStart, ci.week).length;
+  const done = data.days.length && (roundSessions(ci.cycleStart, ci.week).length || roundSkipped(ci.cycleStart, ci.week).length)
+    && !roundOpen(ci.cycleStart, ci.week).length;
   if (!done) return ci;
   const n = roundAfter(ci);
   return toCycleInfo(n.start, n.week, n.no, cycleLenOf(n.start));
@@ -945,13 +970,13 @@ function weeklyTarget(g, w) {
   curveLenOverride = ANCHORS;  // Eckwert w direkt
   let sum;
   try { sum = days.reduce((a, d) => a + dayVolume(d, g, w + 1), 0); } finally { curveLenOverride = null; }
-  return sum * (activePlan().perWeek || 1);
+  return Math.round(sum * perWeekAvg());  // Wechsel-Plan: Schnitt der Wochen, auf ganze Sätze gerundet
 }
 
 // Wochenvolumen einstellen: gleichmäßig auf die Trainings verteilen, Rest als +1 Satz an einzelnen Tagen
 function setWeeklyVolume(g, w, total) {
   const p = activePlan();
-  const days = daysWithGroup(g).length, per = p.perWeek || 1;
+  const days = daysWithGroup(g).length, per = perWeekAvg(p);
   if (!p.volExtra) p.volExtra = {};
   const extra = p.volExtra[g] || (p.volExtra[g] = [0, 0, 0, 0]);
   if (!days) { data.volume[g][w] = total; extra[w] = 0; return; }
@@ -979,7 +1004,7 @@ function weeklyVolumeAnchors(g) {
     const d = autoSetsForDay(day, 0, true);
     ids.forEach(id => { deload += d.get(id) || 0; });
   }
-  const n = activePlan().perWeek || 1;  // jeder Tag n-mal pro Woche
+  const n = perWeekAvg();  // jeder Tag n-mal pro Woche (Wechsel-Plan: im Schnitt)
   return [...weeks, deload].map(x => x * n);
 }
 
@@ -1014,14 +1039,14 @@ function volumeEditor() {
 function volWeekText(g, typed = null) {
   const days = daysWithGroup(g);
   if (!days.length) return 'Noch keine Übung dieser Muskelgruppe in einem Trainingstag mit Tag-Typ.';
-  const per = activePlan().perWeek || 1;
+  const per = perWeekAvg();
   const act = weeklyVolume(g);
   const target = [0, 1, 2, 3].map(w => weeklyTarget(g, w));
   let t = '';
   if (typed && target[typed[0]] !== typed[1]) {
-    t += `→ ${typed[1]} lässt sich nicht gleichmäßig auf ${days.length * per} Trainings verteilen – es werden ${target[typed[0]]}. `;
+    t += `→ ${typed[1]} lässt sich nicht gleichmäßig auf ${fmtNum(days.length * per)} Trainings verteilen – es werden ${target[typed[0]]}. `;
   }
-  t += `${days.length * per} Training${days.length * per === 1 ? '' : 's'} pro Woche · Deload ${act[4]}`;
+  t += `${per % 1 ? 'Ø ' : ''}${fmtNum(round1(days.length * per))} Training${days.length * per === 1 ? '' : 's'} pro Woche · Deload ${fmtNum(Math.round(act[4]))}`;
   if ([0, 1, 2, 3].some(w => volExtraFor(g, w))) t += ' · nicht glatt teilbar: einzelne Tage bekommen 1 Satz mehr';
   if (target.some((x, w) => act[w] !== x)) {
     const why = [];
@@ -1123,6 +1148,47 @@ function estText(lo, hi = lo) {
 }
 // Spanne eines Tages über den Zyklus: Intro-Woche bis Höhepunkt (eigener Plan: immer gleich)
 const estRange = (day, plan = activePlan()) => [estDuration(day, 1, plan), estDuration(day, data.cycle.buildWeeks || 4, plan)];
+
+// Zeitlimit (User-Wunsch 2026-11-04): Training auf limit Minuten kürzen. Zeit je Satz wie bei estDuration.
+// Reihenfolge: 1. und 2. Satz für jede geplante Muskelgruppe (mit ihrer besten Übung – Grundübung vor normaler vor Isolation),
+// dann alle weiteren Sätze der Grundübungen, danach normale Übungen, zuletzt Isolation. Passt ein Satz nicht mehr, wird er
+// übersprungen (ein kürzerer kann noch passen). Kürzt draft-Einträge direkt; null = alles passt, nichts gekürzt.
+const KIND_RANK = { compound: 0, normal: 1, assist: 2 };
+function trimToTime(entries, limit) {
+  const info = entries.map((en, i) => {
+    const ex = planExercise(en.name) || { name: en.name }, kind = kindOf(ex);
+    return { en, i, rank: KIND_RANK[kind] != null ? KIND_RANK[kind] : 1, rest: REST_MIN[kind] || 3, group: groupOf(ex), max: en.sets.length, n: 0 };
+  });
+  const time = () => { let t = 0, last = 0; for (const x of info) if (x.n) { t += x.n * (1 + x.rest); last = x.rest; } return t - last; };
+  info.forEach(x => { x.n = x.max; });
+  const before = time();
+  if (before <= limit) return null;
+  info.forEach(x => { x.n = 0; });
+  // Vertreter je Muskelgruppe: beste Übungsart, bei Gleichstand die erste im Plan
+  const reps = new Map();
+  for (const x of info) { const r = reps.get(x.group); if (!r || x.rank < r.rank) reps.set(x.group, x); }
+  const repList = [...reps.values()].sort((a, b) => a.rank - b.rank || a.i - b.i);
+  const slots = [];
+  for (const k of [1, 2]) for (const x of repList) if (x.max >= k) slots.push(x);
+  const more = [];
+  for (const x of info) for (let k = 1; k <= x.max; k++) if (!(reps.get(x.group) === x && k <= 2)) more.push({ x, k });
+  more.sort((a, b) => a.x.rank - b.x.rank || a.k - b.k || a.x.i - b.x.i);
+  for (const m of more) slots.push(m.x);
+  for (const x of slots) { x.n++; if (time() > limit) x.n--; }
+  if (!info.some(x => x.n)) { const first = repList[0] || info[0]; first.n = 1; }  // mindestens ein Satz
+  const dropped = info.filter(x => !x.n).map(x => x.en.name);
+  const cut = info.filter(x => x.n && x.n < x.max).map(x => ({ name: x.en.name, from: x.max, to: x.n }));
+  for (const x of info) {
+    if (!x.n || x.n === x.max) continue;
+    x.en.sets.length = x.n;
+    x.en.planned.length = Math.min(x.en.planned.length, x.n);
+    x.en.target = { ...x.en.target, sets: x.n };
+  }
+  const kept = info.filter(x => x.n).map(x => x.en);
+  entries.length = 0;
+  entries.push(...kept);
+  return { limit, before, after: time(), dropped, cut };
+}
 
 // Deload: Volumen halbieren (Sätze), Gewicht −15 %, nie schwerer als DELOAD_RIR im Tank.
 // base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
@@ -1977,12 +2043,12 @@ function cyclePills(ci, action = null) {
 
 // Stand des Durchlaufs: „1 von 3 Trainings erledigt · offen: Pull, Beine“
 function roundStatus(ci) {
-  const per = activePlan().perWeek || 1;
-  const total = data.days.filter(d => d.exercises.some(e => e.name.trim())).length * per;
+  const total = activeDays().reduce((a, d) => a + dayTimes(d, ci.week), 0);
   const open = roundOpen(ci.cycleStart, ci.week);
   const left = open.reduce((a, x) => a + x.left, 0);
+  const sk = roundSkipped(ci.cycleStart, ci.week).filter(id => findDay(id)).length;
   if (!total) return '';
-  return `${total - left} von ${total} Trainings erledigt` +
+  return `${total - left - sk} von ${total} Trainings erledigt${sk ? ` · ${sk} ausgelassen` : ''}` +
     (left ? ` · offen: ${open.map(x => esc(x.day.name) + (x.left > 1 ? ` (${x.left}×)` : '')).join(', ')}` : '');
 }
 
@@ -2012,7 +2078,7 @@ function cycleCard(ci) {
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
     <h2>${head}</h2>${cyclePills(ci, feat('week-view') ? 'week-open' : null)}
     <p class="round-status">🔄 ${roundStatus(ci)}</p>
-    <p class="sub">${sub} Eine Woche ist geschafft, sobald jeder Trainingstag einmal${(activePlan().perWeek || 1) > 1 ? ' bzw. zweimal' : ''} dran war – egal, wie viele Tage du dafür brauchst.</p>
+    <p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()} – egal, wie viele Tage du dafür brauchst.</p>
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
       <p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>` : ''}
@@ -2089,6 +2155,58 @@ function backupAfterTrainingCard() {
       <button class="btn primary" data-action="export">Jetzt sichern</button></div>`;
 }
 
+// „⏱ Wenig Zeit?“ (Zeitlimit): data.timeLimit = { min, once } – once = nur fürs nächste Training, sonst bis man es ändert.
+// timeEdit = { min (Text), once } solange das Eingabefeld offen ist
+let timeEdit = null;
+function timeLimitHtml() {
+  const tl = data.timeLimit;
+  if (timeEdit) {
+    const chip = m => `<button class="vchip ${String(timeEdit.min) === String(m) ? 'on' : ''}" data-action="time-chip" data-m="${m}">${m} min</button>`;
+    return `<div class="card time-card">
+        <p><b>⏱ Wie viel Zeit hast du für das Training?</b></p>
+        <div class="variants">${[30, 45, 60, 75].map(chip).join('')}</div>
+        <label class="row"><span>Minuten</span><input class="inp kg" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          data-field="time-min" value="${esc(timeEdit.min)}" placeholder="45"></label>
+        <div class="seg two"><button class="${timeEdit.once ? 'on' : ''}" data-action="time-once" data-v="1">Nur nächstes Training</button>
+          <button class="${timeEdit.once ? '' : 'on'}" data-action="time-once" data-v="0">Bis ich es ändere</button></div>
+        <p class="hint">Die App kürzt das Training passend: Jede geplante Muskelgruppe bekommt zuerst 1–2 Sätze – mit einer
+          Grundübung, wenn es eine gibt –, dann folgen die übrigen Sätze der Grundübungen, danach normale Übungen und zuletzt
+          Isolationsübungen. Gerechnet wird mit 1 Minute pro Satz plus Pause (Grundübung 4, normale Übung 3, Isolation 2 Minuten).</p>
+        <div class="row"><button class="btn" data-action="time-cancel">Abbrechen</button>
+          <button class="btn primary" data-action="time-save">Übernehmen</button></div>
+      </div>`;
+  }
+  if (tl && tl.min) {
+    return `<div class="time-strip"><span>⏱ <b>Zeitlimit ${tl.min} min</b> · ${tl.once ? 'nur nächstes Training' : 'bis du es änderst'}</span>
+        <button class="btn small" data-action="time-open">Ändern</button><button class="btn small" data-action="time-off">Aus</button></div>`;
+  }
+  return `<button class="btn outline time-btn" data-action="time-open">⏱ Wenig Zeit?<small>Training auf deine verfügbare Zeit kürzen</small></button>`;
+}
+
+// Tage auslassen (ungeplante Pause): Auswahl der Tage, die in dieser Woche ohne Training als erledigt zählen.
+// skipPick = Set der ausgewählten Tage, solange die Auswahl offen ist (null = zu)
+let skipPick = null;
+function skipHtml(ci) {
+  const done = roundSessions(ci.cycleStart, ci.week);
+  // Tage, die sich noch auslassen lassen (offen) oder schon ausgelassen sind
+  const cands = activeDays().filter(d => done.filter(s => s.dayId === d.id).length < dayTimes(d, ci.week));
+  if (!cands.length) return '';
+  if (!skipPick) {
+    return `<button class="btn outline skip-btn" data-action="skip-open">⏭ Tage auslassen
+      <small>Nach einer ungeplanten Pause mit einem anderen Tag weitermachen</small></button>`;
+  }
+  return `<div class="card skip-panel">
+      <p><b>Welche Tage lässt du in dieser Woche aus?</b></p>
+      <p class="hint">Die ausgewählten Tage zählen für ${ciLabel(ci)} als erledigt – ohne Training und ohne Werte. Danach geht es
+        mit dem nächsten offenen Tag weiter, und sind alle Tage erledigt, mit der nächsten Woche. Du kannst einen ausgelassenen
+        Tag trotzdem noch trainieren, dann zählt er ganz normal.</p>
+      <div class="group-chips skip-chips">${cands.map(d => `<button class="gchip ${skipPick.has(d.id) ? 'on' : ''}" data-action="skip-pick" data-id="${d.id}">
+        ${skipPick.has(d.id) ? '⏭ ' : ''}${esc(d.name)}</button>`).join('')}</div>
+      <div class="row"><button class="btn" data-action="skip-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="skip-save">Übernehmen</button></div>
+    </div>`;
+}
+
 function renderStart() {
   let h = greeting() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
@@ -2114,6 +2232,8 @@ function renderStart() {
   }
   h += nutStartLine();  // Ernährungsphase kurz anzeigen (nutrition.js)
   h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
+  if (!draft) h += timeLimitHtml();
+  const limit = data.timeLimit && data.timeLimit.min;
   const sessions = sessionsNewestFirst();
   // als Nächstes dran: der nächste noch offene Tag des Durchlaufs, gezählt ab dem zuletzt trainierten Tag
   const ci = cycleInfo();
@@ -2122,19 +2242,25 @@ function renderStart() {
   const from = lastOwn ? data.days.indexOf(findDay(lastOwn.dayId)) + 1 : 0;
   const order = data.days.map((_, i) => data.days[(from + i) % data.days.length]);
   const nextDay = !draft && lastOwn ? order.find(d => open.has(d.id)) : null;
+  const skippedIds = roundSkipped(ci.cycleStart, ci.week);
   data.days.forEach((day, i) => {
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
     const done = day.exercises.some(e => e.name.trim()) && !open.has(day.id);
+    // ausgelassen: ohne Training in dieser Woche, nur übersprungen
+    const skipped = done && skippedIds.includes(day.id) && !roundSessions(ci.cycleStart, ci.week).some(s => s.dayId === day.id);
     // geschätzte Dauer dieser Woche (Sätze wie im Training) und zuletzt gemessene Dauer
     const est = estDuration(day, ci.week, activePlan(), ci.deload);
-    const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (est ? ` · ${estText(est)}` : '') +
+    const estTxt = !est ? '' : limit && est > limit ? `⏱ gekürzt auf ca. ${fmtDur(limit)} (sonst ${estText(est)})` : estText(est);
+    const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (estTxt ? ` · ${estTxt}` : '') +
       (last ? ` · zuletzt ${fmtDate(last.date)}` : '') + (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     const next = day === nextDay;
-    h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''}" data-action="start-day" data-id="${day.id}">
-      <span class="day-no">${done ? '✓' : i + 1}</span>
-      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}${done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
+    h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''} ${skipped ? 'skipped' : ''}" data-action="start-day" data-id="${day.id}">
+      <span class="day-no">${skipped ? '⏭' : done ? '✓' : i + 1}</span>
+      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
+        : done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   });
+  if (!draft) h += skipHtml(ci);
   if (typeof cardioStartHtml === 'function') h += `<h2>Cardio</h2>${cardioStartHtml()}`;
   return h;
 }
@@ -2145,6 +2271,16 @@ function setRows(cols, head = false) {
   return `<table class="last-sets${cols.length === 1 ? ' one' : ''}">${head ?`<tr><th></th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>` : ''}` +
     Array.from({ length: n }, (_, i) => `<tr><td class="no">${i + 1}</td>${cols.map(c =>
       `<td>${c.sets[i] ? fmtSet(c.sets[i]) : ''}</td>`).join('')}</tr>`).join('') + '</table>';
+}
+
+// Im Training: was das Zeitlimit gekürzt hat
+function timeCutNote() {
+  const c = draft.timeCut;
+  if (!draft.timeLimit) return '';
+  if (!c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min – das Training passt schon so, nichts gekürzt.</p>`;
+  return `<p class="intro-note time-note">⏱ Auf ca. ${fmtDur(c.after)} gekürzt (Zeitlimit ${c.limit} min, sonst ca. ${fmtDur(c.before)}).
+    ${c.cut.length ? `<br><small>Weniger Sätze: ${c.cut.map(x => `${esc(x.name)} ${x.from} → ${x.to}`).join(' · ')}</small>` : ''}
+    ${c.dropped.length ? `<br><small>Heute ausgelassen: ${c.dropped.map(esc).join(' · ')}</small>` : ''}</p>`;
 }
 
 function renderTraining() {
@@ -2159,7 +2295,7 @@ function renderTraining() {
       : '';
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
-    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + h;
+    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + timeCutNote() + h;
   h += `<p class="sub">${fmtDate(draft.date, true)}<br>${!feat('tr-rir-input')
     ? 'Trag nach jedem Satz ein, was du geschafft hast, und tippe an, wie er sich angefühlt hat – die App passt die nächsten Sätze daran an.'
     : draft.own
@@ -2484,6 +2620,14 @@ function renderPlan() {
       <p class="per-week-title">🔁 Jeder Trainingstag 2× pro Woche · ${data.days.length * perWeek} Trainings</p>
       <p class="hint">Die Tage wiederholen sich der Reihe nach. Das 2. Training eines Tages in der Woche richtet sich nach dem 2. Training derselben Woche im letzten Zyklus und liegt nie über dem Plan des 1. Trainings dieser Woche.</p>
     </div>` : ''}
+    ${active.rotate ? `<div class="card per-week">
+      <p class="per-week-title">🔁 Im Wechsel · ${active.rotate} Trainings pro Woche · Ø ${fmtNum(round1(perWeekAvg(active)))}× je Tag</p>
+      <p class="hint">Die Tage laufen über die Wochen der Reihe nach weiter: ${(() => {
+        const list = activeDays(active);
+        const wk = w => Array.from({ length: active.rotate }, (_, i) => list[((w - 1) * active.rotate + i) % list.length].name).join(' · ');
+        return list.length ? `Woche 1: ${esc(wk(1))} – Woche 2: ${esc(wk(2))} …` : '';
+      })()} Kommt ein Tag 2× in einer Woche dran, liegt das 2. Training nie über dem Plan des 1.</p>
+    </div>` : ''}
     ${periodCard(c, active)}`;
   return h;
 }
@@ -2579,7 +2723,7 @@ function periodCard(c, active) {
   let h = '<h2>Periodisierung</h2><div class="card">';
   if (feat('cycle-adjust')) h += '<p class="hint">Woche wechseln, Zykluslänge, Verlängern/Verkürzen und „Zyklus beenden“ findest du im Reiter Training an der Zykluskarte unter „⚙️ Zyklus anpassen“.</p>';
   if (cfg) {
-    h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald jeder Trainingstag einmal${(active.perWeek || 1) > 1 ? ' bzw. zweimal' : ''} trainiert wurde – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
+    h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald ${roundDoneText(active)} – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
       <p class="lbl chips-title">Deload</p>
       <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
         `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
@@ -3277,7 +3421,7 @@ function renderSession({ id, fresh, edit, week }) {
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
   const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
   let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
-    (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + '</p>' +
+    (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + (s.timeLimit ? `<br>⏱ auf ${s.timeLimit} min gekürzt` : '') + '</p>' +
     `${feat('session-edit') ? `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button>` : ''}<ul class="list">`;
   for (const e of s.entries) {
     const res = e.result
@@ -3562,6 +3706,13 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   };
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
   draft.entries = draftEntries(day);
+  // Zeitlimit („⏱ Wenig Zeit?“ auf der Startseite): Training kürzen; „nur nächstes Training“ ist damit verbraucht
+  const tl = data.timeLimit;
+  if (tl && tl.min) {
+    draft.timeLimit = tl.min;
+    draft.timeCut = trimToTime(draft.entries, tl.min);
+    if (tl.once) { delete data.timeLimit; saveData(); }
+  }
   saveDraft();
   go('training');
   const dur = lastDuration(day.id);
@@ -3845,7 +3996,14 @@ function saveTraining() {
   if (draft.deload) session.deload = true;
   else if (!prog.volume || !prog.load) session.progression = { volume: prog.volume, load: prog.load };
   if (draft.penalty) session.readiness = draft.readiness;
+  if (draft.timeCut) session.timeLimit = draft.timeLimit;  // auf Zeit gekürzt (Anzeige im Verlauf)
   if (draft.cycleStart) {
+    // doch trainiert: ein „ausgelassen“ dieses Tages in dieser Woche entfällt
+    const sk = data.roundSkips[roundKey(draft.cycleStart, draft.week)];
+    if (sk && sk.includes(draft.dayId)) {
+      sk.splice(sk.indexOf(draft.dayId), 1);
+      if (!sk.length) delete data.roundSkips[roundKey(draft.cycleStart, draft.week)];
+    }
     Object.assign(session, { cycleStart: draft.cycleStart, week: draft.week });
     setRound(draft.cycleStart, draft.week, draft.cycleNo || data.cycle.no);  // ab jetzt gilt dieser Durchlauf
   }
@@ -3910,7 +4068,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4095,6 +4253,50 @@ const actions = {
   },
   resume: () => go('training'),
   'start-day': el => beginCheck(el.dataset.id),
+  'time-open': () => {
+    const tl = data.timeLimit;
+    timeEdit = { min: tl && tl.min ? String(tl.min) : '45', once: tl ? !!tl.once : true };
+    render();
+  },
+  'time-chip': el => { timeEdit.min = el.dataset.m; render(); },
+  'time-once': el => { timeEdit.once = el.dataset.v === '1'; render(); },
+  'time-cancel': () => { timeEdit = null; render(); },
+  'time-save': () => {
+    const m = Math.round(parseNum(timeEdit.min));
+    if (!(m >= 10 && m <= 240)) { alert('Bitte eine Zeit zwischen 10 und 240 Minuten eintragen.'); return; }
+    data.timeLimit = { min: m, once: timeEdit.once };
+    timeEdit = null;
+    saveData();
+    toast(`⏱ Zeitlimit ${m} min – ${data.timeLimit.once ? 'gilt für das nächste Training' : 'gilt, bis du es änderst'}`);
+    render();
+  },
+  'time-off': () => { delete data.timeLimit; timeEdit = null; saveData(); toast('Zeitlimit aus – wieder das ganze Training'); render(); },
+  'skip-open': () => {
+    const ci = cycleInfo();
+    skipPick = new Set(roundSkipped(ci.cycleStart, ci.week));
+    render();
+  },
+  'skip-pick': el => { skipPick.has(el.dataset.id) ? skipPick.delete(el.dataset.id) : skipPick.add(el.dataset.id); render(); },
+  'skip-cancel': () => { skipPick = null; render(); },
+  'skip-save': () => {
+    const ci = cycleInfo(), key = roundKey(ci.cycleStart, ci.week);
+    const done = roundSessions(ci.cycleStart, ci.week);
+    // diesen Durchlauf festhalten (wie beim Speichern eines Trainings) – sonst rechnet cycleInfo vom vorherigen aus
+    setRound(ci.cycleStart, ci.week, ci.cycle);
+    // je ausgewähltem Tag alle noch offenen Trainings dieser Woche auslassen
+    const list = [];
+    for (const id of skipPick) {
+      const n = dayTimes(findDay(id), ci.week) - done.filter(s => s.dayId === id).length;
+      for (let k = 0; k < n; k++) list.push(id);
+    }
+    if (list.length) data.roundSkips[key] = list; else delete data.roundSkips[key];
+    skipPick = null;
+    saveData();
+    const now = cycleInfo();
+    toast(now.cycleStart !== ci.cycleStart || now.week !== ci.week ? `Woche geschafft – weiter mit ${ciLabel(now)}`
+      : list.length ? `${new Set(list).size} Tag${new Set(list).size === 1 ? '' : 'e'} ausgelassen` : 'Keine Tage ausgelassen');
+    render();
+  },
   'entry-week': el => go('entryweek', { ...current.params, w: el.dataset.w }),
   // Einstiegswoche des neuen Plans übernehmen (Deload „selbst bestimmen“: die erste Woche ist der Deload), dann wie gewohnt weiter
   'entry-ok': () => {
@@ -4721,7 +4923,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);
@@ -4870,6 +5072,7 @@ const fields = {
     saveDraft();
   },
   // Regler Zykluslänge: Anzeige beim Ziehen, übernommen beim Loslassen (siehe change)
+  'time-min': el => { if (timeEdit) timeEdit.min = el.value; },
   'tr-rir': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.rir = el.value;

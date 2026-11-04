@@ -2094,7 +2094,8 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 /* Plan-Assistent: Häufigkeit der großen Muskeln je Vorlage; Ersetzen: vorherige Übung */
 .split-opt small .freq-ok { color: var(--success); font-weight: 650; }
 .split-opt small .freq-bad { color: var(--warn-text); font-weight: 650; }
-.split-opt.on small .freq-ok, .split-opt.on small .freq-bad { color: inherit; }
+.split-opt small .freq-mid { color: var(--accent-text); font-weight: 650; }
+.split-opt.on small .freq-ok, .split-opt.on small .freq-bad, .split-opt.on small .freq-mid { color: inherit; }
 .quick-picks .vchip.swap-prev { background: var(--accent-soft); color: var(--accent-text); }
 .quick-picks .vchip.swap-prev small { display: block; font-size: 12px; font-weight: 600; opacity: .8; }
 
@@ -2208,3 +2209,21 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .nut-basics .btn.center { margin: 6px 0 4px; }
 .nut-basics ul { list-style: none; padding-left: 0; }
 .nut-basics:not([open]) { padding-top: 4px; padding-bottom: 4px; }
+/* Tage auslassen (Startseite) */
+.day-btn.skipped .day-no { background: var(--fill); color: var(--muted); }
+.day-btn.skipped .day-txt { opacity: .75; }
+.badge.skip { background: var(--fill); color: var(--muted); }
+.btn.skip-btn { display: block; text-align: center; }
+.btn.skip-btn small { display: block; margin-top: 2px; font-size: 13.5px; font-weight: 500; color: var(--muted); }
+.skip-panel p { margin: 0 0 10px; }
+.skip-chips { margin: 4px 0 12px; }
+/* Zeitlimit „⏱ Wenig Zeit?“ (Startseite) */
+.btn.time-btn { display: block; text-align: center; }
+.btn.time-btn small { display: block; margin-top: 2px; font-size: 13.5px; font-weight: 500; color: var(--muted); }
+.time-card p { margin: 0 0 10px; }
+.time-card .seg { margin-top: 4px; }
+.time-strip { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: 16px;
+  background: var(--accent-soft); color: var(--accent-text); font-size: 15px; }
+.time-strip span { flex: 1; min-width: 0; }
+.time-strip .btn { width: auto; min-height: 40px; margin: 0; padding: 0 12px; font-size: 14.5px; }
+.time-note small { font-weight: 500; }
