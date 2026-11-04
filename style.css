@@ -2256,3 +2256,19 @@ span.setno { display: flex; flex-direction: column; align-items: center; justify
 .lib-guide > :last-child { margin-bottom: 16px; }
 .lib-guide li, .lib-guide p { font-size: 16px; }
 .lib-guide h3 { color: var(--text); opacity: .75; }
+
+/* Einführung (tour.js): abgedunkelter Bildschirm, Loch über dem erklärten Knopf, Sprechblase */
+#tour { position: fixed; inset: 0; z-index: 2000; }
+.tour-hole { position: fixed; border-radius: 14px; pointer-events: none;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 200vmax rgba(8, 10, 20, .68);
+  transition: left .25s ease, top .25s ease, width .25s ease, height .25s ease; }
+.tour-bubble { position: fixed; background: var(--card); color: var(--text); border-radius: 18px; padding: 14px 16px 10px;
+  border: 1px solid var(--line); box-shadow: 0 14px 44px rgba(0, 0, 0, .35); transition: top .25s ease, left .25s ease; }
+.tour-bubble h3 { margin: 2px 0 6px; font-size: 19px; }
+.tour-bubble p { margin: 0 0 12px; line-height: 1.45; font-size: 16px; }
+.tour-bubble .tour-count { margin: 0 0 2px; font-size: 12px; font-weight: 750; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+.tour-btns { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.tour-btns .btn { width: auto; margin: 0; padding: 10px 22px; min-height: 44px; }
+.tour-skip, .tour-off { background: none; border: 0; color: var(--muted); font: inherit; font-size: 15px; padding: 8px 4px; cursor: pointer; }
+.tour-off { display: block; margin: 4px auto 0; font-size: 13px; text-decoration: underline; }
+body.touring { overflow: hidden; }

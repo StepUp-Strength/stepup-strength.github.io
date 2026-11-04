@@ -104,6 +104,7 @@ function upgradeData(d) {
     for (const p of d.plans) for (const day of p.days || []) (day.exercises || []).forEach(fix);
     for (const s of d.sessions || []) (s.entries || []).forEach(fix);
   }
+  if (!d.tour) d.tour = { seen: {}, off: false };       // Einführungen: gesehene Schritte (tour.js)
   if (d.home === undefined) d.home = null;              // Heim-Ausrüstung { db:[kg], kb:[kg], bands:[1–4], anchor, bar, bench 0/1/2, dip }
   if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
@@ -2010,6 +2011,7 @@ function render() {
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
   syncBackKey();
   syncTyping();  // Feld beim Neuzeichnen verschwunden (z. B. Seitenwechsel) -> Leiste wieder zeigen
+  if (typeof tourCheck === 'function') tourCheck();  // Einführung beim ersten Öffnen (tour.js)
 }
 
 // „Abbrechen“ oben rechts bei mehrstufigen Vorgängen: views[…].cancel = { ask, run } (oder Funktion der params,
@@ -3626,7 +3628,7 @@ function modeCard() {
 }
 
 function renderData() {
-  return modeCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -4189,7 +4191,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
