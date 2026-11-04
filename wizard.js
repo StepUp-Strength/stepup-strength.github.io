@@ -949,7 +949,7 @@ function renderWizBasics() {
 function renderWizInt() {
   const mode = wizIntMode();
   const alt = wizAltPossible();
-  const r = (int, kind) => REP_RANGES[int][kind].join('–');
+  const r = (int, kind) => repRanges(needsCoach())[int][kind].join('–');  // Neulinge/Einsteiger: höhere Bereiche
   const reps = int => `Grundübungen ${r(int, 'compound')}, normale Übungen ${r(int, 'normal')}, Assistenzübungen ${r(int, 'assist')} Wdh.`;
   const list = items => `<ul class="int-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>`;
   const opt = (m, title, body, disabled = false) => `<button class="split-opt freq-opt int-opt ${mode === m ? 'on' : ''}" data-action="wiz-int" data-m="${m}" ${disabled ? 'disabled' : ''}>

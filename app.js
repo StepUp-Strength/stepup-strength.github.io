@@ -459,35 +459,38 @@ function capacityAt(cap, weight, newWeight) {
 const isDone = s => parseNum(s.reps) != null && parseNum(s.rir) != null;
 
 // Weniger Wdh. als das wird bei Übungen mit Gewicht nie vorgeschlagen
-const MIN_REPS = 5;
+// Neulinge und Einsteiger (plan.level): nie unter 8 Wdh., Wdh.-Bereiche eher 10–12 (User-Regel 2026-11-05) – sonst 5
+const MIN_REPS_BASE = 5, MIN_REPS_BEGINNER = 8;
+const beginnerPlan = () => hasActivePlan() && ['neuling', 'einsteiger'].includes(activePlan().level);
+const minReps = () => beginnerPlan() ? MIN_REPS_BEGINNER : MIN_REPS_BASE;
 
 // Vorschlag für einen Satz, k Sätze nach einem Satz mit cap Wdh. bis zum Versagen bei Gewicht w.
 // startWeight: Ausgangsgewicht des Satzes (z. B. aus der Vergleichswoche), sonst das Gewicht von w.
-// keepWeight: Gewicht bleibt (Ziel nur knapp verfehlt) – fehlt dann höchstens 1 Wdh. zu MIN_REPS, wird mit
-// etwas weniger Tank gerechnet. Sonst wird in Steigerungsschritten reduziert, bis mindestens MIN_REPS Wdh. passen.
+// keepWeight: Gewicht bleibt (Ziel nur knapp verfehlt) – fehlt dann höchstens 1 Wdh. zu minReps(), wird mit
+// etwas weniger Tank gerechnet. Sonst wird in Steigerungsschritten reduziert, bis mindestens minReps() Wdh. passen.
 function planSet(cap, w, t, k, fixedWeight, startWeight, keepWeight = false) {
   const repsAt = wt => Math.floor(capacityAt(cap, w, wt) - t.rir - FATIGUE * k + 1e-9);
-  if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(MIN_REPS, repsAt(fixedWeight)) };
-  if (w == null) return { weight: null, reps: Math.max(MIN_REPS, repsAt(null)) };  // ohne Gewicht (Eigengewicht)
+  if (fixedWeight != null) return { weight: fixedWeight, reps: Math.max(minReps(), repsAt(fixedWeight)) };
+  if (w == null) return { weight: null, reps: Math.max(minReps(), repsAt(null)) };  // ohne Gewicht (Eigengewicht)
   let wt = startWeight != null ? startWeight : w;
-  if (!keepWeight || repsAt(wt) < MIN_REPS - 1) {
-    while (repsAt(wt) < MIN_REPS) { const d = wDown(wt, t); if (d == null) break; wt = d; }
+  if (!keepWeight || repsAt(wt) < minReps() - 1) {
+    while (repsAt(wt) < minReps()) { const d = wDown(wt, t); if (d == null) break; wt = d; }
   }
-  return { weight: wt, reps: Math.max(MIN_REPS, repsAt(wt)) };
+  return { weight: wt, reps: Math.max(minReps(), repsAt(wt)) };
 }
 
-// Nie weniger als MIN_REPS Wdh.: sonst das Gewicht so weit senken, dass MIN_REPS mit derselben Anstrengung passen
-// (Eigengewicht: mindestens MIN_REPS – schafft man weniger, empfiehlt die App eine leichtere Variante, siehe bwHint)
+// Nie weniger als minReps() Wdh.: sonst das Gewicht so weit senken, dass minReps() mit derselben Anstrengung passen
+// (Eigengewicht: mindestens minReps() – schafft man weniger, empfiehlt die App eine leichtere Variante, siehe bwHint)
 function atLeastMinReps(p, t) {
-  if (p.reps == null || p.reps >= MIN_REPS) return p;
-  if (p.weight == null) return t.bodyweight ? { ...p, reps: MIN_REPS } : p;
+  if (p.reps == null || p.reps >= minReps()) return p;
+  if (p.weight == null) return t.bodyweight ? { ...p, reps: minReps() } : p;
   const step = t.step || 2.5;
-  const w = wSnap(p.weight * repFactor(MIN_REPS + t.rir) / repFactor(p.reps + t.rir), t, Math.floor);
-  return { weight: Math.max(t.weights ? t.weights[0] : step, w), reps: MIN_REPS };
+  const w = wSnap(p.weight * repFactor(minReps() + t.rir) / repFactor(p.reps + t.rir), t, Math.floor);
+  return { weight: Math.max(t.weights ? t.weights[0] : step, w), reps: minReps() };
 }
 
-// Satzziel laut Plan: Satz 1 = Ziel-Wdh., danach je Satz FATIGUE weniger (mind. MIN_REPS)
-const goalReps = (t, i) => Math.max(MIN_REPS, t.reps - FATIGUE * i);
+// Satzziel laut Plan: Satz 1 = Ziel-Wdh., danach je Satz FATIGUE weniger (mind. minReps())
+const goalReps = (t, i) => Math.max(minReps(), t.reps - FATIGUE * i);
 
 // Nächste Gewichtsstufe, sobald die Leistung (cap Wdh. bis zum Versagen bei w) reicht,
 // um mit w + step noch goal Wdh. mit Ziel-Tank (nach k Sätzen Ermüdung) zu schaffen.
@@ -600,7 +603,7 @@ function recalcSets(ei) {
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
     (firstReduced
       ? `(Ziel um mind. ${MISS_REPS} Wdh. verfehlt → weniger Gewicht statt weniger Wdh.)`
-      : `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${MIN_REPS} Wdh.)`);
+      : `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${minReps()} Wdh.)`);
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
@@ -932,6 +935,12 @@ const REP_RANGES = {
   heavy: { compound: [6, 8], normal: [8, 10], assist: [8, 12] },
   light: { compound: [8, 10], normal: [10, 12], assist: [10, 15] },
 };
+// … für Neulinge und Einsteiger: auch Grund- und normale Übungen im Bereich 10–12, nie unter 8 (siehe minReps)
+const REP_RANGES_BEGINNER = {
+  heavy: { compound: [10, 12], normal: [10, 12], assist: [12, 15] },
+  light: { compound: [10, 12], normal: [12, 15], assist: [12, 15] },
+};
+const repRanges = (beginner = beginnerPlan()) => beginner ? REP_RANGES_BEGINNER : REP_RANGES;
 
 // Muskelgruppe raten, wenn die Übung nicht in der Liste steht (Reihenfolge zählt)
 const GROUP_GUESS = [
@@ -970,11 +979,11 @@ function dayGroups(day) {
 // Ziel-Wdh. (unteres Ende des Bereichs) laut Tag-Typ, sonst laut Plan
 function repsFor(day, ex) {
   const int = dayIntensity(day);
-  return int ? REP_RANGES[int][kindOf(ex)][0] : ex.reps;
+  return int ? repRanges()[int][kindOf(ex)][0] : ex.reps;
 }
 
 function repRangeText(day, ex) {
-  const [lo, hi] = REP_RANGES[dayIntensity(day)][kindOf(ex)];
+  const [lo, hi] = repRanges()[dayIntensity(day)][kindOf(ex)];
   return `${lo}–${hi}`;
 }
 
@@ -1246,7 +1255,7 @@ function deloadTarget(t, ref) {
   const normal = ref ? ref.weight : targetWeight(t);
   return {
     ...t,
-    ...(ref ? { reps: Math.max(MIN_REPS, ref.reps) } : {}),
+    ...(ref ? { reps: Math.max(minReps(), ref.reps) } : {}),
     sets: t.fixedSets ? t.sets : deloadSets(t.sets),  // automatisch verteilt: schon halbiert
     rir: Math.max(t.rir, DELOAD_RIR),
     weight: normal != null ? wSnap(normal * DELOAD_WEIGHT, t) : null,
@@ -1395,12 +1404,12 @@ function missed(prev, v, k) {
 function weightForGoal(cap, w, t, k, goal) {
   const repsAt = x => Math.floor(capacityAt(cap, w, x) - t.rir - FATIGUE * k + 1e-9);
   // Leichtes Gewicht (eine Stufe ist ein großer Sprung): erst die Wdh. senken, solange es höchstens 3 unter dem
-  // Ziel und mind. MIN_REPS sind – statt zwischen zwei Gewichten hin- und herzuspringen (User-Regel 2026-11-03)
+  // Ziel und mind. minReps() sind – statt zwischen zwei Gewichten hin- und herzuspringen (User-Regel 2026-11-03)
   const below = wDown(w, t);
-  if ((below == null || bigStep(w, w - below)) && repsAt(w) >= Math.max(MIN_REPS, goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
+  if ((below == null || bigStep(w, w - below)) && repsAt(w) >= Math.max(minReps(), goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
   let wt = w;
   while (repsAt(wt) < goal) { const d = wDown(wt, t); if (d == null) break; wt = d; }
-  return { weight: wt, reps: Math.max(MIN_REPS, Math.min(goal, repsAt(wt))) };
+  return { weight: wt, reps: Math.max(minReps(), Math.min(goal, repsAt(wt))) };
 }
 
 // Großer Gewichtssprung: eine Stufe ist mehr als BIG_STEP des Gewichts (z. B. 2,5 kg bei unter 25 kg)
@@ -1426,7 +1435,7 @@ function refAt(list, k) {
   if (k < list.length) return list[k];
   const last = list[list.length - 1];
   const extra = k - list.length + 1;
-  return { ...last, reps: last.reps != null ? Math.max(MIN_REPS, last.reps - FATIGUE * extra) : null };
+  return { ...last, reps: last.reps != null ? Math.max(minReps(), last.reps - FATIGUE * extra) : null };
 }
 
 // Vorschlag aus einem Bezugssatz: gleiches Gewicht, Wdh. +1 (plusOne) bzw. bestätigen –
@@ -1521,7 +1530,7 @@ function nextPreview(en) {
     }
     p = atLeastMinReps(p, t);
     if (p.weight != null && lastW[v] != null && p.weight > lastW[v]) {
-      p = { weight: lastW[v], reps: Math.max(MIN_REPS, repsAtWeight(p.reps, t.rir, p.weight, lastW[v])) };
+      p = { weight: lastW[v], reps: Math.max(minReps(), repsAtWeight(p.reps, t.rir, p.weight, lastW[v])) };
     }
     if (p.weight != null) lastW[v] = p.weight;
     const dir = p.weight == null || src.weight == null || p.weight === src.weight ? ''
@@ -1536,7 +1545,61 @@ function updateNextHints(ei) {
     const el = $view.querySelector(`[data-next="${ei}-${si}"]`);
     if (el) el.innerHTML = html;
   });
+  draftPbFlags(en).forEach((pb, si) => {
+    const el = $view.querySelector(`[data-pb="${ei}-${si}"]`);
+    if (el) el.hidden = !pb;
+  });
 }
+
+/* ---------- Persönliche Bestleistung (PB) ---------- */
+// Ein Satz ist eine neue Bestleistung, wenn er jede frühere Leistung dieser Übung übertrifft (gleiche Ausführung):
+// mit Gewicht entweder das daraus geschätzte „Max. bei 10 Wdh.“ (Gewicht und Wdh., der Tank nicht – nur was wirklich
+// geschafft wurde) oder ein neues Höchstgewicht; ohne Gewicht die Wdh. (Band: je stärkere Stufe BAND_STEP_REPS Wdh.
+// mehr). Wer eine Übung zum ersten Mal macht, hat noch keine Bestleistung zu schlagen – dann gibt es noch keinen Stern.
+const pbKey = s => `${variantOf(s)}|${s.weight != null && s.weight > 0 ? 'w' : 'r'}`;
+function pbScore(s, band) {
+  if (!s || s.reps == null || s.reps <= 0) return null;
+  if (s.weight != null && s.weight > 0) return s.weight / repFactor(s.reps);
+  return s.reps + (band ? (band - 1) * BAND_STEP_REPS : 0);
+}
+// Beste frühere Leistung je Ausführung aus den gespeicherten Trainings (vor dem Datum before, ohne das Training skipId)
+function pbBest(name, before = null, skipId = null) {
+  const k = nameKey(name), best = {};
+  for (const ses of data.sessions) {
+    if (ses.id === skipId || (before && ses.date >= before)) continue;
+    for (const e of ses.entries) {
+      if (nameKey(e.name) !== k) continue;
+      const band = e.target && e.target.band;
+      for (const x of e.sets) {
+        const sc = pbScore(x, band);
+        if (sc == null) continue;
+        const b = best[pbKey(x)] || (best[pbKey(x)] = { sc: -Infinity, w: -Infinity });
+        b.sc = Math.max(b.sc, sc);
+        if (x.weight != null) b.w = Math.max(b.w, x.weight);
+      }
+    }
+  }
+  return best;
+}
+// Stern je Satz: schlägt die beste frühere Leistung – und auch die stärkeren Sätze davor im selben Training
+function pbFlags(sets, best, band) {
+  const b = Object.fromEntries(Object.entries(best).map(([k, v]) => [k, { ...v }]));
+  return sets.map(x => {
+    const sc = pbScore(x, band), key = x && pbKey(x);
+    if (sc == null || !(key in best)) return false;
+    const r = b[key], heavier = x.weight != null && x.weight > r.w + 1e-9;
+    const pb = sc > r.sc + 1e-9 || heavier;
+    r.sc = Math.max(r.sc, sc);
+    if (x.weight != null) r.w = Math.max(r.w, x.weight);
+    return pb;
+  });
+}
+// Im Training: nur erledigte Sätze zählen
+const draftPbFlags = en => pbFlags(en.sets.map(x => isDone(x)
+  ? { weight: parseNum(x.weight), reps: parseNum(x.reps), variant: x.variant } : null),
+  pbBest(en.name), en.target && en.target.band);
+const PB_TAG = ' <span class="pb-tag" title="Neue persönliche Bestleistung">★ PB</span>';
+const setsWithPb = (sets, flags) => sets.map((x, i) => fmtSet(x) + (flags[i] ? PB_TAG : '')).join('<br>');
 
 // Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
 // onlyPlan: nur Trainings der Tage des aktiven Plans (eigener Plan: Werte aus anderen Plänen zählen nicht)
@@ -1574,9 +1637,9 @@ function refProposal(t, prev, cmp, i, k, v) {
     const pl = ofVariant(prev.planned, v)[k];
     const goal = pl && pl.reps != null ? pl.reps : src.reps;
     if (src.weight == null) {
-      // Eigengewicht: Wdh. so weit senken, dass das Tank-Ziel wieder stimmt (mind. MIN_REPS)
+      // Eigengewicht: Wdh. so weit senken, dass das Tank-Ziel wieder stimmt (mind. minReps())
       const capBw = src.reps + (src.rir != null ? src.rir : t.rir);
-      return { p: { weight: null, reps: Math.max(MIN_REPS, Math.floor(capBw - t.rir + 1e-9)) }, rule: 'brake' };
+      return { p: { weight: null, reps: Math.max(minReps(), Math.floor(capBw - t.rir + 1e-9)) }, rule: 'brake' };
     }
     const cap = src.reps + (src.rir != null ? src.rir : t.rir);
     return { p: weightForGoal(cap, src.weight, { step: 2.5, ...t }, 0, goal), rule: 'brake' };
@@ -1657,15 +1720,15 @@ function proposeSet(en, i, v) {
   };
 }
 
-// Schlecht geschlafen / Stress: erwartete Wdh. um pen senken. Fiele der Satz unter MIN_REPS,
+// Schlecht geschlafen / Stress: erwartete Wdh. um pen senken. Fiele der Satz unter minReps(),
 // geht wie sonst auch das Gewicht runter.
 function applyPenalty(set, t, pen) {
   const r = parseNum(set.reps);
   if (!pen || r == null) return set;
   let reps = r - pen;
   let w = parseNum(set.weight);
-  if (reps < MIN_REPS && w != null) ({ weight: w, reps } = planSet(reps + t.rir, w, { step: 2.5, ...t }, 0));
-  if (w == null && t.bodyweight) reps = Math.max(MIN_REPS, reps);
+  if (reps < minReps() && w != null) ({ weight: w, reps } = planSet(reps + t.rir, w, { step: 2.5, ...t }, 0));
+  if (w == null && t.bodyweight) reps = Math.max(minReps(), reps);
   return {
     ...set,
     weight: w != null ? fmtNum(w) : set.weight,
@@ -1687,7 +1750,7 @@ function notHeavierThanBefore(en, i, v, set) {
   const pw = before && parseNum(before.weight);
   if (pw == null || w <= pw) return set;
   const rir = en.target.rir != null ? en.target.rir : 2;
-  const reps = Math.max(MIN_REPS, repsAtWeight(parseNum(set.reps), rir, w, pw));
+  const reps = Math.max(minReps(), repsAtWeight(parseNum(set.reps), rir, w, pw));
   return { ...set, weight: fmtNum(pw), reps: String(reps), baseWeight: pw };
 }
 
@@ -2470,11 +2533,13 @@ function renderTraining() {
     const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
     const next = feat('tr-next') ? nextPreview(en) : [];
     const bodyKg = body ? currentBodyweight() : null;
+    const pb = draftPbFlags(en);
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
+      const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`;
       h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
-          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</button>`
-          : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</span>`) + `
+          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
+          : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
         ${body ? (en.target && en.target.band ? `<span class="bw-cell">Band<small>${BAND_LEVELS[en.target.band]}</small></span>`
           : `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`)
         : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
@@ -3140,7 +3205,7 @@ function renderExercise({ name }) {
   const rows = [];
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) rows.push({ session: s, sets: e.sets, comment: e.comment });
+    if (e) rows.push({ session: s, sets: e.sets, comment: e.comment, band: e.target && e.target.band });
   }
   if (!rows.length) return '<p class="hint">Keine Einträge.</p>';
 
@@ -3152,7 +3217,7 @@ function renderExercise({ name }) {
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
-      <div class="sets">${r.sets.map(fmtSet).join('<br>')}</div>
+      <div class="sets">${setsWithPb(r.sets, pbFlags(r.sets, pbBest(name, r.session.date, r.session.id), r.band))}</div>
       ${r.comment ? `<div class="comment-text">💬 ${esc(r.comment)}</div>` : ''}</li>`;
   }
   return h + '</ul>';
@@ -3485,7 +3550,7 @@ function renderSession({ id, fresh, edit, week }) {
     const warm = e.warmup && e.warmup.length
       ? `<div class="warm-line">🔥 Aufwärmen: ${e.warmup.map(fmtSet).join(' · ')}</div>` : '';
     h += `<li><div class="date">${esc(e.name)}${instead}</div>${warm}
-      <div class="sets">${e.sets.map(fmtSet).join('<br>')}</div>${comment}${res}</li>`;
+      <div class="sets">${setsWithPb(e.sets, pbFlags(e.sets, pbBest(e.name, s.date, s.id), e.target && e.target.band))}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
@@ -3892,7 +3957,7 @@ function bwVariants(name) {
     : { easy: 'eine leichtere Ausführung (z. B. mit Unterstützung oder kleinerem Bewegungsradius)', hard: 'Zusatzgewicht oder langsamer (z. B. 3 Sekunden absenken)' };
 }
 
-// Hinweis bei Eigengewicht: unter MIN_REPS Wdh. geschafft -> leichtere Variante; über BW_MAX_REPS -> schwerere
+// Hinweis bei Eigengewicht: unter minReps() Wdh. geschafft -> leichtere Variante; über BW_MAX_REPS -> schwerere
 const BW_MAX_REPS = 15;
 // Zu Hause mit vorhandenen Gewichten: ab MAXED_REPS Wdh. mit dem schwersten Gewicht eine schwerere Variante vorschlagen
 const MAXED_REPS = 20;
@@ -3947,8 +4012,8 @@ function bwHint(en) {
   const lastReps = last && !last.deload ? last.sets.map(x => x.reps).filter(r => r != null) : [];
   const v = bwVariants(en.name);
   const swap = ' Tauschen kannst du die Übung oben über „⇄ Ersetzen“.';
-  if (done.some(r => r < MIN_REPS) || (!done.length && lastReps.some(r => r < MIN_REPS))) {
-    return `💡 Weniger als ${MIN_REPS} Wdh. sind für einen sinnvollen Satz zu wenig. Nimm besser eine leichtere Variante: ${v.easy}.${swap}`;
+  if (done.some(r => r < minReps()) || (!done.length && lastReps.some(r => r < minReps()))) {
+    return `💡 Weniger als ${minReps()} Wdh. sind für einen sinnvollen Satz zu wenig. Nimm besser eine leichtere Variante: ${v.easy}.${swap}`;
   }
   if (en.sets.some(x => parseNum(x.reps) > BW_MAX_REPS)) {
     return `💡 Mehr als ${BW_MAX_REPS} Wdh.: Ab hier trainierst du vor allem Ausdauer. Zeit für eine schwerere Variante: ${v.hard}.${swap}`;
@@ -3980,7 +4045,7 @@ function buildSets(name, target) {
     if (target.deload && target.bodyweight) {
       // Deload ohne Gewicht: Wdh. aus der letzten Leistung, so dass DELOAD_RIR im Tank bleiben (je Satz −1 Ermüdung)
       const ref = bwDeloadRef(name);
-      const reps = ref != null ? Math.max(MIN_REPS, ref - DELOAD_RIR - FATIGUE * i) : target.reps;
+      const reps = ref != null ? Math.max(minReps(), ref - DELOAD_RIR - FATIGUE * i) : target.reps;
       sets.push({ weight: '', reps: String(reps), rir: '', auto: true });
       continue;
     }
@@ -3998,7 +4063,7 @@ function buildSets(name, target) {
       sets.push({ weight: w != null ? fmtNum(w) : '', reps: String(target.reps), rir: '', auto: true });
       continue;
     }
-    // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. MIN_REPS
+    // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. minReps()
     const p = i === 0 ? { weight: w, reps: reps0 } : planSet(reps0 + target.rir, w, target, i);
     sets.push({ weight: p.weight != null ? fmtNum(p.weight) : '', reps: String(p.reps), rir: '', auto: true });
   }
