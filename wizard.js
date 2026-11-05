@@ -734,10 +734,10 @@ function renderWizMode() {
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🧭</span><h2>Wie möchtest du deinen Plan erstellen?</h2></div>
       <p class="hint wiz-q-explain">Die App kann einen Plan für dich zusammenstellen – oder du übernimmst einfach einen Plan, den du schon hast.</p>
-      ${opt('app', '📈', 'Automatisch erstellter Plan', 'Die App erstellt mit deiner Hilfe automatisiert einen Plan, der auf dich abgestimmt ist – den du aber später immer weiter für dich komplett individualisieren kannst. Im Training schlägt sie dir passende Steigerungen vor, in Zyklen mit leichten Deload-Wochen.')}
-      ${opt('import', '📄', 'Plan aus Excel / Google Sheets', 'Dein Plan steht schon in einer Tabelle, z. B. vom Trainer? Die App liest Tage, Übungen, Sätze, Wiederholungen und Gewichte ein – wahlweise mit oder ohne ihre Steigerung.')}
-      ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal.')}
-    </div>${navRow(wizPrev(), null)}`;
+      ${opt('app', '📈', 'Automatisch erstellter Plan', 'Die App erstellt mit deiner Hilfe automatisiert einen Plan, der auf dich abgestimmt ist – den du aber später immer weiter für dich komplett individualisieren kannst. Sie arbeitet nach dem Prinzip des Progressive Overload: Im Training schlägt sie dir passende Steigerungen vor, in Zyklen mit leichten Deload-Wochen.')}
+      ${opt('import', '📄', 'Plan aus Excel / Google Sheets', 'Dein Plan steht schon in einer Tabelle, z. B. vom Trainer? Die App liest Tage, Übungen, Sätze, Wiederholungen und Gewichte ein – wahlweise mit oder ohne ihre Steigerung (Progressive Overload).')}
+      ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal, steigern musst du selbst.')}
+    </div>${overloadHtml()}${navRow(wizPrev(), null)}`;
 }
 
 // Eigener Plan: Übungen eines Tages mit Sätzen × Wdh. und optionalem Startgewicht
@@ -1042,7 +1042,8 @@ function renderWizProg() {
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📈</span><h2>Wie soll sich dein Plan steigern?</h2></div>
       <p class="hint wiz-q-explain">Normalerweise bleibt <b>beides an</b> – so wird dein Training Woche für Woche ein bisschen
-        fordernder, und genau das bringt Fortschritt.</p>
+        fordernder, und genau das bringt Fortschritt. Dahinter steckt das Prinzip <b>Progressive Overload</b>: Dein Körper wird nur
+        stärker, wenn er nach und nach etwas mehr leisten muss, als er gewohnt ist.</p>
       <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, wiz.progression[k], 'data-action="wiz-prog"')).join('')}</div>
       <div class="prog-explain">
         <p><b>Volumen:</b> Von Woche zu Woche kommen Sätze dazu – so wie du es vorhin in der Volumen-Tabelle gesehen hast
@@ -1053,7 +1054,7 @@ function renderWizProg() {
           trotzdem weiter. Sinnvoll, wenn du z. B. erst die Technik lernen willst oder nach einer Verletzung vorsichtig bist.</p>
         <p>Lässt sich später jederzeit ändern – für den ganzen Zyklus, einzelne Wochen oder ein einzelnes Training.</p>
       </div>
-    </div>
+    </div>${overloadHtml()}
     <div class="row"><button class="btn" data-action="wiz-step" data-to="deloadq">Zurück</button>
       <button class="btn primary" data-action="wiz-commit">Plan speichern</button></div>
     <p class="hint">Der Plan wird zusätzlich zu deinen bisherigen Plänen gespeichert und aktiv gesetzt.</p>`;

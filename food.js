@@ -1,5 +1,6 @@
 /* ---------- Ernährungstagebuch: Lebensmittel erfassen (Grundliste, Open Food Facts, Barcode, eigene) ----------
-   data.foodLog = [{ id, date, meal: 'b'|'l'|'d'|'s', key, name, brand, g, per: [kcal, Eiweiß, Kohlenhydrate, Fett] je 100 g }]
+   data.foodLog = [{ id, date, meal: 'b'|'l'|'d'|'s', key, name, brand, g, per: [kcal, Eiweiß, Kohlenhydrate, Fett, Ballaststoffe, Zucker] je 100 g }]
+   (Ballaststoffe/Zucker freiwillig: fehlen oder null = unbekannt, z. B. ältere Einträge – Anzeige ohne Tagesziel)
    (Nährwerte werden pro Eintrag mitgespeichert – spätere Änderungen am Lebensmittel ändern alte Tage nicht).
    data.foods = { key: Lebensmittel } – gemerkte Lebensmittel (zuletzt gegessen, Favoriten, eigene, aus Open Food Facts);
    bei Lebensmitteln der Grundliste nur { fav, last }.
@@ -250,6 +251,236 @@ const FOOD_BASE = [
   ['Kartoffelsalat mit Essig und Öl', 95, 1.7, 13, 4, '1 Portion', 200],
 ];
 
+// Ballaststoffe und Zucker (gesamt) je 100 g zur Grundliste: Werte des passenden Eintrags im Bundeslebensmittelschlüssel 4.0,
+// ohne passenden Eintrag (Proteinpulver, -riegel, -pudding, Energy-Drink, Tomatensoße) grob geschätzt
+const FOOD_BASE_FS = {
+  'Haferflocken': [11, 0.7],
+  'Reis, roh': [2.5, 0.3],
+  'Reis, gekocht': [0.6, 0.1],
+  'Vollkornreis, roh': [4, 0.7],
+  'Nudeln, roh': [3.4, 2],
+  'Nudeln, gekocht': [1.5, 0.8],
+  'Vollkornnudeln, roh': [10.2, 2.8],
+  'Kartoffeln, gekocht': [2, 0.7],
+  'Süßkartoffel': [3.1, 5.5],
+  'Pommes frites, zubereitet': [2.5, 1.6],
+  'Bratkartoffeln': [3.3, 1.1],
+  'Kartoffelpüree, mit Milch': [0.9, 1.7],
+  'Couscous, roh': [6.2, 1.1],
+  'Bulgur, roh': [6.7, 1.9],
+  'Quinoa, roh': [9.7, 1.7],
+  'Hirse, roh': [3.3, 0.6],
+  'Grieß, roh': [4.1, 0.8],
+  'Weizenmehl': [5.3, 0.3],
+  'Cornflakes': [4.1, 0.7],
+  'Müsli, ohne Zuckerzusatz': [10.4, 11.3],
+  'Knuspermüsli (Crunchy)': [7.7, 19.2],
+  'Reiswaffel': [3.6, 0.4],
+  'Knäckebrot': [18.2, 1.8],
+  'Vollkornbrot': [10, 0.8],
+  'Mischbrot': [7.2, 0.7],
+  'Toastbrot (Weizen)': [3.9, 3.7],
+  'Vollkorntoast': [7.9, 1.6],
+  'Brötchen (Weizen)': [3.6, 3.1],
+  'Vollkornbrötchen': [9.8, 1.4],
+  'Laugenbrezel': [3.7, 1.4],
+  'Croissant': [2.6, 7.2],
+  'Baguette': [3.7, 1.5],
+  'Wrap (Weizentortilla)': [1.2, 1.3],
+  'Fladenbrot': [3.3, 0.3],
+  'Pfannkuchen': [2, 2.5],
+  'Milch 3,5 %': [0, 4],
+  'Milch 1,5 %': [0, 4.6],
+  'Haferdrink': [0.5, 3.8],
+  'Sojadrink, ungesüßt': [1.8, 0.4],
+  'Magerquark': [0, 3.7],
+  'Speisequark 20 %': [0, 3],
+  'Speisequark 40 %': [0, 2.6],
+  'Skyr natur': [0.2, 3.1],
+  'Joghurt natur 3,5 %': [0, 4.1],
+  'Joghurt natur 1,5 %': [0, 5.8],
+  'Griechischer Joghurt 10 %': [0, 4.5],
+  'Fruchtjoghurt': [1.1, 12.1],
+  'Hüttenkäse (körniger Frischkäse)': [0, 3.6],
+  'Frischkäse natur (Doppelrahm)': [0.6, 3.7],
+  'Frischkäse leicht': [0, 3.2],
+  'Gouda': [0, 0],
+  'Emmentaler': [0, 0],
+  'Mozzarella': [0, 0],
+  'Mozzarella light': [0, 0],
+  'Feta (Schafskäse)': [0, 0],
+  'Parmesan': [0, 0.1],
+  'Harzer Käse': [0, 0],
+  'Butter': [0, 0.6],
+  'Schlagsahne 30 %': [0, 3.3],
+  'Saure Sahne 10 %': [0, 4.1],
+  'Schmand 24 %': [0, 3],
+  'Crème fraîche': [0, 2.5],
+  'Proteinpudding': [0.5, 4],
+  'Pudding (Schoko), fertig': [0.2, 12.1],
+  'Ei': [0, 0.3],
+  'Eiklar': [0, 0.4],
+  'Spiegelei, in Fett gebraten': [0, 0.4],
+  'Hähnchenbrust, roh': [0, 0],
+  'Hähnchenbrust, gebraten': [0, 0],
+  'Putenbrust, roh': [0, 0],
+  'Hähnchenschenkel mit Haut, roh': [0, 0],
+  'Rinderhackfleisch (20 % Fett), roh': [0, 0],
+  'Rinderhackfleisch mager (5 % Fett), roh': [0, 0],
+  'Hackfleisch gemischt, roh': [0, 0],
+  'Rindersteak (Hüfte, Rumpsteak), roh': [0, 0],
+  'Schweinefilet, roh': [0, 0],
+  'Schweineschnitzel, roh': [0, 0],
+  'Schweinenacken, roh': [0, 0],
+  'Kasseler': [0, 0.6],
+  'Schnitzel paniert, gebraten': [0.6, 0.5],
+  'Frikadelle': [0.7, 0.8],
+  'Gyros (Fleisch)': [0.3, 0.5],
+  'Rindergulasch': [1.2, 4.5],
+  'Frühstücksspeck (Bacon)': [0, 0.6],
+  'Kochschinken': [0, 0.5],
+  'Putenbrust-Aufschnitt': [0, 0],
+  'Salami': [0.1, 0],
+  'Leberwurst': [0.1, 0.2],
+  'Fleischwurst (Lyoner)': [0, 0.2],
+  'Wiener Würstchen': [0.3, 0.1],
+  'Bratwurst': [0.1, 0],
+  'Leberkäse': [0.1, 0],
+  'Currywurst mit Soße': [0.7, 8],
+  'Döner Kebab im Brot': [1.6, 1.1],
+  'Lachs, roh': [0, 0],
+  'Thunfisch im eigenen Saft (abgetropft)': [0, 0],
+  'Thunfisch in Öl (abgetropft)': [0, 0],
+  'Seelachs, roh': [0, 0],
+  'Kabeljau, roh': [0, 0],
+  'Garnelen, roh': [0, 0],
+  'Fischstäbchen': [0.9, 1.1],
+  'Matjesfilet': [0, 0],
+  'Makrele, geräuchert': [0, 0],
+  'Sushi (Maki)': [0.8, 0.4],
+  'Linsen, roh': [17.6, 1.3],
+  'Linsen, gekocht': [3, 0.4],
+  'Kichererbsen (Dose, abgetropft)': [9.8, 1.2],
+  'Kidneybohnen (Dose, abgetropft)': [11.2, 0.9],
+  'Weiße Bohnen (Dose, abgetropft)': [8.8, 0.8],
+  'Erbsen (TK)': [5.3, 5.4],
+  'Edamame (TK)': [4.2, 1.3],
+  'Tofu natur': [1.3, 0],
+  'Räuchertofu': [1.3, 0],
+  'Sojaschnetzel, trocken': [18.1, 13.5],
+  'Falafel': [7.5, 1.7],
+  'Hummus': [5.9, 0.7],
+  'Erdnussbutter': [7.4, 11.7],
+  'Erdnüsse, geröstet': [8.4, 4.9],
+  'Mandeln': [10, 3.6],
+  'Walnüsse': [4.6, 2.7],
+  'Haselnüsse': [7.6, 3.9],
+  'Cashewkerne': [3, 6.2],
+  'Pistazien': [16.3, 6.6],
+  'Nussmischung (Studentenfutter)': [6.2, 29.6],
+  'Chiasamen': [40.2, 0.5],
+  'Leinsamen': [22.7, 1.2],
+  'Sonnenblumenkerne': [5.8, 3.5],
+  'Kürbiskerne': [8.7, 1.3],
+  'Kokosraspeln': [14.8, 7.1],
+  'Apfel': [2.3, 10.5],
+  'Banane': [2, 13.9],
+  'Birne': [2.8, 10.1],
+  'Orange': [2.2, 8.8],
+  'Mandarine, Clementine': [1.7, 9.2],
+  'Kiwi': [3.9, 10.1],
+  'Erdbeeren': [2, 5.9],
+  'Heidelbeeren': [4.9, 9.7],
+  'Himbeeren': [4.7, 5.2],
+  'Weintrauben': [0.6, 15.5],
+  'Ananas': [1.4, 9.4],
+  'Mango': [1.7, 11],
+  'Wassermelone': [0.2, 6.7],
+  'Pfirsich, Nektarine': [1.7, 7],
+  'Kirschen': [1.9, 13.7],
+  'Pflaumen': [1.7, 8.1],
+  'Avocado': [4.1, 1.4],
+  'Apfelmus, ungesüßt': [1.1, 11.1],
+  'Rosinen': [5.4, 60.9],
+  'Datteln, getrocknet': [11.2, 78.9],
+  'Brokkoli': [3, 1.4],
+  'Blumenkohl': [2.9, 2.2],
+  'Paprika': [2.2, 6.2],
+  'Tomate': [1.3, 3.2],
+  'Gurke': [0.9, 2],
+  'Karotte (Möhre)': [2.9, 6.4],
+  'Zucchini': [1.1, 2],
+  'Aubergine': [1.4, 2.7],
+  'Spinat': [1.8, 0.8],
+  'Blattsalat (Kopfsalat, Eisberg, Feldsalat)': [1.8, 1.6],
+  'Rucola': [1.7, 0],
+  'Zwiebel': [1.4, 6],
+  'Champignons': [1.9, 0.2],
+  'Mais (Dose, abgetropft)': [3.6, 6.2],
+  'Grüne Bohnen': [1.9, 2.3],
+  'Kohlrabi': [1.5, 3.7],
+  'Rosenkohl': [4, 3.7],
+  'Weißkohl, Rotkohl': [3, 4.4],
+  'Sauerkraut': [2.1, 0.8],
+  'Spargel': [1.3, 1.1],
+  'Rote Bete, gekocht': [2.6, 10.4],
+  'Kürbis (Hokkaido)': [0.8, 4.6],
+  'Gemüsemischung (TK)': [2.9, 3.3],
+  'Oliven': [1.6, 0],
+  'Gewürzgurken': [0.9, 5.5],
+  'Speiseöl (Olivenöl, Rapsöl, Sonnenblumenöl)': [0, 0],
+  'Margarine': [0, 0],
+  'Mayonnaise': [0.1, 0.4],
+  'Ketchup': [1.8, 20.8],
+  'Senf': [4.5, 2.8],
+  'Pesto (Basilikum)': [2.1, 0.7],
+  'Passierte Tomaten (Passata)': [1.8, 3.6],
+  'Tomatensoße, fertig': [1.5, 5],
+  'Sojasoße': [1.1, 4.9],
+  'Balsamico-Essig': [0, 20],
+  'Honig': [0, 70.8],
+  'Marmelade, Konfitüre': [1.1, 56.3],
+  'Nuss-Nougat-Creme': [3.5, 53.1],
+  'Zucker': [0, 100],
+  'Ahornsirup': [0, 59.9],
+  'Vollmilchschokolade': [2.5, 51.4],
+  'Zartbitterschokolade 70 %': [10.1, 30],
+  'Gummibärchen': [1, 56.7],
+  'Butterkekse': [2.4, 27.1],
+  'Kartoffelchips': [4.8, 1.5],
+  'Salzstangen': [4.2, 2.4],
+  'Vanilleeis': [0.3, 18.1],
+  'Rührkuchen, Marmorkuchen': [2, 20.6],
+  'Käsekuchen': [1.3, 13.1],
+  'Müsliriegel': [6.1, 18.7],
+  'Proteinriegel': [6, 5],
+  'Orangensaft': [0.3, 8.5],
+  'Apfelsaft': [0.3, 9.6],
+  'Apfelschorle': [0.2, 5.6],
+  'Cola': [0, 10.3],
+  'Cola zero, Light-Getränke': [0, 0],
+  'Energy-Drink': [0, 11],
+  'Bier (Pils)': [0, 0.1],
+  'Weizenbier': [0, 0.1],
+  'Bier, alkoholfrei': [0, 2.4],
+  'Wein, trocken': [0, 0.7],
+  'Kaffee, schwarz': [0.3, 0],
+  'Cappuccino, Milchkaffee': [0.1, 4],
+  'Proteinpulver (Whey)': [0, 5],
+  'Proteinpulver, vegan': [5, 2],
+  'Wasser, Tee (ungesüßt)': [0, 0],
+  'Haferbrei (Porridge) mit Milch': [2.2, 4.2],
+  'Spaghetti Bolognese': [1.2, 1.6],
+  'Lasagne': [1.2, 3.1],
+  'Pizza Margherita': [1.9, 1.6],
+  'Pizza Salami': [1.7, 1.4],
+  'Hamburger': [1.7, 3.7],
+  'Cheeseburger': [1.2, 3.4],
+  'Linseneintopf': [5.6, 1.7],
+  'Kartoffelsalat mit Mayonnaise': [1.4, 1.1],
+  'Kartoffelsalat mit Essig und Öl': [1.6, 1.2],
+};
+
 // zusätzliche Suchbegriffe (Wortanfang des Namens genügt nicht immer, z. B. „Käse“ → Gouda)
 const FOOD_TAGS = [
   ['käse', ['Gouda', 'Emmentaler', 'Mozzarella', 'Mozzarella light', 'Parmesan', 'Feta (Schafskäse)', 'Frischkäse natur (Doppelrahm)']],
@@ -273,8 +504,31 @@ for (const [words, names] of FOOD_TAGS) for (const n of names) FOOD_TAG_MAP.set(
 const MEALS = { b: ['🌅', 'Frühstück'], l: ['☀️', 'Mittagessen'], d: ['🌙', 'Abendessen'], s: ['🍎', 'Snacks'] };
 
 const FOOD_BASE_LIST = FOOD_BASE.map(([name, kcal, p, c, f, pl, pg]) => (
-  { key: 'b:' + name, name, brand: '', per: [kcal, p, c, f], portion: pl ? { label: pl, g: pg } : null, src: 'base', tags: FOOD_TAG_MAP.get(name) || '' }));
+  { key: 'b:' + name, name, brand: '', per: [kcal, p, c, f, ...(FOOD_BASE_FS[name] || [null, null])], portion: pl ? { label: pl, g: pg } : null, src: 'base', tags: FOOD_TAG_MAP.get(name) || '' }));
 const FOOD_BASE_MAP = new Map(FOOD_BASE_LIST.map(f => [f.key, f]));
+// Bundeslebensmittelschlüssel (bls.js, über 7000 Durchschnittswerte, key 'bls:' + BLS-Code): erst bei Bedarf aufbereitet
+// Oberbegriffe je BLS-Hauptgruppe (1. Buchstabe des Codes) – damit „Obst“, „Fisch“, „Nudeln“ … auch passende Einträge finden
+const BLS_GROUP_TAGS = { B: 'brot', C: 'getreide', D: 'kuchen gebäck', E: 'nudeln pasta', F: 'obst', G: 'gemüse',
+  H: 'hülsenfrüchte nüsse', K: 'kartoffeln pilze', M: 'milchprodukte', N: 'getränke', P: 'alkohol', Q: 'fett öl',
+  R: 'gewürze', S: 'süßigkeiten', T: 'fisch', U: 'fleisch', V: 'fleisch geflügel', W: 'wurst aufschnitt', X: 'gericht', Y: 'gericht' };
+let foodBls = null;
+function foodBlsList() {
+  if (foodBls) return foodBls;
+  foodBls = { list: [], map: new Map() };
+  if (typeof BLS_DATA !== 'string') return foodBls;
+  for (const line of BLS_DATA.split('\n')) {
+    const [code, name, kcal, p, c, f, fib, sug] = line.split('|');
+    if (!name) continue;
+    const tags = (BLS_GROUP_TAGS[code[0]] || '') + (/Fett i\. Tr\./.test(name) ? ' käse' : '');
+    const it = { key: 'bls:' + code, name, brand: '', per: [+kcal, +p, +c, +f, +fib, +sug], portion: null, src: 'bls', tags };
+    foodBls.list.push(it);
+    foodBls.map.set(it.key, it);
+  }
+  return foodBls;
+}
+// fest eingebaut (Grundliste oder BLS): in data.foods nur { fav, last }
+const foodBuiltin = f => f.src === 'base' || f.src === 'bls';
+const FOOD_TEXT = new WeakMap();  // Suchtext je fest eingebautem Lebensmittel
 const foodCache = new Map();  // Treffer aus Open Food Facts, die noch nicht gemerkt sind
 
 let foodQuery = '';     // Suchtext beim Hinzufügen
@@ -285,7 +539,7 @@ let foodForm = null;    // Formular „Eigenes Lebensmittel“
 // Lebensmittel zu einem Schlüssel (Grundliste mit gemerkten Angaben wie Favorit, sonst gemerkt oder aus der Online-Suche)
 function foodGet(key) {
   const m = data.foods[key];
-  const b = FOOD_BASE_MAP.get(key);
+  const b = FOOD_BASE_MAP.get(key) || (String(key).startsWith('bls:') ? foodBlsList().map.get(key) : null);
   if (b) return { ...b, fav: !!(m && m.fav), last: m && m.last };
   return m || foodCache.get(key) || null;
 }
@@ -293,17 +547,37 @@ function foodGet(key) {
 // Als „zuletzt gegessen“ merken (Grundliste: nur Zeitpunkt und Favorit)
 function foodRemember(f, extra = {}) {
   const old = data.foods[f.key] || {};
-  data.foods[f.key] = f.src === 'base'
+  data.foods[f.key] = foodBuiltin(f)
     ? { fav: !!old.fav, last: Date.now(), ...extra }
     : { key: f.key, name: f.name, brand: f.brand || '', per: f.per, portion: f.portion || null, code: f.code || null,
         src: f.src, fav: !!old.fav, last: Date.now(), ...extra };
 }
 
 const foodVal = (per, g) => per.map(v => (v || 0) * g / 100);
+// Ballaststoffe und Zucker je 100 g eines Eintrags; ältere Einträge aus den festen Listen (Grundliste, BLS) bekommen sie
+// aus der Liste nachgereicht. null = unbekannt (z. B. ältere Markenprodukte, eigene Lebensmittel ohne Angabe)
+function foodFS(e) {
+  const per = e.per || [];
+  if (per[4] != null || per[5] != null) return [per[4] || 0, per[5] || 0];
+  if (/^(b|bls):/.test(e.key || '')) {
+    const f = foodGet(e.key);
+    if (f && f.per[4] != null) return [f.per[4], f.per[5] || 0];
+  }
+  return null;
+}
+// Summe: kcal und Makros; dazu Ballaststoffe/Zucker der Einträge mit Angabe und miss = Einträge ohne (ohne „Aufgefüllt“)
 function foodTotals(list) {
   const t = [0, 0, 0, 0];
-  for (const e of list) foodVal(e.per, e.g).forEach((v, i) => { t[i] += v; });
-  return { kcal: t[0], p: t[1], c: t[2], f: t[3] };
+  let fib = 0, sug = 0, miss = 0;
+  for (const e of list) {
+    foodVal(e.per.slice(0, 4), e.g).forEach((v, i) => { t[i] += v; });
+    if (e.key === FOOD_FILL) continue;
+    const fs = foodFS(e);
+    if (!fs) { miss++; continue; }
+    fib += fs[0] * e.g / 100;
+    sug += fs[1] * e.g / 100;
+  }
+  return { kcal: t[0], p: t[1], c: t[2], f: t[3], fib, sug, miss };
 }
 const foodOn = date => data.foodLog.filter(e => e.date === date);
 
@@ -439,6 +713,27 @@ function foodSumHtml(t, c) {
     <p class="hint nut-small">Richte im Reiter „Ernährung“ deine Phase und Angaben ein, dann siehst du hier dein Tagesziel.</p>`;
 }
 
+// Ballaststoffe und Zucker: nur zum Mitverfolgen – keine Tagesziele, aufklappbar ein paar grobe Richtwerte
+function foodFsHtml(t, c) {
+  const kcal = c && c.kcal ? Math.round(c.kcal / 100) * 100 : null;
+  const miss = t.miss ? `<p class="hint nut-small">${t.miss === 1 ? '1 Eintrag hat' : `${t.miss} Einträge haben`} keine Angabe dazu
+    (z. B. ältere Markenprodukte oder eigene Lebensmittel) und ${t.miss === 1 ? 'zählt' : 'zählen'} hier nicht mit.</p>` : '';
+  return `<div class="food-fs"><span>🌾 Ballaststoffe <b>${Math.round(t.fib)} g</b></span><span>🍬 Zucker <b>${Math.round(t.sug)} g</b></span></div>
+    ${miss}
+    <details class="prog-help food-fs-help"><summary>ⓘ Grobe Richtwerte</summary>
+      <p><b>Ballaststoffe:</b> Empfohlen sind mindestens 30 g am Tag; wer viel isst, orientiert sich grob an 10 g je 1.000 kcal${kcal > 3000
+        ? ` (bei deinen rund ${fmtNum(kcal)} kcal also etwa ${Math.round(kcal / 100)} g)` : ''}. Viele kommen nur auf
+        etwa 20 g. Gute Quellen: Vollkorn, Haferflocken, Hülsenfrüchte, Gemüse, Obst, Nüsse und Samen. Mehr ist meist gut –
+        langsam steigern und genug trinken, sonst kann es anfangs zwicken.</p>
+      <p><b>Zucker:</b> Gezählt ist der gesamte Zucker, auch der aus Obst, Gemüse und Milch. Die Empfehlung, höchstens etwa 10 %
+        der Kalorien als Zucker zu essen${kcal ? ` (bei dir rund ${Math.round(kcal / 40)} g)` : ' (bei 2.000 kcal rund 50 g)'},
+        gilt nur für <i>zugesetzten</i> Zucker – dazu zählen auch Honig, Sirup und Fruchtsaft. Den kann die App nicht getrennt
+        ausweisen. Faustregel: Kommt der Zucker vor allem aus Obst und Milchprodukten, ist das unbedenklich; aus Süßigkeiten,
+        Limo und Saft lohnt es sich, ihn im Blick zu behalten.</p>
+      <p class="hint">Das sind keine Ziele, nur Anhaltspunkte. Die Werte sind Durchschnittswerte.</p>
+    </details>`;
+}
+
 /* ----- Tagesansicht ----- */
 
 function renderFood(p) {
@@ -451,7 +746,7 @@ function renderFood(p) {
       <b>${foodDayLabel(date)}</b>
       <button class="icon-btn" data-action="food-day" data-d="1" ${date >= todayISO() ? 'disabled' : ''} aria-label="Nächster Tag">›</button>
     </div>
-    <div class="card nut-intake">${foodSumHtml(t, foodGoal(date))}</div>
+    <div class="card nut-intake">${foodSumHtml(t, foodGoal(date))}${list.some(e => e.key !== FOOD_FILL) ? foodFsHtml(t, foodGoal(date)) : ''}</div>
     ${date === todayISO() ? foodOpenCard() : ''}`;
   const planDay = typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanDay(date) : null;
   const planMeals = (planDay && planDay.meals) || {};
@@ -494,19 +789,58 @@ function foodHit(f) {
       <span class="lib-txt">${f.fav ? '⭐ ' : ''}${esc(f.name)}<small>${f.brand ? esc(f.brand) + ' · ' : ''}${foodKcal(f.per[0])} kcal · Eiweiß ${foodNum(f.per[1])} g je 100 g</small></span></button>`;
 }
 
+// Suchtext: Name, Name ohne Leerzeichen (so findet „Hähnchenbrust“ auch „Hähnchen Brust, ohne Haut, roh“ aus dem BLS),
+// Zusatzbegriffe und alles zusammen (mit Marke)
+function foodText(f) {
+  const name = norm(f.name), compact = name.replace(/\s+/g, ''), tags = norm(f.tags || '');
+  return { name, compact, tags, text: name + ' ' + norm(f.brand || '') + ' ' + tags + ' ' + name.replace(/[\s,/()-]+/g, '') };
+}
+// Suchwort und seine Einzahl-Formen (der BLS nennt „Linse“, „Tomate“, „Kartoffel“ – gesucht wird oft „Linsen“ …)
+function foodStems(w) {
+  const v = [w];
+  if (w.length >= 5 && w.endsWith('n')) v.push(w.slice(0, -1));
+  if (w.length >= 6 && w.endsWith('en')) v.push(w.slice(0, -2));
+  return v;
+}
+const reEsc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Wie gut passt das (erste) Suchwort? Kleiner = besser. Im Deutschen steckt die Bedeutung am Wortende:
+// „Butterkäse“ ist ein Käse, „Käsekuchen“ nicht – daher Wortende vor zusammengesetztem Wortanfang.
+function foodWordScore(t, w, base) {
+  const letter = ch => !!ch && /[a-z]/.test(ch);
+  if (t.name.startsWith(w) && !letter(t.name[w.length])) return 0;        // „Apfel“, „Apfel roh“
+  if (t.compact.startsWith(w) && !letter(t.compact[w.length])) return 0.1;  // „Hafer Flocken“ für „Haferflocken“
+  if (base && new RegExp('(^|\\s)' + reEsc(w)).test(t.tags)) return 0.3;    // Zusatzbegriffe der Grundliste („Käse“ → Gouda)
+  if (new RegExp(reEsc(w) + '($|[^a-z])').test(t.name)) return 0.5;         // Wortende: „Butterkäse“, „Rind Hackfleisch“
+  if (t.name.startsWith(w)) return 0.6;                                    // zusammengesetzt: „Apfelsaft“
+  if (new RegExp('(^|\\s)' + reEsc(w)).test(t.tags)) return 0.65;         // Oberbegriff der BLS-Gruppe
+  if (new RegExp('(^|[\\s(,/-])' + reEsc(w)).test(t.name)) return 0.8;    // anderes Wort beginnt so
+  return 2;
+}
+// Reihenfolge: eigene/gemerkte und Grundliste vor BLS; Favoriten und zuletzt Gegessenes nach oben;
+// im BLS frische vor tiefgefrorenen Varianten; dann kürzere Namen zuerst
 function foodSearch(q) {
-  const words = norm(q).split(/\s+/).filter(Boolean);
-  const own = Object.keys(data.foods).map(foodGet).filter(f => f && f.src !== 'base');
-  const all = [...own, ...FOOD_BASE_LIST.map(f => foodGet(f.key))];
+  const words = norm(q).split(/\s+/).filter(Boolean).map(foodStems);
+  if (!words.length) return [];
+  const full = norm(q).trim().replace(/\s+/g, ' ');
   const hits = [];
-  for (const f of all) {
-    const name = norm(f.name), text = name + ' ' + norm(f.brand || '') + ' ' + norm(f.tags || '');
-    if (!words.every(w => text.includes(w))) continue;
-    const score = (name.startsWith(words[0]) ? 0 : new RegExp('(^|[\\s(,-])' + words[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(name) ? 1 : 2)
-      - (f.last ? 0.5 : 0) - (f.fav ? 0.5 : 0);
-    hits.push([score, f]);
+  const check = (f, cached) => {
+    let t = cached ? FOOD_TEXT.get(f) : null;
+    if (!t) { t = foodText(f); if (cached) FOOD_TEXT.set(f, t); }
+    if (!words.every(v => v.some(w => t.text.includes(w)))) return;
+    const g = cached ? foodGet(f.key) : f;
+    const bls = f.src === 'bls';
+    const ws = Math.min(...words[0].filter(w => t.text.includes(w)).map(w => foodWordScore(t, w, !bls)));
+    const score = (t.name === full ? -0.3 : 0) + ws - (g.last ? 0.5 : 0) - (g.fav ? 0.5 : 0)
+      + (bls ? 0.6 + (/tiefgefroren/.test(t.name) ? 0.3 : 0) : 0);
+    hits.push([score, g]);
+  };
+  for (const key of Object.keys(data.foods)) {
+    const f = foodGet(key);
+    if (f && !foodBuiltin(f)) check(f, false);
   }
-  return hits.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length).slice(0, 40).map(x => x[1]);
+  for (const f of FOOD_BASE_LIST) check(f, true);
+  for (const f of foodBlsList().list) check(f, true);
+  return hits.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length).slice(0, 50).map(x => x[1]);
 }
 
 function foodMealRow(m) {
@@ -528,14 +862,16 @@ function foodResults() {
     const favs = known.filter(f => f.fav).sort((a, b) => a.name.localeCompare(b.name, 'de'));
     const recent = known.filter(f => !f.fav).sort((a, b) => b.last - a.last).slice(0, 25);
     if (!favs.length && !recent.length) {
-      return mealsHtml + `<p class="hint">Tipp den Namen ein, z. B. „Haferflocken“ oder „Skyr“. Die App sucht zuerst in ihrer Grundliste mit
-        über 200 Lebensmitteln, auf Wunsch auch online in Open Food Facts (viele Markenprodukte). Oder scanne den Barcode auf der Verpackung.</p>`;
+      return mealsHtml + `<p class="hint">Tipp den Namen ein, z. B. „Haferflocken“ oder „Skyr“. Die App sucht in über 7.000 Lebensmitteln
+        mit Durchschnittswerten (eigene Grundliste und Bundeslebensmittelschlüssel), auf Wunsch auch online in Open Food Facts
+        (viele Markenprodukte). Oder scanne den Barcode auf der Verpackung.</p>
+        <p class="hint nut-small">Quelle der Durchschnittswerte u. a.: Max Rubner-Institut, Bundeslebensmittelschlüssel (BLS) 4.0.</p>`;
     }
     return mealsHtml + (favs.length ? `<p class="food-sec">⭐ Favoriten</p>${favs.map(foodHit).join('')}` : '')
       + (recent.length ? `<p class="food-sec">🕘 Zuletzt gegessen</p>${recent.map(foodHit).join('')}` : '');
   }
   const hits = foodSearch(q);
-  let h = mealsHtml + (hits.length ? hits.map(foodHit).join('') : `<p class="hint">„${esc(q)}“ ist nicht in der Grundliste.</p>`);
+  let h = mealsHtml + (hits.length ? hits.map(foodHit).join('') : `<p class="hint">„${esc(q)}“ ist nicht in der Lebensmittelliste. Versuch es mit einem anderen Wort, z. B. nur „Brot“ statt „Dinkelvollkornbrot“.</p>`);
   const on = foodOnline && foodOnline.q === q ? foodOnline : null;
   h += '<p class="food-sec">🌐 Open Food Facts (online)</p>';
   if (!on) {
@@ -599,10 +935,12 @@ function offFood(p) {
   const name = String(p.product_name_de || p.product_name || p.generic_name || '').trim();
   const brands = Array.isArray(p.brands) ? p.brands.join(',') : String(p.brands || '');
   const r1 = v => round1(Number(v) || 0);
+  const opt = v => (v == null || v === '' || isNaN(Number(v)) ? null : round1(Number(v)));  // fehlt = unbekannt
   const sq = parseFloat(p.serving_quantity);
   return {
     key: 'off:' + p.code, code: String(p.code), name, brand: brands.split(',')[0].trim(), src: 'off',
-    per: [kcal == null ? null : Math.round(kcal), r1(n.proteins_100g), r1(n.carbohydrates_100g), r1(n.fat_100g)],
+    per: [kcal == null ? null : Math.round(kcal), r1(n.proteins_100g), r1(n.carbohydrates_100g), r1(n.fat_100g),
+      opt(n.fiber_100g), opt(n.sugars_100g)],
     portion: sq > 0 && sq < 2000 ? { label: '1 Portion', g: Math.round(sq) } : null,
   };
 }
@@ -737,9 +1075,11 @@ async function foodScanStart() {
 /* ----- Menge ----- */
 
 function foodAmtSum(per, g) {
-  const [kcal, p, c, f] = foodVal(per, g || 0);
+  const [kcal, p, c, f] = foodVal(per.slice(0, 4), g || 0);
+  const fs = per[4] != null || per[5] != null;
   return `<div class="nut-goal-row food-sum"><span>Kalorien<b>${foodKcal(kcal)}</b></span><span>Eiweiß<b>${foodNum(p)} g</b></span>
-    <span>Kohlenh.<b>${foodNum(c)} g</b></span><span>Fett<b>${foodNum(f)} g</b></span></div>`;
+    <span>Kohlenh.<b>${foodNum(c)} g</b></span><span>Fett<b>${foodNum(f)} g</b></span></div>
+    ${fs ? `<p class="hint nut-small food-fs-amt">🌾 Ballaststoffe ${foodNum((per[4] || 0) * (g || 0) / 100)} g · 🍬 Zucker ${foodNum((per[5] || 0) * (g || 0) / 100)} g</p>` : ''}`;
 }
 
 // Lebensmittel für die Menge-Seite: aus dem Eintrag (params.id) oder dem Schlüssel (params.key)
@@ -747,7 +1087,9 @@ function foodAmtFood(p) {
   const e = p.id && data.foodLog.find(x => x.id === p.id);
   if (e) {
     const f = foodGet(e.key);
-    return { e, f: { ...(f || { key: e.key, src: 'own', portion: null }), name: e.name, brand: e.brand, per: e.per } };
+    const fs = foodFS(e);
+    return { e, f: { ...(f || { key: e.key, src: 'own', portion: null }), name: e.name, brand: e.brand,
+      per: [...e.per.slice(0, 4), ...(fs || [null, null])] } };
   }
   return { e: null, f: p.key ? foodGet(p.key) : null };
 }
@@ -762,11 +1104,13 @@ function renderFoodAmt(p) {
   const g = parseNum(foodAmt.g);
   const chips = [...(f.portion ? [[`${f.portion.label} (${f.portion.g} g)`, f.portion.g], [`2 × (${f.portion.g * 2} g)`, f.portion.g * 2]] : []),
     ...[50, 100, 150, 200, 250].filter(x => !f.portion || (x !== f.portion.g && x !== f.portion.g * 2)).map(x => [`${x} g`, x])];
-  const [kcal, pr, ca, fa] = f.per;
-  const src = f.src === 'off' ? ' · aus Open Food Facts' : f.src === 'base' ? ' · Durchschnittswert' : ' · eigenes Lebensmittel';
+  const [kcal, pr, ca, fa, fib, sug] = f.per;
+  const fsTxt = fib != null || sug != null ? ` · Ballaststoffe ${foodNum(fib || 0)} g · Zucker ${foodNum(sug || 0)} g` : '';
+  const src = f.src === 'off' ? ' · aus Open Food Facts' : f.src === 'base' ? ' · Durchschnittswert'
+    : f.src === 'bls' ? ' · Durchschnittswert aus dem Bundeslebensmittelschlüssel (Max Rubner-Institut)' : ' · eigenes Lebensmittel';
   return `<div class="card food-amt">
       <p class="food-amt-name"><b>${esc(f.name)}</b>${f.brand ? `<small>${esc(f.brand)}</small>` : ''}</p>
-      <p class="hint nut-small">je 100 g: ${foodKcal(kcal)} kcal · Eiweiß ${foodNum(pr)} g · Kohlenhydrate ${foodNum(ca)} g · Fett ${foodNum(fa)} g${src}</p>
+      <p class="hint nut-small">je 100 g: ${foodKcal(kcal)} kcal · Eiweiß ${foodNum(pr)} g · Kohlenhydrate ${foodNum(ca)} g · Fett ${foodNum(fa)} g${fsTxt}${src}</p>
       <label class="row"><span>Menge in Gramm</span>
         <input class="inp kg" id="food-g" type="text" inputmode="decimal" autocomplete="off" data-field="food-g" value="${esc(foodAmt.g)}"></label>
       <div class="variants food-chips">${chips.map(([l, v]) => `<button class="vchip ${g === v ? 'on' : ''}" data-action="food-g-set" data-g="${v}">${l}</button>`).join('')}</div>
@@ -777,7 +1121,7 @@ function renderFoodAmt(p) {
     <button class="btn primary" data-action="food-save">${e ? '✔ Speichern' : '＋ Hinzufügen'}</button>
     <div class="row food-amt-more">
       <button class="btn" data-action="food-fav">${f.fav ? '⭐ Favorit' : '☆ Als Favorit merken'}</button>
-      ${f.src !== 'base' ? '<button class="btn" data-action="food-own-edit">✎ Werte ändern</button>' : ''}
+      ${!foodBuiltin(f) ? '<button class="btn" data-action="food-own-edit">✎ Werte ändern</button>' : ''}
     </div>
     ${e ? `<button class="btn danger" data-action="food-del" data-id="${e.id}">Aus ${MEALS[e.meal][1]} entfernen</button>` : ''}`;
 }
@@ -788,7 +1132,7 @@ function foodFormFrom(f) {
   const s = v => v == null ? '' : fmtNum(v);
   const per = f.per || [];
   return { key: f.key || null, name: f.name || '', brand: f.brand || '', code: f.code || null,
-    kcal: s(per[0]), p: s(per[1]), c: s(per[2]), f: s(per[3]),
+    kcal: s(per[0]), p: s(per[1]), c: s(per[2]), f: s(per[3]), fib: s(per[4]), sug: s(per[5]),
     pl: f.portion ? f.portion.label : '', pg: f.portion ? s(f.portion.g) : '' };
 }
 
@@ -805,6 +1149,8 @@ function renderFoodOwn() {
       <label class="row"><span>Eiweiß (g)</span>${inp('p', 'g')}</label>
       <label class="row"><span>Kohlenhydrate (g)</span>${inp('c', 'g')}</label>
       <label class="row"><span>Fett (g)</span>${inp('f', 'g')}</label>
+      <label class="row"><span>Ballaststoffe (g) <small class="hint">freiwillig</small></span>${inp('fib', 'g')}</label>
+      <label class="row"><span>davon Zucker (g) <small class="hint">freiwillig</small></span>${inp('sug', 'g')}</label>
       <p class="food-sec">Portion <small>(freiwillig)</small></p>
       <label class="row"><span>Bezeichnung</span><input class="inp food-pl" type="text" data-field="food-form" data-k="pl" autocomplete="off" value="${esc(f.pl)}" placeholder="z. B. 1 Scheibe"></label>
       <label class="row"><span>Gramm</span>${inp('pg', 'g')}</label>
@@ -971,9 +1317,10 @@ Object.assign(actions, {
     const f = foodForm;
     const num = k => (String(f[k]).trim() === '' ? null : parseNum(f[k]));
     const per = [num('kcal'), num('p'), num('c'), num('f')];
+    const fs = [num('fib'), num('sug')];
     if (!f.name.trim()) { alert('Bitte einen Namen eintragen.'); return; }
-    if (per.some(v => v != null && (v < 0 || v > 1000)) || per.slice(1).some(v => v != null && v > 100)) {
-      alert('Bitte die Werte pro 100 g eintragen: Kalorien bis 1.000, Eiweiß, Kohlenhydrate und Fett jeweils bis 100 g.');
+    if (per.some(v => v != null && (v < 0 || v > 1000)) || [...per.slice(1), ...fs].some(v => v != null && (v < 0 || v > 100))) {
+      alert('Bitte die Werte pro 100 g eintragen: Kalorien bis 1.000, Eiweiß, Kohlenhydrate, Fett, Ballaststoffe und Zucker jeweils bis 100 g.');
       return;
     }
     if (per[0] == null && per.slice(1).every(v => v == null)) { alert('Bitte mindestens die Kalorien oder die Makros eintragen.'); return; }
@@ -982,7 +1329,7 @@ Object.assign(actions, {
     const old = f.key ? foodGet(f.key) : null;
     const food = {
       key: f.key || 'own:' + uid(), name: f.name.trim(), brand: f.brand.trim(), code: f.code,
-      src: old ? old.src : 'own', per: per.map(v => round1(v || 0)),
+      src: old ? old.src : 'own', per: [...per.map(v => round1(v || 0)), ...fs.map(v => (v == null ? null : round1(v)))],
       portion: pg > 0 && pg < 5000 ? { label: f.pl.trim() || '1 Portion', g: round1(pg) } : null,
     };
     foodRemember(food, { fav: old ? !!old.fav : false });

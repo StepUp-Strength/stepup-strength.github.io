@@ -513,9 +513,9 @@ const repFactor = n => Math.max(0.5, 1 - 0.025 * (n - 10));
 
 const DUMBBELL = /kurzhantel|konzentrationscurls|arnold press|goblet/;
 const stepFor = ex => ex.step != null ? ex.step : (DUMBBELL.test(norm(ex.name)) ? 2 : 2.5);
-const STEP_OPTIONS = [1.25, 2, 2.5, 5];
+const STEP_OPTIONS = [1.25, 2, 2.5, 5, 10];
 const MAX_UNKNOWN_HINT = 'Du weißt dein Max. bei 10 Wdh. nicht? Kein Problem – lass das Feld leer und taste dich mit den ersten Sätzen an ein Gewicht heran, das sich passend anfühlt. Trag ein, was du geschafft hast (Gewicht, Wdh. und Tank): Die App errechnet daraus den Wert und die weitere Steigerung.';  // wählbare Gewichtssprünge pro Übung
-const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben) – gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen.';
+const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben) – gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen, 10 kg zu Maschinen mit großen Steckgewichten (z. B. Beinpresse).';
 
 const round2 = x => Math.round(x * 100) / 100;
 const roundTo = (w, step, fn = Math.round) => round2(fn(w / step) * step);
@@ -2898,7 +2898,7 @@ function renderPlan() {
         <p class="per-week-title">✋ Eigener Plan – ohne Steigerung durch die App</p>
         <p class="hint">Keine Zyklen, keine Deload-Woche, keine Vorschläge für mehr Gewicht, Wiederholungen oder Sätze. Im Training stehen immer deine Werte vom letzten Mal – beim ersten Mal Sätze × Wdh. und Startgewicht aus deinem Plan.</p>
         <button class="btn outline" data-action="plan-own-off">📈 Doch die Steigerung der App nutzen</button>
-      </div>`;
+      </div>${overloadHtml(true)}`;
   }
   const perWeek = active.perWeek || 1;
   // Nur bei Plänen, deren Tage 2× pro Woche laufen: kurzer Hinweis (festgelegt beim Erstellen des Plans)
@@ -2915,8 +2915,39 @@ function renderPlan() {
         return list.length ? `Woche 1: ${esc(wk(1))} – Woche 2: ${esc(wk(2))} …` : '';
       })()} Kommt ein Tag 2× in einer Woche dran, liegt das 2. Training nie über dem Plan des 1.</p>
     </div>` : ''}
+    <h2>Steigerung</h2>${overloadHtml()}
     ${periodCard(c, active)}`;
   return h;
+}
+
+// Aufklappbare Erklärung „Progressive Overload“ – own = eigener Plan (die App steigert nicht selbst)
+function overloadHtml(own = false) {
+  return `<details class="card lib-guide overload"><summary>📈 Progressive Overload – das Prinzip dahinter</summary>
+    <p><b>Progressive Overload</b> heißt „schrittweise steigende Belastung“ und ist <b>das</b> Grundprinzip für Kraft- und
+      Muskelaufbau: Dein Körper wird nur stärker, wenn er etwas mehr leisten muss, als er gewohnt ist.</p>
+    <h3>Warum das funktioniert</h3>
+    <p>Ein Training, das dich ein Stück über das Gewohnte hinaus fordert, ist für den Körper ein Signal: „Das reicht noch nicht.“
+      In der Erholung danach passt er sich an – Muskeln, Sehnen und Knochen werden kräftiger, damit dieselbe Belastung beim nächsten
+      Mal leichter fällt. Bleibt das Training immer gleich, hat er keinen Grund mehr, sich anzupassen, und der Fortschritt bleibt stehen.
+      Deshalb muss die Anforderung über die Wochen langsam mitwachsen.</p>
+    <h3>Womit sich steigern lässt</h3>
+    <ul><li><b>Wiederholungen:</b> mit demselben Gewicht ein, zwei Wiederholungen mehr.</li>
+      <li><b>Gewicht:</b> sind die Wiederholungen geschafft, geht es eine kleine Stufe schwerer – dafür wieder mit etwas weniger Wiederholungen.</li>
+      <li><b>Sätze:</b> von Woche zu Woche kommen Sätze dazu (Volumen).</li>
+      <li><b>Anstrengung:</b> die Sätze werden etwas näher an deine Grenze gebracht – es bleibt weniger im Tank.</li></ul>
+    <p>Beispiel: 40 kg × 10 → 40 kg × 11 → 40 kg × 12 → 42,5 kg × 10 → …</p>
+    <h3>Worauf es ankommt</h3>
+    <ul><li><b>Kleine Schritte:</b> nicht jedes Mal alles auf einmal – lieber langsam und dafür lange steigern.</li>
+      <li><b>Saubere Technik zuerst:</b> mehr Gewicht zählt nur, wenn die Ausführung gleich gut bleibt.</li>
+      <li><b>Erholung gehört dazu:</b> stärker wirst du in der Pause, nicht im Training. Deshalb gibt es die leichte Deload-Woche.</li>
+      <li><b>Nicht jede Einheit ist ein Rekord:</b> Schlechter Schlaf oder Stress drücken die Leistung – entscheidend ist der Trend über Wochen.</li></ul>
+    <h3>${own ? 'Bei deinem eigenen Plan' : 'So macht es die App'}</h3>
+    <p>${own ? 'Die App steigert hier nicht selbst – im Training stehen deine Werte vom letzten Mal. Das Prinzip gilt trotzdem: Steigere selbst, '
+        + 'z. B. erst die Wiederholungen bis zum oberen Ende deines Bereichs und dann das Gewicht um eine kleine Stufe.'
+      : 'Sie übernimmt das für dich: Hast du dein Ziel geschafft, schlägt sie beim nächsten Training etwas mehr Wiederholungen oder Gewicht vor. '
+        + 'Im Zyklus kommen Woche für Woche Sätze dazu, und die Sätze werden etwas fordernder – bis zur Deload-Woche. Der nächste Zyklus '
+        + 'startet dann auf etwas höherem Niveau. Um wie viel kg das Gewicht steigt, stellst du pro Übung ein (1,25 bis 10 kg).'}</p>
+  </details>`;
 }
 
 // Standard-Zykluslänge ändern (Regler): gilt ab sofort, auch für den laufenden Zyklus (seine Anpassung bleibt)
@@ -3269,7 +3300,7 @@ function renderDay({ id }) {
   });
   h += `${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 kg. ${STEP_HINT}`
+    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
       : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
@@ -4285,7 +4316,7 @@ function knownMax10(name) {
   return last && last.result && last.result.max10 != null ? last.result.max10 : null;
 }
 
-// Gewichtssprung der Übung im Training: kleiner Knopf, aufgeklappt die Auswahl 1,25 / 2 / 2,5 / 5 kg
+// Gewichtssprung der Übung im Training: kleiner Knopf, aufgeklappt die Auswahl 1,25 / 2 / 2,5 / 5 / 10 kg
 const stepChip = (en, ei) => `<button class="step-chip" data-action="tr-step-open" data-ei="${ei}" aria-expanded="${!!en.stepOpen}">Steigerung:
     <b>${fmtNum(en.target.step || 2.5)} kg</b> <span aria-hidden="true">✎</span></button>`;
 function stepPick(en, ei) {

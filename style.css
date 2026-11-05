@@ -1454,6 +1454,8 @@ div.last { margin: 0 0 12px; font-size: 15px; color: var(--muted); }
 .step-pick { margin: 0 0 10px; }
 .step-pick .hint { margin: 6px 0 0; font-size: 13px; }
 .step-pick .vchip, .variants.plan .vchip[data-action="set-step"] { white-space: nowrap; padding-left: 10px; padding-right: 10px; }
+/* 5 Stufen (1,25 bis 10 kg) in einer Reihe */
+.step-pick .vchip, .variants.plan .vchip[data-action="set-step"] { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; font-size: 14px; }
 .max-row { margin: 0 0 8px; }
 .max-row span { font-size: 15px; color: var(--muted); }
 .rep-max-hint { margin: 4px 0 8px; font-size: 14px; }
@@ -2347,3 +2349,9 @@ body.touring { overflow: hidden; }
 .wiz-weeks { margin-top: 6px; }
 .wiz-weeks .icon-btn { width: 52px; height: 52px; font-size: 28px; border-radius: 14px; background: var(--fill); }
 .wiz-weeks span { flex: 1; text-align: center; }
+
+/* Ernährungstagebuch: Ballaststoffe und Zucker (ohne Ziel) */
+.food-fs { display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 2px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 15px; color: var(--muted); }
+.food-fs b { color: var(--text); margin-left: 4px; }
+.food-fs-help { margin-top: 6px; }
+.food-fs-amt { margin: 8px 0 0; }
