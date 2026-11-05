@@ -735,6 +735,7 @@ function renderWizMode() {
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🧭</span><h2>Wie möchtest du deinen Plan erstellen?</h2></div>
       <p class="hint wiz-q-explain">Die App kann einen Plan für dich zusammenstellen – oder du übernimmst einfach einen Plan, den du schon hast.</p>
       ${opt('app', '📈', 'Automatisch erstellter Plan', 'Die App erstellt mit deiner Hilfe automatisiert einen Plan, der auf dich abgestimmt ist – den du aber später immer weiter für dich komplett individualisieren kannst. Im Training schlägt sie dir passende Steigerungen vor, in Zyklen mit leichten Deload-Wochen.')}
+      ${opt('import', '📄', 'Plan aus Excel / Google Sheets', 'Dein Plan steht schon in einer Tabelle, z. B. vom Trainer? Die App liest Tage, Übungen, Sätze, Wiederholungen und Gewichte ein – wahlweise mit oder ohne ihre Steigerung.')}
       ${opt('own', '✍️', 'Eigenen Plan übernehmen', 'Du hast schon einen Plan? Trag deine Tage und Übungen mit Sätzen × Wdh. ein. Die App macht keine Steigerungsvorschläge – im Training stehen immer deine Werte vom letzten Mal.')}
     </div>${navRow(wizPrev(), null)}`;
 }
@@ -997,8 +998,6 @@ function renderWizInt() {
 function renderWizDeload() {
   const opt = (m, title, text) => `<button class="split-opt freq-opt ${wiz.deload === m ? 'on' : ''}" data-action="wiz-deload" data-m="${m}">
       <b>${title}</b><small>${text}</small></button>`;
-  const wk = (n, title, text) => `<button class="split-opt freq-opt ${wiz.weeks === n ? 'on' : ''}" data-action="wiz-weeks" data-n="${n}">
-      <b>${title}</b><small>${text}</small></button>`;
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🔄</span><h2>Wie lang soll ein Zyklus sein?</h2></div>
       <p class="hint wiz-q-explain">Dein Training läuft in <b>Zyklen</b>. Ein Zyklus beginnt mit der <b>Intro-Woche</b>: Du steigst
@@ -1007,10 +1006,16 @@ function renderWizDeload() {
         danach startet der nächste Zyklus wieder mit der Intro-Woche – auf etwas höherem Niveau als zuvor.<br><br>
         Eine Woche ist dabei ein <b>Durchlauf</b>: geschafft, sobald jeder Trainingstag einmal dran war – egal, ob du dafür 6, 7 oder
         9 Tage brauchst.<br><br>
-        <b>4 Trainingswochen + 1 Deload-Woche</b> sind der typische Zyklus: lang genug, um sich spürbar zu steigern, und kurz genug,
-        dass sich nicht zu viel Ermüdung ansammelt. Du kannst das aber jederzeit anpassen – auch später noch im Plan-Reiter.</p>
-      ${wk(4, '4 Trainingswochen + Deload (empfohlen)', 'Intro + 3 Aufbauwochen, dann die Deload-Woche. Der bewährte Standard – passt für die allermeisten.')}
-      ${wk(5, '5 Trainingswochen + Deload', 'Intro + 4 Aufbauwochen. Eine Aufbauwoche mehr, bevor du dich erholst – für Erfahrene, die sich gut erholen und länger am Stück steigern möchten. Die 5. Woche übernimmt Volumen und Tank der 4. Woche.')}
+        <b>4–5 Trainingswochen + 1 Deload-Woche</b> sind der gängige Zyklus: lang genug, um sich spürbar zu steigern, und kurz genug,
+        dass sich nicht zu viel Ermüdung ansammelt. Du kannst das jederzeit anpassen – auch später noch im Trainings-Reiter.</p>
+      <div class="row cyc-adj-row wiz-weeks">
+        <button class="icon-btn" data-action="wiz-weeks" data-n="${wiz.weeks - 1}" ${wiz.weeks <= 4 ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
+        <span><b>${wiz.weeks} Trainingswochen</b> + Deload<small>${cycleLenInfo(wiz.weeks).tag}</small></span>
+        <button class="icon-btn" data-action="wiz-weeks" data-n="${wiz.weeks + 1}" ${wiz.weeks >= CYCLE_MAX ? 'disabled' : ''} aria-label="Eine Woche länger">+</button>
+      </div>
+      <p class="hint">${cycleLenInfo(wiz.weeks).text}</p>
+      <p class="hint"><b>Überblick:</b> 4–5 Wochen = gängig · 6–8 Wochen = länger, dafür kleinere Steigerung von Woche zu Woche ·
+        9–${CYCLE_MAX} Wochen = sehr langer Zyklus. Mit − und + stellst du die Länge ein.</p>
     </div>
     <div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">😮‍💨</span><h2>Wie soll dein Deload ablaufen?</h2></div>
@@ -1373,7 +1378,7 @@ Object.assign(actions, {
   'wiz-swap-cancel': () => { wiz.swapOpen = null; render(); },
   'wiz-swap-pick': el => wizSwap(el.dataset.name),
   'wiz-swap-ok': () => wizSwap($view.querySelector('[data-field="wiz-swap-name"]').value),
-  'wiz-weeks': el => { wiz.weeks = Number(el.dataset.n); render(); },
+  'wiz-weeks': el => { wiz.weeks = Math.min(CYCLE_MAX, Math.max(4, Number(el.dataset.n))); render(); },
   'wiz-deload': el => { wiz.deload = el.dataset.m; render(); },
   'wiz-int': el => { wiz.intMode = el.dataset.m; render(); },
   // 1× / 2× pro Woche. Vorlage mit Paaren: 2× = nur die erste Hälfte der Tage (gleich viele Trainings).
@@ -1438,6 +1443,7 @@ Object.assign(actions, {
   'heq-done': () => go('plan'),
   // App-Plan oder eigenen Plan übernehmen
   'wiz-mode': el => {
+    if (el.dataset.m === 'import') { actions['tp-open'](); return; }  // Tabelle übernehmen (trainplan.js)
     wiz.mode = el.dataset.m;
     wiz.step = wiz.mode === 'own' ? 'sessions' : 'level';
     go('wizard');

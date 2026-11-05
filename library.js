@@ -54,6 +54,8 @@ function figGear(g, J, cls) {
     case 'db': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1], r: 5 } }];
     case 'kb': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1] + 7, r: 6.5 } }];
     case 'none': return [];  // Eigengewicht: nichts in der Hand
+    // Widerstandsband zwischen zwei Gelenken (z. B. beiden Händen, beiden Knien)
+    case 'band': { const q = J[g.to]; return [{ tag: 'line', cls: 'fg-cable ' + cls, a: { x1: at[0], y1: at[1], x2: q[0], y2: q[1] } }]; }
     case 'pad': return [{ tag: 'circle', cls: 'fg-db ' + cls, a: { cx: p[0], cy: p[1], r: g.r || 4.5 } }];
     case 'line': {
       const v = figVec(g.ang || 0, (g.len || 24) / 2);
@@ -1680,6 +1682,204 @@ const LIB_MOD = {
 Object.assign(LIB_MOD, {
   'Rudern Kettlebell einarmig': LIB_MOD['Rudern Kurzhantel einarmig'],
   'Bulgarian Split Squats ohne Gewicht': LIB_MOD['Bulgarian Split Squats'],
+});
+
+/* ---------- Figuren der Heim-Übungen ---------- */
+// Pose aus Gelenkpunkten statt Winkeln: hip und sh fest; Ellbogen/Knie angegeben (el, kn …) oder passend zum Zielpunkt
+// (ha, ft …) gerechnet, Beugerichtung elb/knb = ±1. Die Gliedlängen ergeben sich aus den Punkten (…l-Faktoren).
+function figPose(s) {
+  const ang = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+  const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const ik = (a, t, la, lb, bend) => {
+    const d = Math.min(Math.max(dist(a, t), Math.abs(la - lb) + .01), la + lb - .01);
+    const base = Math.atan2(t[1] - a[1], t[0] - a[0]);
+    const al = Math.acos(Math.min(1, Math.max(-1, (la * la + d * d - lb * lb) / (2 * la * d))));
+    return [a[0] + Math.cos(base + bend * al) * la, a[1] + Math.sin(base + bend * al) * la];
+  };
+  const so = s.front ? FIG.shW : 0, ho = s.front ? FIG.hipW : 0;
+  const p = { root: 'hip', at: s.hip, torso: ang(s.hip, s.sh), tl: dist(s.hip, s.sh) / FIG.torso };
+  const start = { ua: [s.sh[0] - so, s.sh[1]], ua2: [s.sh[0] + so, s.sh[1]], th: [s.hip[0] - ho, s.hip[1]], th2: [s.hip[0] + ho, s.hip[1]] };
+  const limb = (k1, k2, mid, end, la, lb, bend) => {
+    if (!end) return;
+    const a = start[k1], m = mid || ik(a, end, la, lb, bend || 1);
+    p[k1] = ang(a, m); p[k1.replace(/(2?)$/, 'l$1')] = dist(a, m) / la;
+    p[k2] = ang(m, end); p[k2.replace(/(2?)$/, 'l$1')] = dist(m, end) / lb;
+  };
+  limb('ua', 'fa', s.el, s.ha, FIG.ua, FIG.fa, s.elb);
+  limb('ua2', 'fa2', s.el2, s.ha2, FIG.ua, FIG.fa, s.elb2);
+  limb('th', 'sn', s.kn, s.ft, FIG.th, FIG.sn, s.knb);
+  limb('th2', 'sn2', s.kn2, s.ft2, FIG.th, FIG.sn, s.knb2);
+  return { ...p, ...(s.x || {}) };
+}
+const DOOR = (x, y0 = 0) => ['l', x, y0, x, 148, 5];          // Tür (Türanker), senkrecht
+const MAT = [['r', 20, 147, 168, 3, 1]];                         // Matte am Boden
+const CHAIR = [['r', 54, 106, 36, 6, 2], ['l', 58, 112, 58, 148, 4], ['l', 86, 112, 86, 148, 4], ['l', 56, 106, 52, 64, 5]];
+const SUPINE = { sh: [64, 140], hip: [106, 140] };                // Rückenlage, Kopf links
+const PRONE = { hip: [96, 141], sh: [138, 141] };                 // Bauchlage, Kopf rechts
+
+Object.assign(FIG_PATTERNS, {
+  kneePushup: { thumb: 1, props: MAT, poses: [
+    figPose({ hip: [96, 120], sh: [63, 94], ha: [63, 141], elb: -1, kn: [122, 141], ft: [154, 141], x: { fo: -80 } }),
+    figPose({ hip: [90, 133], sh: [50, 124], ha: [63, 141], elb: -1, kn: [122, 141], ft: [154, 141], x: { fo: -80 } }),
+  ] },
+  declinePushup: { thumb: 1, props: [['r', 150, 117, 36, 31, 3]], poses: [
+    figPose({ hip: [103, 103], sh: [62, 95], ha: [62, 141], elb: -1, kn: [134.5, 107.6], ft: [165, 112], x: { fo: 70 } }),
+    figPose({ hip: [98, 121], sh: [57, 127], ha: [62, 141], elb: -1, kn: [132, 116.4], ft: [165, 112], x: { fo: 70 } }),
+  ] },
+  pikePushup: { thumb: 0, props: MAT, poses: [
+    figPose({ hip: [133, 86], sh: [100, 112], ha: [62, 141], elb: -1, ft: [160, 145], knb: -1, x: { fo: 10 } }),
+    figPose({ hip: [110, 104], sh: [72, 124], ha: [62, 141], elb: -1, ft: [160, 145], knb: -1, x: { fo: 10 } }),
+  ] },
+  floorPress: { thumb: 1, props: MAT, gear: [{ at: 'ha', type: 'db' }], poses: [
+    figPose({ ...SUPINE, el: [80, 143], ha: [80, 120], kn: [128, 116], ft: [146, 145], x: { fo: 0 } }),
+    figPose({ ...SUPINE, el: [66, 117], ha: [66, 94], kn: [128, 116], ft: [146, 145], x: { fo: 0 } }),
+  ] },
+  floorFly: { thumb: 1, props: MAT, gear: [{ at: 'ha', type: 'db' }], poses: [
+    figPose({ ...SUPINE, el: [70, 128], ha: [78, 141], kn: [128, 116], ft: [146, 145], x: { fo: 0 } }),
+    figPose({ ...SUPINE, el: [67, 117], ha: [70, 94], kn: [128, 116], ft: [146, 145], x: { fo: 0 } }),
+  ] },
+  // Band hinter dem Rücken bzw. am Türanker (Tür links hinter der Person)
+  bandPress: { thumb: 1, props: [DOOR(16)], gear: [{ at: 'ha', type: 'cable', from: [18, 50], fixed: true }], poses: [
+    { ...STAND, ua: 120, fa: -20 }, { ...STAND, ua: -5, fa: -5 },
+  ] },
+  bandFly: { thumb: 1, props: [DOOR(16)], gear: [{ at: 'ha', type: 'cable', from: [18, 42], fixed: true }], poses: [
+    { ...STAND, ua: 172, fa: 185 }, { ...STAND, ua: -3, fa: 3 },
+  ] },
+  // Rudern unter einem Tisch: Fersen am Boden, Hände an der Tischkante, Brust zur Kante
+  invRow: { thumb: 1, props: [['r', 12, 70, 68, 6, 2], ['l', 20, 76, 20, 148, 4], ['l', 46, 76, 46, 148, 4]], poses: [
+    figPose({ sh: [74, 124], hip: [115, 133], ha: [74, 78], elb: 1, ft: [178, 145], knb: -1, x: { fo: -70 } }),
+    figPose({ sh: [84, 92], hip: [121, 113], ha: [74, 78], elb: 1, ft: [178, 145], knb: -1, x: { fo: -70 } }),
+  ] },
+  // Rudern mit Band am Boden sitzend (Band um die Füße)
+  bandRowFloor: { thumb: 1, props: MAT, gear: [{ at: 'ha', type: 'cable', from: [138, 138], fixed: true }], poses: [
+    figPose({ hip: [72, 140], sh: [70, 98], el: [94, 104], ha: [117, 110], kn: [104, 140], ft: [136, 140], x: { fo: -80 } }),
+    figPose({ hip: [72, 140], sh: [68, 98], el: [50, 110], ha: [74, 116], kn: [104, 140], ft: [136, 140], x: { fo: -80 } }),
+  ] },
+  bandRowWide: { thumb: 1, props: MAT, gear: [{ at: 'ha', type: 'cable', from: [138, 138], fixed: true }], poses: [
+    figPose({ hip: [72, 140], sh: [70, 98], el: [94, 102], ha: [117, 106], kn: [104, 140], ft: [136, 140], x: { fo: -80 } }),
+    figPose({ hip: [72, 140], sh: [68, 98], el: [46, 96], ha: [70, 100], kn: [104, 140], ft: [136, 140], x: { fo: -80 } }),
+  ] },
+  // Latziehen mit Band kniend, Band oben an der Tür
+  kneelPulldown: { vb: TOPV, thumb: 1, props: [DOOR(156, -22), ...MAT], gear: [{ at: 'ha', type: 'cable', from: [154, -10], fixed: true }], poses: [
+    figPose({ hip: [100, 110], sh: [100, 68], ha: [124, 26], kn: [100, 143], ft: [68, 143], x: { fo: 180 } }),
+    figPose({ hip: [100, 110], sh: [100, 68], el: [90, 94], ha: [106, 76], kn: [100, 143], ft: [68, 143], x: { fo: 180 } }),
+  ] },
+  // Pull-Aparts von vorn: Band zwischen den Händen vor der Brust auseinanderziehen
+  pullApart: { front: true, thumb: 1, gear: [{ at: 'ha', to: 'ha2', type: 'band', fixed: true }], poses: [
+    figPose({ front: true, hip: [100, 80], sh: [100, 38], el: [94, 50], ha: [97, 54], el2: [106, 50], ha2: [103, 54],
+      kn: [94, 113], ft: [94, 145], kn2: [106, 113], ft2: [106, 145] }),
+    figPose({ front: true, hip: [100, 80], sh: [100, 38], el: [64, 39], ha: [42, 40], el2: [136, 39], ha2: [158, 40],
+      kn: [94, 113], ft: [94, 145], kn2: [106, 113], ft2: [106, 145] }),
+  ] },
+  // Bauchlage am Boden, Kopf rechts
+  ytwRaise: { props: MAT, poses: [
+    figPose({ ...PRONE, el: [160, 133], ha: [183, 126], kn: [63, 141], ft: [31, 141], x: { fo: 100 } }),
+    figPose({ ...PRONE, el: [140, 127], ha: [142, 114], kn: [63, 141], ft: [31, 141], x: { fo: 100 } }),
+    figPose({ ...PRONE, el: [122, 132], ha: [134, 121], kn: [63, 141], ft: [31, 141], x: { fo: 100 } }),
+  ] },
+  superman: { thumb: 1, props: MAT, poses: [
+    figPose({ ...PRONE, el: [161, 141], ha: [184, 141], kn: [63, 141], ft: [31, 141], x: { fo: 100 } }),
+    figPose({ hip: [96, 141], sh: [137, 135], el: [158, 127], ha: [180, 119], kn: [64, 137], ft: [33, 128], x: { fo: 100 } }),
+  ] },
+  // Good Mornings mit Band: Band unter den Füßen und über den Nacken, Hände halten es an den Schultern
+  goodMorningBand: { thumb: 1, gear: [{ at: 'sh', type: 'cable', from: [97, 146], fixed: true }], poses: [
+    { ...STAND, sn: 95, ua: 60, fa: -110 }, { ...STAND, sn: 95, th: 70, torso: -15, ua: 135, fa: -35 },
+  ] },
+  // Kniebeuge ohne Gewicht: Arme nach vorn
+  bwSquat: { thumb: 1, poses: [
+    { ...STAND, at: [100, 145], ua: 0, fa: 0 }, { ...STAND, at: [100, 145], sn: 115, th: 10, torso: -55, ua: -8, fa: -4 },
+  ] },
+  // Einbeinig auf den Stuhl setzen (freies Bein vorn) bzw. ganz ohne Stuhl (Pistol)
+  chairSquat1: { thumb: 1, props: CHAIR, poses: [
+    figPose({ hip: [112, 80], sh: [114, 38], el: [136, 45], ha: [159, 47], kn: [112, 113], ft: [112, 145], kn2: [130, 108], ft2: [150, 124], x: { fo: 0, fo2: 0 } }),
+    figPose({ hip: [86, 103], sh: [112, 70], el: [136, 74], ha: [159, 72], ft: [112, 145], knb: -1, kn2: [119, 98], ft2: [150, 95], x: { fo: 0, fo2: -60 } }),
+  ] },
+  pistol: { thumb: 1, poses: [
+    figPose({ hip: [112, 80], sh: [114, 38], el: [136, 45], ha: [159, 47], kn: [112, 113], ft: [112, 145], kn2: [130, 108], ft2: [150, 124], x: { fo: 0, fo2: 0 } }),
+    figPose({ hip: [94, 121], sh: [122, 89], el: [146, 92], ha: [169, 90], ft: [112, 145], knb: -1, kn2: [127, 119], ft2: [159, 117], x: { fo: 0, fo2: -60 } }),
+  ] },
+  // Einbeiniges rumänisches Kreuzheben: hinteres Bein geht in Verlängerung des Rumpfs nach hinten
+  rdl1: { gear: [{ at: 'ha', type: 'db' }], thumb: 1, poses: [
+    { ...STAND, sn: 95, th2: 96, sn2: 120, fo2: 10 }, { ...STAND, sn: 95, th: 75, torso: -12, th2: 168, sn2: 168, fo2: 80 },
+  ] },
+  // Rückenlage, Fersen auf dem Handtuch, Hüfte oben: Beine strecken und wieder heranziehen
+  floorHamCurl: { thumb: 1, props: MAT, gear: [{ at: 'ft', type: 'line', ang: 0, len: 18, off: [3, 4], fixed: true }], poses: [
+    figPose({ sh: [52, 139], hip: [94, 128], el: [74, 142], ha: [97, 143], ft: [160, 141], knb: -1, x: { fo: -80 } }),
+    figPose({ sh: [52, 139], hip: [88, 117], el: [74, 142], ha: [97, 143], ft: [128, 141], knb: -1, x: { fo: -80 } }),
+  ] },
+  // Bauchlage am Boden, Band vom Türanker (unten, hinter den Füßen) zur Ferse
+  proneBandCurl: { thumb: 1, props: [DOOR(8, 20), ...MAT], gear: [{ at: 'ft', type: 'cable', from: [10, 140], fixed: true }], poses: [
+    figPose({ hip: [110, 141], sh: [152, 141], el: [156, 145], ha: [180, 145], kn: [77, 141], ft: [45, 141], x: { fo: 100 } }),
+    figPose({ hip: [110, 141], sh: [152, 141], el: [156, 145], ha: [180, 145], kn: [77, 141], ft: [84, 110], x: { fo: 160 } }),
+  ] },
+  // Seitlich liegend (von vorn gesehen), Kopf links auf dem Arm
+  sideLegRaise: { thumb: 1, props: MAT, poses: [
+    figPose({ hip: [110, 138], sh: [68, 138], el: [62, 116], ha: [52, 128], el2: [84, 144], ha2: [104, 145], kn: [143, 135], ft: [175, 135], kn2: [143, 141], ft2: [175, 141], x: { fo: 0, fo2: 0 } }),
+    figPose({ hip: [110, 138], sh: [68, 138], el: [62, 116], ha: [52, 128], el2: [84, 144], ha2: [104, 145], kn: [140, 122], ft: [168, 106], kn2: [143, 141], ft2: [175, 141], x: { fo: -30, fo2: 0 } }),
+  ] },
+  clamshell: { thumb: 1, props: MAT, poses: [
+    figPose({ hip: [110, 138], sh: [68, 138], el: [62, 116], ha: [52, 128], el2: [84, 144], ha2: [104, 145], kn: [133, 136], ft: [146, 138], kn2: [133, 142], ft2: [146, 142], x: { fo: 0, fo2: 0 } }),
+    figPose({ hip: [110, 138], sh: [68, 138], el: [62, 116], ha: [52, 128], el2: [84, 144], ha2: [104, 145], kn: [124, 113], ft: [146, 138], kn2: [133, 142], ft2: [146, 142], x: { fo: 0, fo2: 0 } }),
+  ] },
+  // Seitstütz, oberes Bein auf der Bank (von vorn gesehen)
+  copenhagen: { thumb: 1, props: [['r', 146, 109, 50, 7, 2], ['l', 152, 116, 152, 148, 4], ['l', 190, 116, 190, 148, 4]], poses: [
+    figPose({ sh: [56, 118], hip: [95, 128], el: [56, 142], ha: [32, 143], el2: [78, 121], ha2: [99, 125], ft: [162, 106], knb: 1, kn2: [124, 136], ft2: [148, 140], x: { fo: 0, fo2: 0 } }),
+    figPose({ sh: [56, 118], hip: [97, 113], el: [56, 142], ha: [32, 143], el2: [79, 113], ha2: [101, 110], ft: [162, 106], knb: 1, kn2: [124, 122], ft2: [150, 128], x: { fo: 0, fo2: 0 } }),
+  ] },
+  // Rückenlage: Arme senkrecht, Hüfte und Knie 90° – dann Arm und gegenüberliegendes Bein strecken
+  deadBug: { thumb: 1, props: MAT, poses: [
+    figPose({ ...SUPINE, el: [64, 116], ha: [64, 93], el2: [64, 116], ha2: [64, 93], kn: [106, 107], ft: [138, 107], kn2: [106, 107], ft2: [138, 107], x: { fo: -90, fo2: -90 } }),
+    figPose({ ...SUPINE, el: [40, 134], ha: [17, 130], el2: [64, 116], ha2: [64, 93], kn: [106, 107], ft: [138, 107], kn2: [139, 135], ft2: [171, 131], x: { fo: -90, fo2: -60 } }),
+  ] },
+  // Monster Walk von vorn: Band um die Knie, leichte Hocke, seitlicher Schritt
+  monsterWalk: { front: true, thumb: 1, gear: [{ at: 'kn', to: 'kn2', type: 'band', fixed: true }], poses: [
+    figPose({ front: true, hip: [100, 86], sh: [102, 45], el: [84, 66], ha: [92, 84], el2: [120, 66], ha2: [112, 84], kn: [90, 116], ft: [92, 145], kn2: [110, 116], ft2: [110, 145], x: { fo: 160, fo2: 20 } }),
+    figPose({ front: true, hip: [96, 87], sh: [98, 46], el: [80, 67], ha: [88, 85], el2: [116, 67], ha2: [108, 85], kn: [80, 115], ft: [72, 143], kn2: [106, 116], ft2: [110, 145], x: { fo: 160, fo2: 20 } }),
+  ] },
+});
+const SOFA = [['r', 6, 104, 68, 44, 8], ['r', 2, 66, 18, 82, 7]];
+const STAIR = [['r', 102, 143, 94, 5, 1]];
+// Übung -> Figur (Text und Anleitung bleiben beim ursprünglichen Muster)
+Object.assign(LIB_MOD, {
+  'Liegestütze auf Knien': { pattern: 'kneePushup' },
+  'Liegestütze Füße erhöht': { pattern: 'declinePushup' },
+  'Pike-Liegestütze': { pattern: 'pikePushup' },
+  'Floor Press Kurzhantel': { pattern: 'floorPress' },
+  'Bankdrücken Floor Press': { pattern: 'floorPress', gear: [{ at: 'ha', type: 'plate' }] },
+  'Fliegende am Boden (Kurzhantel)': { pattern: 'floorFly' },
+  'Brustpresse Band': { pattern: 'bandPress' },
+  'Fliegende Band (Türanker)': { pattern: 'bandFly' },
+  'Klimmzüge mit Band (unterstützt)': { gear: [{ at: 'ha', to: 'kn', type: 'band', fixed: true }] },
+  'Rudern umgekehrt (Tisch oder Stange)': { pattern: 'invRow' },
+  'Rudern Band sitzend': { pattern: 'bandRowFloor' },
+  'Rudern Band breit': { pattern: 'bandRowWide' },
+  'Latziehen Band (Türanker)': { pattern: 'kneelPulldown' },
+  'Überzüge Band (Türanker)': { addProps: [DOOR(192)] },
+  'Band Pull-Aparts': { pattern: 'pullApart' },
+  'Face Pulls Band (Türanker)': { addProps: [DOOR(196)] },
+  'Y-T-W-Raises (Bauchlage)': { pattern: 'ytwRaise' },
+  'Superman (Bauchlage)': { pattern: 'superman' },
+  'Good Mornings Band': { pattern: 'goodMorningBand' },
+  'Schulterdrücken Band': { gear: [{ at: 'ha', type: 'cable', from: [112, 146], fixed: true }] },
+  'Seitheben Band': { gear: [{ at: 'ha', type: 'cable', from: [94, 146], fixed: true }, { at: 'ha2', type: 'cable', from: [106, 146], fixed: true }] },
+  'Bizepscurls Band': { gear: [{ at: 'ha', type: 'cable', from: [98, 146], fixed: true }] },
+  'Trizepsdrücken Band (Türanker)': { addProps: [DOOR(142)] },
+  'Trizepsdrücken über Kopf Band': { gear: [{ at: 'ha', type: 'cable', from: [92, 146], fixed: true }] },
+  'Kniebeugen Eigengewicht': { pattern: 'bwSquat' },
+  'Einbeinige Kniebeugen zum Stuhl': { pattern: 'chairSquat1' },
+  'Einbeinige Kniebeugen (Pistol Squats)': { pattern: 'pistol' },
+  'Kreuzheben rumänisch einbeinig (Kurzhantel)': { pattern: 'rdl1' },
+  'Beincurls am Boden (Handtuch)': { pattern: 'floorHamCurl' },
+  'Beinbeuger Band (Bauchlage)': { pattern: 'proneBandCurl' },
+  'Hip Thrust am Sofa': { props: SOFA },
+  'Glute Bridge einbeinig': { gear: [], each: [{ th2: -30, sn2: -30 }, { th2: 10, sn2: 10 }] },
+  'Glute Bridge': { gear: [] },
+  'Monster Walk (Band)': { pattern: 'monsterWalk' },
+  'Seitliches Beinheben liegend': { pattern: 'sideLegRaise' },
+  'Clamshells': { pattern: 'clamshell' },
+  'Copenhagen Plank': { pattern: 'copenhagen' },
+  'Wadenheben an der Treppe': { props: STAIR },
+  'Dead Bug': { pattern: 'deadBug' },
 });
 
 /* ---------- Nachschlagen ---------- */

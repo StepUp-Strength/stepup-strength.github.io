@@ -2280,3 +2280,70 @@ body.touring { overflow: hidden; }
 .pb-star[hidden] { display: none; }
 .pb-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px; font-size: 12px; font-weight: 800;
   color: #6b4a00; background: #ffd23f; vertical-align: 1px; }
+
+/* Trainingsplan-Import: Vorschau */
+.tp-day { margin: 12px 0 4px; }
+.tp-list { list-style: none; padding: 0; margin: 0 0 6px; }
+.tp-list li { padding: 5px 0; border-bottom: 1px solid var(--line); line-height: 1.4; }
+.tp-ok, .tp-new { display: inline-block; min-width: 26px; text-align: center; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 0 5px; }
+.tp-ok { color: var(--ok, #1a7f37); }
+.tp-new { color: #6b4a00; background: #ffe7a3; }
+.tp-sugg { margin: 4px 0 0 30px; display: inline-block; }
+
+/* Ausgewählt: kleiner Haken an jeder gewählten Option (User-Wunsch) */
+.split-opt { position: relative; }
+.split-opt.on:not(.cat) { padding-right: 46px; }
+.split-opt.on::after, .split-opt.cat.on::after {
+  content: '✓'; position: absolute; right: 14px; top: 14px; width: 24px; height: 24px; border: 0; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 800; line-height: 24px; text-align: center; opacity: 1; transform: none;
+}
+.split-opt.cat.on::after { top: 50%; transform: translateY(-50%); }
+.vchip.on:not(.prog-chip)::before, .gchip.on::before, .seg button.on::before, .range .chip.on::before,
+.cardio-type.on::before, .toggle.on::before { content: '✓ '; font-weight: 800; }
+.heq-grid .vchip.on::before { content: none; }
+.heq-grid .vchip.on, .sessions-opt.on, .color-opt.on { position: relative; }
+.heq-grid .vchip.on::after, .sessions-opt.on::after, .color-opt.on::after {
+  content: '✓'; position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 800; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--card);
+}
+.sessions-opt.on::after { background: #fff; color: var(--accent); }
+
+/* Training: Übungen wischen (eine Übung je Bildschirm) */
+.tr-viewmode { margin-top: 10px; }
+.swipe-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 2px; text-align: center; }
+.swipe-nav .icon-btn { width: 52px; height: 52px; font-size: 30px; line-height: 1; border-radius: 16px; background: var(--card); box-shadow: var(--shadow); }
+.swipe-nav .icon-btn:disabled { opacity: .3; }
+.swipe-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 6px; }
+.swipe-dot { width: 11px; height: 11px; padding: 0; border: 0; border-radius: 50%; background: var(--line-strong); }
+.swipe-dot.done { background: var(--ok, #2e9d55); }
+.swipe-dot.now { background: var(--accent); transform: scale(1.35); }
+.swipe-hint { text-align: center; margin: 0 0 8px; font-size: 13px; }
+.swipe-next { margin-top: 12px; }
+.ex-card.slide-l { animation: slideL .22s ease-out; }
+.ex-card.slide-r { animation: slideR .22s ease-out; }
+@keyframes slideL { from { transform: translateX(40px); opacity: .3; } to { transform: none; opacity: 1; } }
+@keyframes slideR { from { transform: translateX(-40px); opacity: .3; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ex-card.slide-l, .ex-card.slide-r { animation: none; } }
+.sessions-opt.on::after { top: 6px; right: 6px; box-shadow: none; }
+
+/* Startseite: der anstehende Trainingstag deutlich hervorgehoben */
+.day-btn.next { background: var(--accent-soft); box-shadow: inset 0 0 0 3px var(--accent), var(--shadow); padding-top: 14px; padding-bottom: 14px; }
+.day-btn.next .day-txt { font-weight: 800; }
+.badge.next-badge { display: table; margin: 0 0 4px; padding: 3px 10px; font-size: 13px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+
+/* Erklärung der Steigerungs-Knöpfe */
+.prog-help { margin-top: 10px; font-size: 15px; }
+.prog-help > summary { cursor: pointer; color: var(--accent-text); font-weight: 700; list-style: none; }
+.prog-help > summary::-webkit-details-marker { display: none; }
+.prog-help p { margin: 8px 0 0; line-height: 1.45; }
+
+/* Wochenansicht: geplante Trainingstage */
+.week-plan-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0 0 6px; }
+.week-plan-head small { margin-left: auto; color: var(--muted); }
+.week-plan-list { list-style: none; margin: 0; padding: 0; }
+.week-plan-list li { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.week-plan-list li b { font-variant-numeric: tabular-nums; }
+.week-plan-list li small { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.wiz-weeks { margin-top: 6px; }
+.wiz-weeks .icon-btn { width: 52px; height: 52px; font-size: 28px; border-radius: 14px; background: var(--fill); }
+.wiz-weeks span { flex: 1; text-align: center; }

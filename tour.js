@@ -9,7 +9,7 @@
 const TOURS = {
   start: [
     { id: 'start-day', sel: '.day-btn.next|.day-btn', title: 'Training starten',
-      text: 'Tipp einen Trainingstag an, um loszulegen. „Als Nächstes“ zeigt, welcher Tag dran ist. Darunter stehen die Zahl der Übungen, die geschätzte Dauer und wann du den Tag zuletzt trainiert hast.' },
+      text: 'Tipp einen Trainingstag an, um loszulegen. „Steht als Nächstes an“ zeigt, welcher Tag dran ist. Darunter stehen die Zahl der Übungen, die geschätzte Dauer und wann du den Tag zuletzt trainiert hast.' },
     { id: 'start-cycle', sel: '.card.cycle h2', title: 'Dein Zyklus',
       text: 'Hier siehst du, in welcher Woche du gerade bist. Die App steigert Woche für Woche, danach kommt eine leichtere Deload-Woche zur Erholung. Eine Woche ist geschafft, sobald alle Tage trainiert sind – egal, wie lange du dafür brauchst.' },
     { id: 'start-week', sel: '.card.cycle .pills', feat: 'week-view', title: 'Wochen ansehen',
@@ -30,6 +30,8 @@ const TOURS = {
       text: 'Die Zeit läuft mit. Beim Speichern wird sie festgehalten – beim nächsten Mal siehst du sie am Trainingstag.' },
     { id: 'tr-prog', sel: '.prog-card', feat: 'tr-prog', title: 'Progression heute',
       text: 'Fühlst du dich heute nicht fit, kannst du die Steigerung nur für dieses Training ausschalten – dann gelten die Werte vom letzten Mal.' },
+    { id: 'tr-swipe', sel: '.tr-viewmode', title: 'Untereinander oder wischen',
+      text: 'Alle Übungen untereinander zum Scrollen – oder eine Übung pro Bildschirm: Dann wischst du nach links zur nächsten Übung und nach rechts zur vorigen. Probier aus, was dir lieber ist.' },
     { id: 'tr-reorder', sel: '[data-action="reorder-toggle"]', title: 'Reihenfolge ändern',
       text: 'Ist ein Gerät besetzt? Hier änderst du die Reihenfolge der Übungen für heute.' },
     { id: 'tr-info', sel: 'section.card h2 .info-dot|section.card .info-btn', title: 'Übung ansehen',
@@ -72,6 +74,8 @@ const TOURS = {
         + (feat('plans-multi') ? ' Hast du mehrere Pläne, aktivierst du einen anderen durch Antippen.' : '') },
     { id: 'plan-new', sel: '[data-action="wiz-start"]', title: 'Neuen Plan erstellen',
       text: 'Der Assistent stellt dir Schritt für Schritt einen neuen Plan zusammen – automatisch passend zu dir oder aus deinem eigenen Plan.' },
+    { id: 'plan-import', sel: '.tp-open-btn', title: 'Plan aus einer Tabelle',
+      text: 'Hast du deinen Plan in Excel oder Google Sheets? Hier übernimmst du ihn – mit oder ohne Steigerung der App.' },
     { id: 'plan-end', sel: '[data-action="plan-end"]', title: 'Plan beenden',
       text: 'Beendet den aktiven Plan. Deine Trainings, Bestleistungen und Erfolge bleiben erhalten.' },
     { id: 'plan-lib', sel: '.lib-open-btn', title: 'Übungsbibliothek',
@@ -221,8 +225,8 @@ const tourState = () => {
 const tourVisible = el => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 function tourFind(step) {
   for (const s of step.sel.split('|')) {
-    const el = document.querySelector(s.trim());
-    if (tourVisible(el)) return el;
+    const el = [...document.querySelectorAll(s.trim())].find(tourVisible);
+    if (el) return el;
   }
   return null;
 }

@@ -1,9 +1,16 @@
 'use strict';
 
-/* ---------- Speicher (localStorage) ---------- */
+/* ---------- Speicher ---------- */
+// Die Daten liegen in IndexedDB (Platz für hunderte MB). localStorage (nur ca. 5 MB) war der frühere Speicher: Dort
+// liegt weiter ein Spiegel, solange er hineinpasst – als zusätzliche Sicherung und damit beim Start sofort etwas da
+// ist. Umzug beim ersten Start (storeInit): kopieren, zurücklesen, vergleichen – erst wenn alles gleich ist, gilt
+// IndexedDB. Ohne IndexedDB (sehr alte Browser) bleibt alles im localStorage wie früher.
 
 const STORE_KEY = 'trainingsapp-daten';
 const DRAFT_KEY = 'trainingsapp-entwurf';
+const CYCLE_MAX = 12;  // längster Standard-Zyklus (Aufbauwochen); hier oben, weil upgradeData ihn schon beim Laden braucht
+const STORE_MODE_KEY = 'trainingsapp-speicher';  // 'idb' = umgezogen
+const LS_LIMIT = 5 * 1024 * 1024;               // ungefähre Grenze des localStorage
 
 let data = loadData();
 let draft = loadDraft();          // laufendes, noch nicht gespeichertes Training
@@ -131,7 +138,7 @@ function upgradeData(d) {
   // defWeeks = Standardlänge (4–10 Aufbauwochen, bestimmt die Verteilung von Sätzen und Tank);
   // adj = nur für den laufenden Zyklus verlängert/verkürzt (z. B. Urlaub); buildWeeks = Länge des laufenden Zyklus
   if (d.cycle.defWeeks == null) d.cycle.defWeeks = d.cycle.buildWeeks || 4;
-  d.cycle.defWeeks = Math.min(10, Math.max(4, d.cycle.defWeeks));
+  d.cycle.defWeeks = Math.min(CYCLE_MAX, Math.max(4, d.cycle.defWeeks));
   if (d.cycle.adj == null) d.cycle.adj = 0;
   if (!d.cycle.lens) d.cycle.lens = {};  // Länge früherer Zyklen: { Kennung: Aufbauwochen }
   d.cycle.buildWeeks = Math.max(0, d.cycle.defWeeks + d.cycle.adj);
@@ -178,12 +185,138 @@ function loadData() {
   return upgradeData(emptyData());
 }
 
+let storeMode = 'ls';      // 'ls' = localStorage, 'idb' = IndexedDB
+let storeReady = false;    // erst nach storeInit speichern (vorher könnten noch nicht geladene Daten drüberschreiben)
+let storeDb = null;
+
 function saveData() {
+  if (!storeReady) return;
+  const s = JSON.stringify(data);
+  if (storeMode === 'idb') {
+    idbPut('data', s).catch(e => alert('Speichern fehlgeschlagen: ' + (e && e.message)));
+    // Spiegel im alten Speicher, solange er passt – passt er nicht mehr, wird er entfernt (sonst wäre er veraltet)
+    try { localStorage.setItem(STORE_KEY, s); } catch (e) { try { localStorage.removeItem(STORE_KEY); } catch (e2) { /* egal */ } }
+    return;
+  }
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORE_KEY, s);
   } catch (e) {
     alert('Speichern fehlgeschlagen: ' + e.message);
   }
+}
+
+// IndexedDB: eine Tabelle „kv“, die Daten als ein JSON-Text unter dem Schlüssel „data“
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('trainingsapp', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('IndexedDB blockiert'));
+  });
+}
+function idbGet(key) {
+  return new Promise((res, rej) => {
+    const q = storeDb.transaction('kv').objectStore('kv').get(key);
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+}
+function idbPut(key, value) {
+  return new Promise((res, rej) => {
+    const tx = storeDb.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(value, key);
+    tx.oncomplete = () => res();
+    tx.onerror = tx.onabort = () => rej(tx.error);
+  });
+}
+
+// Hängt IndexedDB (z. B. privates Fenster, Browserfehler), nicht ewig warten
+const withTimeout = (p, ms = 4000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('Zeitüberschreitung')), ms))]);
+
+// Beim Start: Daten aus IndexedDB laden bzw. einmalig dorthin umziehen
+async function storeInit() {
+  let block = false;
+  try {
+    if (!window.indexedDB) return;
+    storeDb = await withTimeout(idbOpen());
+    if (localStorage.getItem(STORE_MODE_KEY) === 'idb') {
+      const s = await withTimeout(idbGet('data'));
+      const d = s ? JSON.parse(s) : null;
+      if (isValidData(d)) {
+        data = upgradeData(d);
+        draft = loadDraft();
+        storeMode = 'idb';
+        return;
+      }
+      // Umgezogen, aber IndexedDB leer: mit dem Spiegel weiter (und neu kopieren) – ohne Spiegel nichts überschreiben
+      if (!localStorage.getItem(STORE_KEY)) {
+        alert('Deine Daten wurden nicht gefunden. Bitte lade unter „Optionen“ deine letzte Sicherung.');
+        return;
+      }
+    }
+    // Umzug: kopieren, zurücklesen, Zeichen für Zeichen vergleichen – erst dann umschalten
+    const s = JSON.stringify(data);
+    await withTimeout(idbPut('data', s));
+    if (await withTimeout(idbGet('data')) === s) {
+      localStorage.setItem(STORE_MODE_KEY, 'idb');
+      storeMode = 'idb';
+      // Browser bitten, den Speicher nicht von sich aus zu leeren (wo unterstützt)
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    }
+  } catch (e) {
+    // IndexedDB geht gerade nicht: mit dem Spiegel im alten Speicher weiter (er ist immer aktuell, solange es ihn gibt) –
+    // beim nächsten Start wird von dort neu umgezogen. Ohne Spiegel lieber gar nicht speichern als Leeres drüberschreiben.
+    storeMode = 'ls';
+    if (localStorage.getItem(STORE_MODE_KEY) === 'idb') {
+      if (localStorage.getItem(STORE_KEY)) localStorage.removeItem(STORE_MODE_KEY);
+      else {
+        block = true;
+        alert('Deine Daten konnten gerade nicht geladen werden. Bitte schließe die App und öffne sie neu – nichts wurde verändert.');
+      }
+    }
+  } finally {
+    storeReady = !block;
+  }
+}
+
+// Größe der gespeicherten Daten in Byte
+const dataBytes = () => new Blob([JSON.stringify(data)]).size;
+const fmtMB = b => b < 100 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${fmtNum(Math.round(b / 1024 / 1024 * 10) / 10)} MB`;
+
+// Optionen: Platzanzeige (Speicherort, belegt, frei) – die freie Menge liefert der Browser erst asynchron
+const storageInfoHtml = () => `<p class="hint storage-info" id="storage-info">💾 Deine Daten: ${fmtMB(dataBytes())}${storeMode === 'idb'
+  ? ' · Speicher wird geprüft …' : ` von ca. 5 MB`}</p>`;
+async function storageInfoFill() {
+  const el = document.getElementById('storage-info');
+  if (!el) return;
+  const used = dataBytes();
+  if (storeMode !== 'idb') {
+    const pct = Math.round(used / LS_LIMIT * 100);
+    el.innerHTML = `💾 Deine Daten: ${fmtMB(used)} von ca. 5 MB (${pct} %)${pct >= 80
+      ? ' – <b>der Speicher wird knapp.</b> Sichere deine Daten und lösche ggf. alte Trainings.' : ''}`;
+    return;
+  }
+  let free = '';
+  try {
+    const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+    if (est && est.quota) {
+      const left = est.quota - (est.usage || 0);
+      free = left > 1024 * 1024 * 1024 ? ` · frei: mehr als ${Math.floor(left / 1024 / 1024 / 1024)} GB` : ` · frei: ${fmtMB(left)}`;
+      if ((est.usage || 0) / est.quota >= 0.8) free += ' – <b>der Speicher wird knapp.</b>';
+    }
+  } catch (e) { /* ohne Angabe */ }
+  el.innerHTML = `💾 Deine Daten: ${fmtMB(used)} · großer App-Speicher${free}`;
+}
+
+// Startseite: Warnung nur, wenn der alte Speicher (ohne Umzug) fast voll ist
+function storageWarnCard() {
+  if (storeMode === 'idb' || !storeReady) return '';
+  const pct = Math.round(dataBytes() / LS_LIMIT * 100);
+  if (pct < 80) return '';
+  return `<div class="card hints"><h2>💾 Speicher fast voll (${pct} %)</h2>
+    <p class="hint">Bitte sichere deine Daten (Optionen → Sicherung exportieren). Wird der Speicher voll, kann ein neues Training nicht gespeichert werden.</p>
+    <button class="btn" data-action="tab" data-tab="data">Zu den Optionen</button></div>`;
 }
 
 function loadDraft() {
@@ -746,10 +879,23 @@ function setRound(start, week, no) {
 }
 
 // Laufenden Zyklus verlängern/verkürzen: Länge = Standard + adj, nie kürzer als die laufende Woche
+// Zykluslänge: 4–5 Wochen gängig, 6–8 länger (kleinere Steigerung je Woche), 9–12 sehr lang (User-Vorgabe 2026-11-05)
+function cycleLenInfo(n) {
+  const build = `Intro-Woche + ${n - 1} Aufbauwochen, danach die Deload-Woche.`;
+  if (n <= 5) return { tag: 'gängig', text: `${build} Der gängige Zyklus: Von Woche zu Woche wird es spürbar fordernder,
+    und die Erholung kommt rechtzeitig, bevor sich zu viel Müdigkeit ansammelt. Passt für die allermeisten.` };
+  if (n <= 8) return { tag: 'länger', text: `${build} Ein längerer Zyklus: Start und Höhepunkt bleiben gleich, aber der Weg dorthin
+    verteilt sich auf mehr Wochen – jede Woche wird also nur ein kleineres Stück fordernder. Dafür bleibst du länger am Stück dran,
+    bevor die Deload-Woche kommt.` };
+  return { tag: 'sehr lang', text: `${build} Ein sehr langer Zyklus: Die Steigerung von Woche zu Woche ist nur noch klein, und die
+    Erholungswoche kommt erst spät. Eher für Erfahrene, die ihren Körper gut einschätzen können – achte auf Zeichen von Ermüdung
+    wie stagnierende Kraft, schlechten Schlaf oder zwickende Gelenke.` };
+}
+
 function setCycleAdj(adj) {
   const ci = cycleInfo();
   const min = ci.deload ? data.cycle.buildWeeks : Math.max(1, ci.week);
-  const len = Math.min(12, Math.max(min, data.cycle.defWeeks + adj));
+  const len = Math.min(CYCLE_MAX + 4, Math.max(min, data.cycle.defWeeks + adj));
   data.cycle.adj = len - data.cycle.defWeeks;
   data.cycle.buildWeeks = len;
 }
@@ -2051,7 +2197,7 @@ const views = {
     back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
   cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
   entryweek: { title: 'Neuer Plan',      tab: 'start', back: 'start', render: renderEntryWeek, cancel: () => CANCEL_START },
-  data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: showAppVersion },
+  data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: () => { showAppVersion(); storageInfoFill(); } },
 };
 
 function go(view, params = {}) {
@@ -2181,13 +2327,13 @@ function cycleCard(ci) {
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
-    <h2>${head}</h2>${cyclePills(ci, feat('week-view') ? 'week-open' : null)}
+    <h2>${head}</h2>${cyclePills(ci, 'week-open')}
     <p class="round-status">🔄 ${roundStatus(ci)}</p>
     <p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()} – egal, wie viele Tage du dafür brauchst.</p>
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
       <p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>` : ''}
-    ${feat('week-view') ? '<p class="tap-hint">Woche antippen: Trainings ansehen und bearbeiten</p>' : ''}
+    <p class="tap-hint">Woche antippen: Trainings ansehen – künftige Wochen zeigen, was geplant ist</p>
     ${cycleAdjustHtml(ci)}
   </div>`;
 }
@@ -2313,7 +2459,7 @@ function skipHtml(ci) {
 }
 
 function renderStart() {
-  let h = greeting() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
+  let h = greeting() + storageWarnCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -2362,7 +2508,7 @@ function renderStart() {
     const next = day === nextDay;
     h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''} ${skipped ? 'skipped' : ''}" data-action="start-day" data-id="${day.id}">
       <span class="day-no">${skipped ? '⏭' : done ? '✓' : i + 1}</span>
-      <span class="day-txt">${esc(day.name)}${next ? '<span class="badge">Als Nächstes</span>' : ''}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
+      <span class="day-txt">${next ? '<span class="badge next-badge">▶ Steht als Nächstes an</span>' : ''}${esc(day.name)}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
         : done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   });
   if (!draft) h += skipHtml(ci);
@@ -2420,11 +2566,17 @@ function renderTraining() {
       <p class="hint">Gilt nur für dieses Training. Eingetragene Werte bleiben erhalten.</p></div>`;
   }
   h += '<button class="btn outline" data-action="reorder-toggle">⇅ Reihenfolge ändern</button>';
+  // Ansicht: alle Übungen untereinander (scrollen) oder eine Übung je Bildschirm (wischen) – profile.swipe
+  const swipe = trSwipeOn();
+  h += `<div class="seg two tr-viewmode"><button class="${swipe ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
+    <button class="${swipe ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>`;
+  const cur = swipe ? trCur() : -1;
+  if (swipe) h += swipeNavHtml(cur);
 
   const stalls = stagnationHints();
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
-    h += `<section class="card ex-card tint-${ei % 4}">
+    h += `<section class="card ex-card tint-${ei % 4}${swipe && ei === cur && draft.slide ? ` slide-${draft.slide}` : ''}" data-ei="${ei}"${swipe && ei !== cur ? ' hidden' : ''}>
       <div class="ex-head">
         <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
@@ -2558,7 +2710,7 @@ function renderTraining() {
       ${feat('tr-sets') ? `<div class="row set-btns">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
-      </div>` : ''}</section>`;
+      </div>` : ''}${swipe ? swipeNextHtml(ei) : ''}</section>`;
   });
   if (feat('tr-add')) h += draft.adding ? renderAddExercise()
     : '<button class="btn center" data-action="add-open">+ Übung hinzufügen</button>';
@@ -2592,6 +2744,22 @@ const feelTargetText = t => {
     : `hör auf, wenn noch etwa ${r} Wdh. gegangen wären (= 💪 gut)`;
 };
 
+// Aufklappbare Erklärung der Knöpfe „Volumen“ und „Gewicht & Wdh.“ (where: 'today' = nur dieses Training, 'plan' = Zyklus/Wochen)
+function progHelpHtml(where) {
+  const scope = where === 'today' ? 'Gilt nur für dieses Training – der Plan bleibt, wie er ist.'
+    : 'Die Grundeinstellung gilt für den ganzen Zyklus; in der Tabelle darunter kannst du einzelne Wochen abweichend schalten (umrandet = eigene Einstellung der Woche). Im Training selbst lässt sich beides zusätzlich nur für dieses eine Training ändern.';
+  return `<details class="prog-help"><summary>ⓘ Was bedeuten die Knöpfe?</summary>
+    <p>Antippen schaltet um: <b>✓ = an</b> (die App steigert), <b>✕ = aus</b> (es bleibt, wie es ist).</p>
+    <p><b>Volumen</b> – die Zahl der Sätze. <b>An:</b> Von Woche zu Woche kommen Sätze dazu, von der Intro-Woche bis zum Höhepunkt
+      am Ende des Zyklus. <b>Aus:</b> Die Sätze bleiben wie in der Vorwoche. In der Intro-Woche gibt es den Knopf nicht – dort gelten die Start-Sätze.</p>
+    <p><b>Gewicht & Wdh.</b> – die Vorschläge im Training. <b>An:</b> Hast du dein Ziel geschafft, schlägt die App beim nächsten Mal
+      etwas mehr Gewicht oder mehr Wiederholungen vor. <b>Aus:</b> Es stehen deine Werte vom letzten Mal da, „Max. bei 10 Wdh.“ bleibt
+      unverändert – das Ziel im Tank läuft trotzdem weiter.</p>
+    <p><b>Wann ausschalten?</b> Z. B. wenn du krank warst, schlecht geschlafen hast, wenig Zeit hast, eine neue Technik lernst oder
+      nach einer Verletzung vorsichtig sein willst. Normalerweise bleibt beides an.</p>
+    <p class="hint">${scope}</p></details>`;
+}
+
 // Progression nur für dieses Training ein-/ausschalten (nicht im Deload; Volumen erst ab Woche 2)
 function progressionCard() {
   if (draft.deload || draft.own || !draft.progression) return '';
@@ -2603,6 +2771,7 @@ function progressionCard() {
   return `<div class="card prog-card"><div class="prog-row"><b>Progression heute</b>
       <div class="variants">${keys.map(k => progChip(k, p[k], 'data-action="prog-today"')).join('')}</div></div>
       ${notes.length ? `<p class="hint">${notes.join(' ')}</p>` : ''}
+      ${progHelpHtml('today')}
     </div>`;
 }
 
@@ -2702,10 +2871,11 @@ function renderPlan() {
   if (!hasActivePlan()) {
     return h + `<p class="hint">${data.plans.length ? 'Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.'
       : 'Noch kein Plan vorhanden. Erstelle deinen ersten Plan.'}</p>
-      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
+      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${typeof TP_OPEN_BTN === 'string' ? TP_OPEN_BTN : ''}${libBtn}`;
   }
   h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
     <button class="btn outline" data-action="plan-end">⏹ „${esc(active.name)}“ beenden</button>
+    ${feat('plans-multi') && typeof TP_OPEN_BTN === 'string' ? TP_OPEN_BTN : ''}
     ${libBtn}
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
@@ -2751,7 +2921,7 @@ function renderPlan() {
 
 // Standard-Zykluslänge ändern (Regler): gilt ab sofort, auch für den laufenden Zyklus (seine Anpassung bleibt)
 function applyCycleLen(v) {
-  data.cycle.defWeeks = Math.min(10, Math.max(4, v));
+  data.cycle.defWeeks = Math.min(CYCLE_MAX, Math.max(4, v));
   setCycleAdj(data.cycle.adj);
   saveData(); render();
 }
@@ -2771,7 +2941,7 @@ function cycleLenHtml(ci) {
   const scope = !lenOn ? 'this' : cycLenScope || (adj ? 'this' : 'all');
   // „Alle Zyklen“: Zahl = Standardlänge (4–10); „Nur diesen Zyklus“: Zahl = Länge des laufenden Zyklus (ab laufender Woche, bis 12)
   const val = scope === 'all' ? def : len;
-  const lo = scope === 'all' ? 4 : min, hi = scope === 'all' ? 10 : 12;
+  const lo = scope === 'all' ? 4 : min, hi = scope === 'all' ? CYCLE_MAX : CYCLE_MAX + 4;
   const wk = n => `${n} Woche${n === 1 ? '' : 'n'}`;
   const changed = adj ? `${wk(Math.abs(adj))} ${adj > 0 ? 'verlängert' : 'verkürzt'}` : '';
   const state = scope === 'all'
@@ -2781,14 +2951,12 @@ function cycleLenHtml(ci) {
   return `<p><b>Zykluslänge</b></p>
       <div class="row cyc-adj-row">
         <button class="icon-btn" data-action="cyc-adj" data-scope="${scope}" data-d="-1" ${val <= lo ? 'disabled' : ''} aria-label="Eine Woche kürzer">−</button>
-        <span><b>${wk(val)}</b> + Deload<small>${state}</small></span>
+        <span><b>${wk(val)}</b> + Deload<small>${scope === 'all' ? cycleLenInfo(val).tag + ' · ' : ''}${state}</small></span>
         <button class="icon-btn" data-action="cyc-adj" data-scope="${scope}" data-d="1" ${val >= hi ? 'disabled' : ''} aria-label="Eine Woche länger">+</button>
       </div>
       ${lenOn ? `<p class="lbl chips-title">Gilt für</p><div class="variants cyc-scope">${chip('all', 'Alle Zyklen')}${chip('this', 'Nur diesen Zyklus')}</div>` : ''}
       <p class="hint">${scope === 'all'
-        ? `Aufbauwochen inklusive Intro-Woche (4–10), danach 1 Deload-Woche. Start und Höhepunkt (Sätze und Wdh. im Tank) bleiben
-          gleich – die App verteilt den Anstieg auf die Wochen: lang = langsamer und gleichmäßiger, kurz = schneller. Gilt ab
-          sofort, auch für den laufenden Zyklus.`
+        ? `${cycleLenInfo(val).text} Einstellbar sind 4 bis ${CYCLE_MAX} Trainingswochen. Gilt ab sofort, auch für den laufenden Zyklus.`
         : `<b>Kürzer:</b> Der Deload kommt früher – praktisch, wenn er genau in den Urlaub fallen soll. <b>Länger:</b> Zusätzliche
           Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter) – z. B. wenn du wegen des Urlaubs Trainings
           verpasst hast. Gilt nur für diesen Zyklus; der nächste hat wieder ${wk(def)}.`}</p>`;
@@ -2864,6 +3032,7 @@ function progressionTable() {
   let h = `<p class="lbl chips-title">Progression</p>
     <div class="prog-def"><span>Grundeinstellung<br><small class="hint">ganzer Zyklus</small></span>
       <div class="variants">${Object.keys(PROG_KEYS).map(k => progChip(k, def[k], 'data-action="prog-plan"')).join('')}</div></div>
+    ${progHelpHtml('plan')}
     <table class="rir prog-table"><tr><th>Woche</th><th>Volumen</th><th>Gewicht & Wdh.</th></tr>`;
   for (let w = 1; w <= ci.buildWeeks; w++) {
     const round = roundKey(ci.cycleStart, w);
@@ -3433,12 +3602,41 @@ function renderWeek({ key }) {
     h += `<button class="btn nav" data-action="open-session" data-id="${s.id}" data-week="${esc(key)}">
       ${esc(s.dayName)}<small>${fmtDate(s.date)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}</small></button>`;
   }
-  if (!sessions.length) {
-    h += `<p class="hint">${ahead ? 'Diese Woche liegt noch vor dir.' : isNow ? 'In dieser Woche wurde noch nicht trainiert.' : 'In dieser Woche wurde nicht trainiert.'}</p>`;
-  }
+  if (!sessions.length && !ahead && !isNow) h += '<p class="hint">In dieser Woche wurde nicht trainiert.</p>';
   if (isNow && data.days.length) h += `<p class="hint">🔄 ${roundStatus(ci)}</p>`;
+  // laufende und künftige Wochen des aktuellen Zyklus: geplante Trainingstage (laufende Woche: nur die noch offenen)
+  if ((ahead || isNow) && hasActivePlan() && !ownPlan()) {
+    const deload = !selfDeload() && week > ci.buildWeeks;
+    const open = isNow ? new Set(roundOpen(start, week).map(x => x.day.id)) : null;
+    h += weekPlanHtml(week, deload || (isNow && ci.deload), open);
+  }
   if (sessions.length) h += '<p class="hint">Training antippen, um es anzusehen oder nachträglich zu ändern.</p>';
   return h;
+}
+
+// Geplante Trainingstage einer Woche: je Übung Sätze × Wdh. (und Tank-Ziel) – die Gewichte ergeben sich erst im Training
+// aus dem, was du davor schaffst. only = nur diese Tage (laufende Woche: noch offene)
+function weekPlanHtml(week, deload, only = null) {
+  const bw = data.cycle.buildWeeks || 4;
+  const w = deload ? bw : Math.min(Math.max(1, week), bw);  // Verlängerung: wie die letzte Aufbauwoche
+  const days = activeDays().filter(d => dayTimes(d, week) && (!only || only.has(d.id)));
+  if (!days.length) return '';
+  let h = `<h2>${only ? 'Noch offen in dieser Woche' : 'Geplant'}</h2>`;
+  for (const day of days) {
+    const auto = autoSetsForDay(day, w, deload, data.volume);
+    const items = day.exercises.filter(e => e.name.trim()).map(ex => {
+      const n = auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw);
+      const reps = dayIntensity(day) ? repRangeText(day, ex) : ex.reps;
+      const tank = deload ? `mind. ${DELOAD_RIR}` : rirLabel(kindOf(ex), w, bw, groupOf(ex));
+      return `<li><span>${esc(ex.name)}</span><b>${n} × ${reps}</b>${feat('tr-tank-target') ? `<small>${tank} im Tank</small>` : ''}</li>`;
+    }).join('');
+    const times = dayTimes(day, week);
+    const est = estDuration(day, week, activePlan(), deload);
+    h += `<div class="card week-plan"><p class="week-plan-head"><b>${esc(day.name)}</b>${times > 1 ? ` <span class="badge">${times}×</span>` : ''}
+      ${est ? `<small>${estText(est)}</small>` : ''}</p><ul class="week-plan-list">${items}</ul></div>`;
+  }
+  return h + `<p class="hint">${deload ? 'Deload: halbe Sätze, etwa 15 % weniger Gewicht als in der letzten Trainingswoche.'
+    : 'Sätze × Wiederholungen laut Plan. Die Gewichte schlägt die App im Training vor – passend zu dem, was du davor geschafft hast.'}</p>`;
 }
 
 // Arbeitskopie beim Bearbeiten eines gespeicherten Trainings (Werte als Text wie in den Eingabefeldern)
@@ -3654,7 +3852,7 @@ function renderCheck({ id, step, areas }) {
     return `<div class="card check">
       <p class="sub">${esc(findDay(id).name)}</p>
       <div class="check-emoji" aria-hidden="true">🙂</div>
-      <h2 class="question">Alles okay heute?</h2>
+      <h2 class="question">Fühlst du dich fit?</h2>
       <div class="row">
         <button class="btn primary" data-action="check-simple" data-k="ok">Ja</button>
         <button class="btn primary" data-action="check-simple" data-k="no">Nein</button>
@@ -3697,6 +3895,7 @@ function renderData() {
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
+      ${storageInfoHtml()}
     </div>
     <button class="btn primary" data-action="export">Sicherung exportieren</button>
     <button class="btn center" data-action="import">Sicherung importieren</button>
@@ -4551,6 +4750,15 @@ const actions = {
     saveData(); render();
   },
   // Hinweis auf den letzten Kommentar ausblenden (im Verlauf bleibt der Kommentar stehen)
+  // Training: Übungen untereinander oder wischen (gilt für alle Trainings, profile.swipe)
+  'tr-swipe': el => {
+    data.profile = data.profile || {};
+    data.profile.swipe = el.dataset.v === '1';
+    saveData(); render();
+  },
+  'tr-go': el => trGo(Number(el.dataset.d)),
+  'tr-go-to': el => trGo(Number(el.dataset.i) - trCur()),
+  'tr-to-save': () => { const b = $view.querySelector('[data-action="tr-save"]'); if (b) b.scrollIntoView({ block: 'center', behavior: 'smooth' }); },
   'reorder-toggle': () => {
     draft.reorder = !draft.reorder;
     saveDraft(); render();
@@ -4734,6 +4942,7 @@ const actions = {
       max10, step: stepFor(ex), weights: weightsFor(name),
     });
     draft.entries.push(en);
+    if (trSwipeOn()) draft.cur = draft.entries.length - 1;  // Wischen: gleich zur neuen Übung
     draft.adding = false;
     if (keep && day) {
       day.exercises.push(ex);
@@ -4867,7 +5076,7 @@ const actions = {
     const d = Number(el.dataset.d);
     if (el.dataset.scope === 'all') {
       // Standardlänge für alle Zyklen (4–10), gilt sofort auch für den laufenden – dessen Verlängerung/Verkürzung bleibt
-      data.cycle.defWeeks = Math.min(10, Math.max(4, data.cycle.defWeeks + d));
+      data.cycle.defWeeks = Math.min(CYCLE_MAX, Math.max(4, data.cycle.defWeeks + d));
       setCycleAdj(data.cycle.adj);
     } else setCycleAdj(data.cycle.adj + d);
     saveData(); render();
@@ -5288,6 +5497,98 @@ document.addEventListener('click', e => {
   if (el && actions[el.dataset.action]) actions[el.dataset.action](el);
 });
 
+/* ---------- Wischen ---------- */
+// Training: eine Übung je Bildschirm, nach links wischen = nächste, nach rechts = vorige (zusätzlich zu Pfeilen und Punkten).
+// Kalender (Verlauf, Cardio): nach links wischen = nächster Monat.
+const trSwipeOn = () => !!(data.profile && data.profile.swipe);
+const trCur = () => Math.min(Math.max(0, draft.cur || 0), Math.max(0, draft.entries.length - 1));
+function trGo(d) {
+  const n = draft.entries.length, to = Math.min(n - 1, Math.max(0, trCur() + d));
+  if (to === trCur()) return;
+  draft.slide = to > trCur() ? 'l' : 'r';
+  draft.cur = to;
+  saveDraft(); render();
+  draft.slide = null;
+  const nav = $view.querySelector('.swipe-nav');
+  if (nav) window.scrollTo(0, nav.getBoundingClientRect().top + window.scrollY - 70);
+}
+// Kopf: Pfeile, „Übung 2 von 7“, Punkte (✓ = alle Sätze erledigt)
+function swipeNavHtml(cur) {
+  const n = draft.entries.length;
+  const dots = draft.entries.map((en, i) => `<button class="swipe-dot ${i === cur ? 'now' : ''} ${en.sets.length && en.sets.every(isDone) ? 'done' : ''}"
+    data-action="tr-go-to" data-i="${i}" aria-label="Übung ${i + 1}: ${esc(en.name)}"></button>`).join('');
+  return `<div class="swipe-nav">
+    <button class="icon-btn" data-action="tr-go" data-d="-1" ${cur === 0 ? 'disabled' : ''} aria-label="Vorige Übung">‹</button>
+    <div><b>Übung ${cur + 1} von ${n}</b><div class="swipe-dots">${dots}</div></div>
+    <button class="icon-btn" data-action="tr-go" data-d="1" ${cur >= n - 1 ? 'disabled' : ''} aria-label="Nächste Übung">›</button>
+  </div><p class="hint swipe-hint">Wischen: nach links = nächste Übung, nach rechts = vorige</p>`;
+}
+function swipeNextHtml(ei) {
+  const n = draft.entries.length;
+  return ei < n - 1
+    ? `<button class="btn primary swipe-next" data-action="tr-go" data-d="1">Nächste Übung: ${esc(draft.entries[ei + 1].name)} ›</button>`
+    : '<button class="btn swipe-next" data-action="tr-to-save">Letzte Übung – zum Speichern ↓</button>';
+}
+let swipeStart = null;
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  swipeStart = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, el: e.target, time: Date.now() } : null;
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  const st = swipeStart;
+  swipeStart = null;
+  if (!st) return;
+  const t = e.changedTouches[0], dx = t.clientX - st.x, dy = t.clientY - st.y;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < 1.5 * Math.abs(dy) || Date.now() - st.time > 900) return;
+  const dir = dx < 0 ? 1 : -1;  // nach links wischen = weiter
+  const el = st.el && st.el.closest ? st.el : null;
+  // Einführung: nach links = nächster Schritt
+  const tourEl = document.getElementById('tour');
+  if (tourEl) { if (dir > 0) { const b = tourEl.querySelector('[data-tour="next"]'); if (b) b.click(); } return; }
+  if (document.querySelector('.welcome')) return;
+  // nicht in seitlich scrollbaren Bereichen (Tabellen, Auswahlleisten), Textfeldern und Diagrammen
+  if (el && el.closest('.table-wrap, .quick-picks, textarea, #chart-area, .chart-area')) return;
+  const click = sel => { const b = $view.querySelector(sel); if (b && !b.disabled) { b.click(); return true; } return false; };
+  const cal = el && el.closest('.cal');
+  if (cal) {
+    const b = cal.querySelector(`[data-action="cal-nav"][data-d="${dir}"]`);
+    if (b && !b.disabled) b.click();
+    return;
+  }
+  swipeView(dir, click);
+}, { passive: true });
+
+// Wischen je Fenster: nach links = weiter (nächste Übung, nächster Tag …), nach rechts = zurück
+function swipeView(dir, click) {
+  const v = current.view, p = current.params;
+  if (v === 'training') { if (draft && !draft.reorder && trSwipeOn()) trGo(dir); return; }
+  if (v === 'food') { click(`[data-action="food-day"][data-d="${dir}"]`); return; }
+  if (v === 'week') { click(`[data-action="week-shift"][data-dir="${dir}"]`); return; }
+  if (v === 'session' && !p.edit && !p.week) {
+    // gespeicherte Trainings nach Datum: nach links = nächstes (neueres), nach rechts = voriges
+    const list = [...data.sessions].sort((a, b) => a.date.localeCompare(b.date));
+    const to = list[list.findIndex(x => x.id === p.id) + dir];
+    if (to) go('session', { id: to.id }); else toast(dir > 0 ? 'Das ist das neueste Training' : 'Das ist das älteste Training');
+    return;
+  }
+  if (v === 'day') {
+    const i = data.days.findIndex(d => d.id === p.id), to = data.days[i + dir];
+    if (i >= 0 && to) go('day', { id: to.id });
+    return;
+  }
+  if (v === 'charts') {
+    const tabs = [...$view.querySelectorAll('.seg.grid.two [data-action="chart-mode"]')];
+    const i = tabs.findIndex(b => b.classList.contains('on')), to = tabs[i + dir];
+    if (to) to.click();
+    return;
+  }
+  if (v === 'wizard') {
+    if (dir < 0) { if (!$back.hidden) $back.click(); return; }
+    const next = [...$view.querySelectorAll('.row .btn.primary[data-action="wiz-step"]')].pop();
+    if (next && !next.disabled) next.click();
+  }
+}
+
 document.addEventListener('input', e => {
   const el = e.target.closest('[data-field]');
   if (el && fields[el.dataset.field]) fields[el.dataset.field](el);
@@ -5605,7 +5906,8 @@ fields['profile-name'] = el => {
 
 // Erst zeichnen, wenn alle Skripte geladen sind (die Startseite nutzt z. B. nutrition.js) –
 // sonst bleibt die Seite beim Öffnen leer, bis man einen Reiter antippt.
-function boot() {
+async function boot() {
+  await storeInit();  // Daten aus IndexedDB (bzw. Umzug dorthin) – erst danach zeichnen
   applyTheme();
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
   render();
