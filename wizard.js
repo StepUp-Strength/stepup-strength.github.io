@@ -211,7 +211,7 @@ const HOME_PICKS = {
   schulter_vorne: ['Schulterdrücken Kurzhantel sitzend', 'Schulterdrücken Kettlebell', 'Schulterdrücken Band', 'Pike-Liegestütze', 'Arnold Press'],
   schulter_seite: ['Seitheben Kurzhantel', 'Seitheben Band', 'Seitheben Kurzhantel sitzend'],
   schulter_hinten: ['Vorgebeugtes Seitheben (Kurzhantel)', 'Face Pulls Band (Türanker)', 'Band Pull-Aparts', 'Y-T-W-Raises (Bauchlage)'],
-  bizeps: ['Bizepscurls Kurzhantel', 'Hammercurls Kurzhantel', 'Bizepscurls Kettlebell', 'Bizepscurls Band', 'Klimmzüge Untergriff (Chin-ups)'],
+  bizeps: ['Bizepscurls Kurzhantel', 'Hammercurls Kurzhantel', 'Bizepscurls Kettlebell', 'Bizepscurls Band', 'Klimmzüge Untergriff (Chin-ups)', 'Rudern umgekehrt Untergriff (Tisch oder Stange)'],
   trizeps: ['Trizepsdrücken über Kopf Kurzhantel', 'Trizepsdrücken Band (Türanker)', 'Trizepsdrücken über Kopf Band', 'Bankdips',
     'Stirndrücken Kurzhantel', 'Diamant-Liegestütze'],
   unterarme: ['Handgelenkcurls (Unterarme)', "Farmer's Walk"],
@@ -245,6 +245,10 @@ function machineFilter(list, g) {
   const any = EXERCISE_LIST.some(([n, , gr]) => gr === g && isMachine(n));
   return any ? list.filter(isMachine) : list;
 }
+// Neulinge und Einsteiger: zu schwere Übungen wählt die App nicht automatisch (User-Regel 2026-11-06)
+const BEGINNER_HARD = /^(dips \(|klimmzuge(?! mit band| assistiert)|beinheben hangend|knieheben hangend|nordic|einbeinige kniebeugen \(pistol|rudern langhantel|t-bar)/;
+// Neulinge zu Hause: leichtere Liegestütze
+const NEULING_HOME_HARD = /^liegestutze( eng| fusse|$)|^diamant/;
 const defaultPicks = g => (wizHome() && HOME_PICKS[g]) || (wizMachines() && MACHINE_PICKS[g]) || DEFAULT_PICKS[g];
 
 let wiz = null;  // Entwurf des Assistenten – erst „Plan speichern“ schreibt den Plan in data
@@ -280,10 +284,12 @@ function exercisesNeeded(g) {
 // wird mit der nächstbesten Übung aufgefüllt.
 function autoPicks(g) {
   const n = exercisesNeeded(g);
-  const existing = existingFor(g);
+  const tooHard = x => (needsCoach() && BEGINNER_HARD.test(norm(x))) || (wizHome() && wiz.level === 'neuling' && NEULING_HOME_HARD.test(norm(x)));
+  const existing = existingFor(g).filter(x => !tooHard(x));
   // Standard-Vorschläge zuerst, danach alle übrigen Übungen der Muskelgruppe aus der Liste
-  let pool = machineFilter(uniqueNames([...(defaultPicks(g) || []), ...byKind(EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name))]), g);
+  let pool = machineFilter(uniqueNames([...(g === 'brust' && wizHome() && wiz.level === 'neuling' ? ['Liegestütze erhöht'] : []), ...(defaultPicks(g) || []), ...byKind(EXERCISE_LIST.filter(([, , gr]) => gr === g).map(([name]) => name))]), g);
   // zu Hause: Ausweich-Übung nur, wenn ihr Vorbild nicht geht (z. B. Floor Press nur ohne Bank)
+  pool = pool.filter(x => !tooHard(x));
   if (wizHome()) pool = pool.filter(x => !(HOME_ALT[x] && pool.includes(HOME_ALT[x])));
   const picks = [];
   const free = list => list.filter(x => !picks.some(p => nameKey(p) === nameKey(x)));
@@ -548,10 +554,11 @@ const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
   const own = wiz.mode === 'own';
+  if (!own && !feat('wiz-name')) return '';  // Einfach: endet nach der Aufteilung, keine Schrittleiste
   const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Name', 'Fokus', 'Volumen', 'RIR', 'Übungen', 'Ende'];
   const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
-  return `<div class="pills wiz-steps">${labels.map((l, i) =>
-    `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
+  return `<div class="pills wiz-steps">${labels.map((l, i) => l === 'RIR' && !feat('wiz-rir') ? ''
+    : `<span class="pill ${i === cur ? 'now' : i < cur ? 'past' : ''}">${l}</span>`).join('')}</div>`;
 }
 
 // Reihenfolge der Schritte bis zur Übungsauswahl (hängt von Aufteilung und Vorlage ab)
@@ -640,7 +647,7 @@ function renderWizLevel() {
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🎓</span><h2>Wie viel Trainingserfahrung hast du?</h2></div>
       <p class="hint wiz-q-explain">Danach richtet die App deinen Plan aus: wie viele Trainingstage sie empfiehlt, mit wie vielen Sätzen
-        du startest und wie nah du ans Muskelversagen gehst. Ehrlich einschätzen lohnt sich – steigern kannst du jederzeit.</p>
+        du startest und ${feat('tr-rir-input') ? 'wie nah du ans Muskelversagen gehst' : 'wie anstrengend die Sätze werden'}. Ehrlich einschätzen lohnt sich – steigern kannst du jederzeit.</p>
       ${opts}
     </div>${navRow(wizPrev(), null)}`;
 }
@@ -707,8 +714,13 @@ function homeEqHtml() {
       <div class="variants">${flag('bar', 'Klimmzugstange')}${flag('dip', 'Dip-Barren')}</div>
       <p class="hint">Hantelbank:</p>
       <div class="variants">${['Keine', 'Flachbank', 'Flach- und Schrägbank'].map((l, i) => chip((h.bench || 0) === i, 'heq-bench', `data-v="${i}"`, l)).join('')}</div></div>
-    <p class="hint heq-sum">Damit gehen <b>${homeExCount(h)}</b> Übungen aus der Bibliothek – Stuhl, Sofa, Tisch und Treppe sind immer dabei.</p>`;
+    <p class="hint heq-sum">Damit gehen <b>${homeExCount(h)}</b> Übungen aus der Bibliothek – Stuhl, Sofa, Tisch und Treppe sind immer dabei.</p>
+    ${(miss => miss.length ? `<p class="hint heq-miss">⚠️ Mit dieser Ausrüstung gibt es keine Übung für: <b>${miss.map(g => MUSCLES[g]).join(', ')}</b>.${(h.bands || []).length ? '' : ' Schon ein Widerstandsband hilft.'}</p>` : '')(PLAN_GROUPS.filter(g => !homeAvail(g)))}`;
 }
+// Wie viele Übungen gehen für eine Muskelgruppe mit der Ausrüstung?
+const homeAvail = g => EXERCISE_LIST.filter(([n, , gr]) => gr === g && homeOk(n, data.home)).length;
+// Tage einer Vorlage, die mit dieser Ausrüstung nur sehr wenige Übungen hätten
+const homeThinDays = tpl => tpl.days.filter(([, , groups]) => groups.reduce((a, g) => a + Math.min(homeAvail(g), ['brust', 'lat', 'quadrizeps'].includes(g) ? 3 : 2), 0) <= 3).map(d => d[0]);
 // Plan-Reiter (Plan „Zu Hause“): Kurzfassung mit „Ändern“
 const homeEqCard = () => `<div class="card per-week home-eq-card">
     <p class="per-week-title">🏠 Deine Ausrüstung</p><p class="hint">${esc(homeSummary(data.home))}</p>
@@ -842,7 +854,8 @@ function renderWizSplit() {
       statt Pläne, bei denen jede Muskelgruppe nur einen eigenen Tag hat. Solche Vorlagen stehen oben.`,
     simpleOnly + list.map(s => `<button class="split-opt cat ${wiz.split === s.id ? 'on' : ''}" data-action="wiz-split" data-id="${s.id}">
       <span class="cat-icon">${catOf(s).icon || '📋'}</span><b>${s.label}</b>
-      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}<br>${freqLine(s)}</small>
+      <small>${s.tag} · ${s.days.map(d => d[0]).join(' · ')}${s.note ? `<br>${s.note}` : ''}<br>${freqLine(s)}${(thin => thin.length
+        ? `<br><span class="freq-bad">⚠️ Mit deiner Ausrüstung wäre ${thin.map(x => `„${x}“`).join(', ')} sehr kurz – besser Ganzkörper oder Ober-/Unterkörper</span>` : '')(wizHome() ? homeThinDays(s) : [])}</small>
     </button>`).join('') +
     (feat('wiz-custom') ? `<button class="split-opt cat" data-action="wiz-custom">
       <span class="cat-icon">🛠️</span><b>Eigene Aufteilung</b><small>Trainingstage selbst zusammenstellen</small></button>` : ''), false);
@@ -1020,7 +1033,7 @@ function renderWizDeload() {
     <div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">😮‍💨</span><h2>Wie soll dein Deload ablaufen?</h2></div>
       <p class="hint wiz-q-explain"><b>Was ist ein Deload?</b> Eine bewusst leichte Trainingswoche: halb so viele Sätze, etwa 15 %
-        weniger Gewicht und mindestens ${DELOAD_RIR} Wiederholungen im Tank. Über die Aufbauwochen sammelt sich Ermüdung an – in
+        weniger Gewicht oder weniger Wiederholungen und mindestens ${DELOAD_RIR} Wiederholungen im Tank. Über die Aufbauwochen sammelt sich Ermüdung an – in
         Muskeln, Sehnen, Gelenken und im Nervensystem. Im Deload baut sie sich ab, ohne dass du Muskeln oder Kraft verlierst.
         Danach bist du meist stärker als vorher, und der nächste Zyklus beginnt mit der Intro-Woche.</p>
       ${opt('auto', 'Automatisch (empfohlen)', `Nach deinen ${wiz.weeks} Trainingswochen folgt immer automatisch die Deload-Woche – du

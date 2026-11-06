@@ -277,7 +277,7 @@ Object.assign(actions, {
     else Object.assign(plan, { own: true, progression: { volume: false, load: false } });
     data.plans.push(plan);
     data.activePlanId = plan.id;
-    setRound(newCycleId(), 1, (data.cycle.no || 0) + 1);
+    setRound(newCycleId(), 1, 1);  // wie im Assistenten: neuer Plan = Zyklus 1
     saveData();
     tpImport = null;
     toast(`„${plan.name}“ übernommen und aktiv ✔`);

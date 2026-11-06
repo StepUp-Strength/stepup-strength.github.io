@@ -131,7 +131,7 @@ function nutTrainAdapt() {
   return n.phase === 'diet' || (n.phase === 'minicut' && nutMinicutStage(n) === 'cut');
 }
 
-const NUT_ADAPT_TEXT = 'Du trainierst 1 Wiederholung näher am Muskelversagen, dafür steigt das Volumen von der Intro- bis zur letzten Zykluswoche nur halb so stark an (z. B. 10 → 13 statt 10 → 16 Sätze pro Woche) und die Gewichte werden nicht gesteigert (höchstens 1 Wiederholung mehr als beim letzten Mal). So hältst du deine Kraft, ohne dich im Defizit zu überfordern.';
+const NUT_ADAPT_TEXT = 'Du trainierst 1 Wiederholung näher am Muskelversagen, dafür steigt das Volumen von der Intro- bis zur letzten Zykluswoche nur halb so stark an (z. B. 10 → 13 statt 10 → 16 Sätze pro Woche) und die App erzwingt keine Gewichtssteigerung: Das Gewicht steigt nur, wenn du den Plan klar erfüllt hast – sonst höchstens 1 Wiederholung mehr als beim letzten Mal. So hältst du deine Kraft, ohne dich im Defizit zu überfordern.';
 
 // Frage beim Einrichten von Diät und Minicut
 function nutTrainQuestion(d, action = 'nut-train-pick') {
@@ -163,11 +163,11 @@ function nutStartLine() {
   const maint = (n.phase === 'minicut' && nutMinicutStage(n) !== 'cut') || nutBreakNow(n);
   if (!nutReady(n)) return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
       <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel: Angaben noch ergänzen
-        ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
+        ${nutTrainAdapt() ? `<small>${feat('tr-rir-input') ? 'Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank' : 'Training an die Phase angepasst'}</small>` : ''}</span></button>`;
   if (kg == null) return '';
   return `<button class="nut-strip" data-action="tab" data-tab="nutrition"><span class="nut-strip-icon" aria-hidden="true">${ph.icon}</span>
       <span><b>${ph.label}</b>${maint ? ' · Erhaltungswoche' : ''} · Tagesziel ${nutKcal(nutForDay(nutCalc(n, kg)).kcal)} kcal${(t => t && t.kcal != null ? ` · heute ${nutKcal(t.kcal)}` : "")(intakeOn(todayISO()))}
-        ${nutTrainAdapt() ? '<small>Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank</small>' : ''}</span></button>`;
+        ${nutTrainAdapt() ? `<small>${feat('tr-rir-input') ? 'Training angepasst: halber Volumenanstieg, 1 Wdh. weniger im Tank' : 'Training an die Phase angepasst'}</small>` : ''}</span></button>`;
 }
 
 // Defizit-Wochen zählen ohne Erhaltungswochen dazwischen (Deload, siehe nutBreakNow); danach Erhaltungswoche (maintFrom,
@@ -212,10 +212,16 @@ function nutSync() {
   if (!brk && n.breakOn) {
     // Erhaltungswoche vorbei: Gewichtsverlauf und gemessener Bedarf beginnen danach neu (Wasser schwankt) –
     // nicht, wenn sie noch am selben Tag abgewählt wurde
-    const days = daysSince(n.breakOn);
+    const days = daysSince(n.breakOn), from = n.breakOn;
     n.breakTotal = (n.breakTotal || 0) + days;
     n.breakOn = null;
     if (days > 0) { n.adjustAt = today; n.breakEnd = today; }
+    // Minicut: Lag der Deload direkt am Ende (höchstens 3 Defizit-Tage übrig), gilt er als die Erhaltungswoche –
+    // sonst folgten zwei Deload-Wochen hintereinander
+    if (days > 0 && n.phase === 'minicut' && !n.maintFrom) {
+      const left = Math.min(n.weeks || NUT_MINICUT_MAX, NUT_MINICUT_MAX) * 7 - (daysSince(n.since) - n.breakTotal);
+      if (left <= 3) n.maintFrom = from;
+    }
     changed = true;
   }
   if (n.phase === 'minicut' && !n.maintFrom && nutMinicutStage(n) === 'maint') {
@@ -1065,8 +1071,9 @@ function nutTrainCard(n) {
   if (n.phase !== 'diet' && n.phase !== 'minicut') return '';
   return `<div class="card nut-train">
         <p><b>🏋️ Training ${n.trainAdapt ? (n.phase === 'minicut' ? 'an den Minicut' : 'an die Diät') + ' angepasst' : 'läuft unverändert'}</b></p>
-        <p class="hint nut-small">${n.trainAdapt ? (nutTrainAdapt() ? NUT_ADAPT_TEXT : 'In der Erhaltungswoche läuft das Training wieder normal (am besten als Deload).')
-          : 'Du kannst den Plan an die Phase anpassen lassen: halber Volumenanstieg und 1 Wdh. näher am Muskelversagen.'}</p>
+        <p class="hint nut-small">${n.trainAdapt ? (nutTrainAdapt() ? (feat('tr-rir-input') ? NUT_ADAPT_TEXT : 'Die Sätze werden etwas fordernder, dafür kommen im Zyklus weniger Sätze dazu.') : 'In der Erhaltungswoche läuft das Training wieder normal (am besten als Deload).')
+          : feat('tr-rir-input') ? 'Du kannst den Plan an die Phase anpassen lassen: halber Volumenanstieg und 1 Wdh. näher am Muskelversagen.'
+            : 'Du kannst den Plan an die Phase anpassen lassen: etwas fordernder, dafür kommen im Zyklus weniger Sätze dazu.'}</p>
         <button class="btn" data-action="nut-train-toggle">${n.trainAdapt ? 'Anpassung ausschalten' : 'Training anpassen'}</button></div>`;
 }
 

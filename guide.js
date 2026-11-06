@@ -581,6 +581,12 @@ const GUIDE_EX = {
   'Rudern T-Bar brustgestützt': { setup: ['Brust ans Polster legen, Füße fest auf die Tritte.', 'Griffe mit gestreckten Armen fassen.'] },
   'Meadows Row': { setup: ['Seitlich neben das Stangenende stellen, Schrittstellung, Rücken gerade vorgebeugt.', 'Stangenende mit einer Hand im Obergriff fassen, andere Hand auf dem Knie.'] },
   'Rudern Kabelzug stehend': { setup: ['Seilzug auf Brust- bis Bauchhöhe, Griff fassen, einen Schritt zurück.', 'Knie leicht gebeugt, Oberkörper aufrecht.'] },
+  'Rudern umgekehrt Untergriff (Tisch oder Stange)': {
+    setup: ['Unter einen stabilen Tisch (oder eine tiefe Stange) legen, Kante bzw. Stange schulterbreit greifen – die Handflächen zeigen zu dir.', 'Körper gestreckt, Fersen am Boden – Füße näher heran = leichter.'],
+    steps: ['Brust zur Kante ziehen, die Ellbogen bleiben nah am Körper.', 'Oben kurz halten und den Bizeps anspannen.', 'Langsam ablassen, bis die Arme gestreckt sind.'],
+    mistakes: ['Hüfte hängt durch.', 'Nur halbe Bewegung.', 'Mit Schwung aus der Hüfte ziehen.'],
+    safety: 'Vorher prüfen, dass der Tisch dein Gewicht sicher trägt und nicht kippt.',
+  },
   'Rudern umgekehrt (Tisch oder Stange)': {
     setup: ['Unter einen stabilen Tisch (oder eine tiefe Stange) legen, Kante bzw. Stange schulterbreit greifen.', 'Körper gestreckt, Fersen am Boden – Füße näher heran = leichter.'],
     steps: ['Brust zur Kante ziehen, der Körper bleibt eine gerade Linie.', 'Oben die Schulterblätter zusammendrücken.', 'Langsam ablassen, bis die Arme gestreckt sind.'],
@@ -795,6 +801,7 @@ const SHORT_EX = {
     tips: ['Oberkörper bleibt ruhig.', 'Bauch fest.'] },
   'Rudern Maschine brustgestützt': { steps: ['Sitz so einstellen, dass die Griffe auf Brusthöhe sind, Brust ans Polster.', 'Griffe zum Körper ziehen, Schulterblätter zusammen.', 'Langsam nach vorn lassen.'],
     tips: ['Brust bleibt am Polster.', 'Schultern unten lassen.'] },
+  'Rudern umgekehrt Untergriff (Tisch oder Stange)': { steps: ['Unter einen stabilen Tisch (oder eine tiefe Stange) legen, im Untergriff fassen.', 'Körper gestreckt, Brust zur Kante ziehen, Ellbogen nah am Körper.', 'Langsam ablassen.'], tips: ['Füße näher heran = leichter.', 'Tisch vorher auf Stabilität prüfen.'] },
   'Rudern umgekehrt (Tisch oder Stange)': { steps: ['Unter einen stabilen Tisch (oder eine tiefe Stange) legen, Kante greifen.', 'Körper gestreckt, Brust zur Kante ziehen.', 'Langsam ablassen.'],
     tips: ['Füße näher heran = leichter.', 'Vorher prüfen, dass der Tisch sicher steht.'] },
   'Rudern Band sitzend': { steps: ['Auf den Boden setzen, Band um die Fußsohlen, Rücken gerade.', 'Griffe zum Bauch ziehen, Schulterblätter zusammen.', 'Langsam zurück.'],

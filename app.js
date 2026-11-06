@@ -112,6 +112,7 @@ function upgradeData(d) {
     for (const s of d.sessions || []) (s.entries || []).forEach(fix);
   }
   if (!d.tour) d.tour = { seen: {}, off: false };       // Einführungen: gesehene Schritte (tour.js)
+  if (!d.hintOff) d.hintOff = { all: false, ex: {}, low: {} };  // ausgeblendete Hinweise im Training (siehe bwHint)
   if (d.home === undefined) d.home = null;              // Heim-Ausrüstung { db:[kg], kb:[kg], bands:[1–4], anchor, bar, bench 0/1/2, dip }
   if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
@@ -409,7 +410,7 @@ const fmtTons = kg => kg >= 1000
   : `${Math.round(kg).toLocaleString('de-DE')} kg`;
 
 function fmtSet(s) {
-  const tank = (s.rir != null ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
+  const tank = (s.rir != null && feat('tr-rir-input') ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
   if (s.weight == null) return `${s.reps} Wdh.${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
   return `${fmtNum(s.weight)} kg × ${s.reps}${tank}`;
@@ -573,10 +574,10 @@ function progression(first, t) {
 }
 
 function resultText(r) {
-  if (r.diff >= 1) return 'Ziel übertroffen → steigern';
-  if (r.diff >= 0) return 'Ziel erreicht → kleiner Schritt hoch';
-  if (r.deload) return 'Ziel deutlich verfehlt → Gewicht reduziert';
-  return 'Ziel verfehlt → Gewicht halten';
+  if (r.diff >= 1) return 'Ziel übertroffen – es geht voran';
+  if (r.diff >= 0) return 'Ziel erreicht ✓';
+  if (r.deload) return 'Deutlich verfehlt – die App nimmt etwas zurück';
+  return 'Knapp verfehlt – die App bleibt vorsichtig';
 }
 
 // Pro Satz wird man schwächer: so viele Wdh. kostet die Ermüdung von Satz zu Satz
@@ -627,12 +628,15 @@ const goalReps = (t, i) => Math.max(minReps(), t.reps - FATIGUE * i);
 
 // Nächste Gewichtsstufe, sobald die Leistung (cap Wdh. bis zum Versagen bei w) reicht,
 // um mit w + step noch goal Wdh. mit Ziel-Tank (nach k Sätzen Ermüdung) zu schaffen.
-function stepUp(cap, w, t, k, goal) {
+// Großer Sprung (kleine Gewichte): es reicht 2 Wdh. unter dem Ziel, sonst liefen die Wdh. davon (User-Regel 2026-11-06);
+// strict = das volle Ziel muss sicher klappen (Diät: Steigerung nur, wenn der Plan wirklich erfüllt wurde)
+function stepUp(cap, w, t, k, goal, strict = false) {
   if (w == null || (!t.step && !t.weights)) return null;
   const up = wUp(w, t);
   if (up == null) return null;  // schon das schwerste vorhandene Gewicht -> weiter über die Wdh.
   const reps = Math.floor(capacityAt(cap, w, up) - t.rir - FATIGUE * k + 1e-9);
-  return reps >= goal ? { weight: up, reps } : null;
+  const need = !strict && bigStep(w, up - w) ? Math.max(minReps(), goal - 2) : goal;
+  return reps >= need ? { weight: up, reps } : null;
 }
 
 function setInput(field, ei, j, value) {
@@ -1383,7 +1387,7 @@ function trimToTime(entries, limit) {
   return { limit, before, after: time(), dropped, cut };
 }
 
-// Deload: Volumen halbieren (Sätze), Gewicht −15 %, nie schwerer als DELOAD_RIR im Tank.
+// Deload: Volumen halbieren (Sätze), Gewicht −15 % (siehe deloadTarget), mindestens DELOAD_RIR im Tank.
 // base = normales Ziel, damit man es beim Ersetzen der Übung neu berechnen kann.
 const deloadSets = sets => Math.max(1, Math.round(sets / 2));
 // Sätze pro Woche: Start in der Intro-Woche, Steigerung erst am Zyklusende –
@@ -1397,14 +1401,23 @@ function setsForWeek(ex, week, buildWeeks, half = false) {
 
 // ref: erster normaler Satz der letzten Trainingswoche (lastWorkSet) – Bezug für Gewicht und Wdh. (User-Regel
 // 2026-11-03); ohne Training mit Gewicht wie bisher aus „Max. bei 10 Wdh.“
+// Bleibt das Gewicht gerundet gleich (kleine Gewichte): nächstniedrigere Stufe, wenn sie höchstens ein Drittel leichter ist –
+// sonst gleiches Gewicht mit etwa einem Drittel weniger Wdh., nie unter minReps() (User-Regel 2026-11-06)
 function deloadTarget(t, ref) {
   const normal = ref ? ref.weight : targetWeight(t);
+  let weight = normal != null ? wSnap(normal * DELOAD_WEIGHT, t) : null;
+  let reps = ref ? Math.max(minReps(), ref.reps) : t.reps;
+  if (normal != null && weight >= normal - 1e-9) {
+    const down = wDown(normal, t);
+    if (down != null && down >= normal * 2 / 3 - 1e-9) weight = down;
+    else reps = Math.max(minReps(), Math.round(reps * 2 / 3));
+  }
   return {
     ...t,
-    ...(ref ? { reps: Math.max(minReps(), ref.reps) } : {}),
+    reps,
     sets: t.fixedSets ? t.sets : deloadSets(t.sets),  // automatisch verteilt: schon halbiert
     rir: Math.max(t.rir, DELOAD_RIR),
-    weight: normal != null ? wSnap(normal * DELOAD_WEIGHT, t) : null,
+    weight,
     deload: true,
     base: t,
   };
@@ -1493,7 +1506,7 @@ const cmpPlus = gap => Math.max(1, Math.round(gap / cmpWeeksPerRep()));
 // Vergleichswoche ohne Verschiebung: dieselbe Woche (und derselbe Durchgang) im vorherigen Zyklus
 // Erklärung bei versetztem Vergleich (leer ohne Verschiebung)
 function shiftText(start, week) {
-  const sh = cycleShift(start);
+  const sh = feat('tr-rir-input') ? cycleShift(start) : null;  // Einfach: läuft im Hintergrund, ohne Erklärtext
   return sh ? `Vergleich ist Woche ${week + sh.by} des letzten Zyklus (Verlängerung berücksichtigt) – das Gewicht kommt von dort, Wdh. und Tank wie in dieser Woche.` : '';
 }
 
@@ -1552,6 +1565,8 @@ function weightForGoal(cap, w, t, k, goal) {
   // Leichtes Gewicht (eine Stufe ist ein großer Sprung): erst die Wdh. senken, solange es höchstens 3 unter dem
   // Ziel und mind. minReps() sind – statt zwischen zwei Gewichten hin- und herzuspringen (User-Regel 2026-11-03)
   const below = wDown(w, t);
+  // Wäre die nächste Stufe über 25 % leichter: Gewicht halten, Wdh. notfalls bis zur Mindestgrenze (User-Regel 2026-11-06)
+  if ((below == null || (w - below) / w > 0.25) && repsAt(w) >= minReps()) return { weight: w, reps: Math.min(goal, repsAt(w)) };
   if ((below == null || bigStep(w, w - below)) && repsAt(w) >= Math.max(minReps(), goal - 3)) return { weight: w, reps: Math.min(goal, repsAt(w)) };
   let wt = w;
   while (repsAt(wt) < goal) { const d = wDown(wt, t); if (d == null) break; wt = d; }
@@ -1671,7 +1686,7 @@ function nextPreview(en) {
       why = 'Progression aus';
     } else {
       const r = refProposal(t, { sets: doneSets, planned: en.planned, target: en.target }, cmp, iNext, k, v);
-      p = r.p;
+      p = adjustProposal(r.p, r.rule, t, ofVariant(doneSets, v), ofVariant(cmp && cmp.sets, v), iNext, k).p;
       why = r.rule === 'brake' ? 'Ziel verfehlt → leichter' : r.hold ? 'halten' : r.fromCmp ? 'Vergleich letzter Zyklus' : '';
     }
     p = atLeastMinReps(p, t);
@@ -1811,6 +1826,53 @@ function refProposal(t, prev, cmp, i, k, v) {
 // Vorschlag für Satz i mit Variante v: Werte vom letzten Mal (Progression aus) bzw. refProposal.
 // Ohne Bezug: Vorschlag aus Plan/Progression (en.base).
 // Varianten nutzen zusätzlich die Vorwoche und notfalls ihr letztes Training als Bezug.
+// Letzte Regeln für einen Vorschlag (Training und Vorschau „Nächste Woche“): Diät, weiche Grenze, Anfänger.
+// prevV/cmpV: Sätze der Vorwoche bzw. des Vergleichstrainings (derselben Ausführung)
+function adjustProposal(p, rule, t, prevV, cmpV, i, k) {
+  // Training an die Diät angepasst: der Plan erzwingt keine Gewichtssteigerung (Vorwoche, sonst letzter Zyklus) –
+  // höher nur, wenn die echte letzte Leistung das Ziel auf der nächsten Stufe hergibt (User-Regel 2026-11-06),
+  // sonst höchstens 1 Wdh. mehr, soweit es das Tank-Ziel hergibt (User-Regel 2026-11-02)
+  if (t.noLoadUp && p && p.weight != null && rule !== 'brake') {
+    const ref = prevV.length ? refAt(prevV, k) : cmpV.length ? refAt(cmpV, k) : null;
+    if (ref && ref.weight != null && ref.reps != null && p.weight > ref.weight) {
+      const cap = ref.reps + (ref.rir != null ? ref.rir : t.rir);
+      const earned = stepUp(cap, ref.weight, { step: 2.5, ...t }, 0, goalReps(t, i), true);
+      if (earned) p = earned;
+      else {
+        p = { weight: ref.weight, reps: Math.max(ref.reps, Math.min(ref.reps + 1, Math.floor(cap - t.rir + 1e-9))) };
+        rule = 'diet';
+      }
+    }
+  }
+  // Über REP_SOFT_MAX Wdh.: nächste Stufe, wenn sie laut „Max. bei 10 Wdh.“ für die Mindest-Wdh. reicht – sonst bleibt
+  // es beim höheren Vorschlag, dazu ein Hinweis auf schwerere Varianten (bwHint). Nicht im 2. Training der Woche.
+  // Diät: nur wenn das volle Ziel auf der nächsten Stufe sicher klappt.
+  if (!t.own && !t.hold && !t.deload && rule !== 'week' && p && p.weight != null && p.reps > REP_SOFT_MAX) {
+    const up = wUp(p.weight, t);
+    if (up != null && t.noLoadUp) {
+      const earned = stepUp(p.reps + t.rir, p.weight, { step: 2.5, ...t }, k, goalReps(t, i), true);
+      if (earned) p = earned;
+    } else if (up != null && t.max10 != null) {
+      const reps = Math.floor(10 + (1 - up / t.max10) / 0.025 - t.rir - FATIGUE * k + 1e-9);
+      // Wdh. höchstens so viele, wie die Leistung auf der alten Stufe hergibt („Max.“ kann zu hoch sein)
+      const byCap = Math.floor(capacityAt(p.reps + t.rir, p.weight, up) - t.rir + 1e-9);
+      if (reps >= minReps()) p = { weight: up, reps: Math.max(minReps(), Math.min(reps, byCap)) };
+    }
+  }
+  // Neulinge und Einsteiger: alle Sätze der Vorwoche bei mindestens 15 Wdh. -> nächste Gewichtsstufe (User-Regel 2026-11-06).
+  // Nur wenn dort die Mindest-Wdh. überhaupt möglich sind – sonst wäre der Sprung zu groß und es ginge gleich wieder zurück.
+  if (!t.own && !t.hold && !t.deload && rule !== 'week' && rule !== 'brake' && p && p.weight != null && beginnerPlan()
+    && prevV.length && prevV.every(x => x.weight != null && x.reps != null && x.reps >= BEGINNER_UP_REPS)) {
+    const src = refAt(prevV, k);
+    const up = p.weight <= src.weight ? wUp(src.weight, t) : null;
+    if (up != null) {
+      const n = capacityAt(src.reps + (src.rir != null ? src.rir : t.rir), src.weight, up);
+      if (n >= minReps()) p = { weight: up, reps: Math.max(minReps(), Math.floor(n - t.rir + 1e-9)) };
+    }
+  }
+  return { p, rule };
+}
+
 function proposeSet(en, i, v) {
   const t = en.target;
   const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
@@ -1837,17 +1899,7 @@ function proposeSet(en, i, v) {
     const cap = { weight: f.weight, reps: f.reps };
     if (cap.reps != null && (!p || lighterSet(cap, p))) { p = cap; rule = 'week'; }
   }
-  // Training an die Diät angepasst: kein höheres Gewicht als beim letzten Mal (Vorwoche, sonst letzter Zyklus) –
-  // stattdessen höchstens 1 Wdh. mehr, soweit es das Tank-Ziel hergibt (User-Regel 2026-11-02)
-  if (t.noLoadUp && p && p.weight != null && rule !== 'brake') {
-    const prevV = ofVariant(en.prevWeek && en.prevWeek.sets, v), cmpV = ofVariant(en.compare && en.compare.sets, v);
-    const ref = prevV.length ? refAt(prevV, k) : cmpV.length ? refAt(cmpV, k) : null;
-    if (ref && ref.weight != null && ref.reps != null && p.weight > ref.weight) {
-      const cap = ref.reps + (ref.rir != null ? ref.rir : t.rir);
-      p = { weight: ref.weight, reps: Math.max(ref.reps, Math.min(ref.reps + 1, Math.floor(cap - t.rir + 1e-9))) };
-      rule = 'diet';
-    }
-  }
+  ({ p, rule } = adjustProposal(p, rule, t, ofVariant(en.prevWeek && en.prevWeek.sets, v), ofVariant(en.compare && en.compare.sets, v), i, k));
   if (!p) {
     const b = en.base[Math.min(i, en.base.length - 1)];
     p = { weight: parseNum(b.weight), reps: parseNum(b.reps) };
@@ -1874,7 +1926,7 @@ function applyPenalty(set, t, pen) {
   let reps = r - pen;
   let w = parseNum(set.weight);
   if (reps < minReps() && w != null) ({ weight: w, reps } = planSet(reps + t.rir, w, { step: 2.5, ...t }, 0));
-  if (w == null && t.bodyweight) reps = Math.max(minReps(), reps);
+  if (w == null) reps = Math.max(minReps(), reps);
   return {
     ...set,
     weight: w != null ? fmtNum(w) : set.weight,
@@ -2316,14 +2368,20 @@ function cycleCard(ci) {
     : `Zyklus ${ci.cycle} · ${weekLabel(ci.week)}${ci.intro ? '' : ci.extra ? ' · Verlängerung' : ` von ${ci.buildWeeks}`}`;
   const self = selfDeload();
   const sub = ci.deload
-    ? `Halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
+    ? (feat('tr-rir-input') ? `Halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
+      : 'Halbe Sätze und etwas leichter – jeder Satz sollte sich locker anfühlen. Danach beginnt der nächste Zyklus.')
     : shiftText(ci.cycleStart, ci.week) && !ci.extra
       ? `${ci.intro ? 'Start-Sätze laut Plan. ' : ''}${shiftText(ci.cycleStart, ci.week)}`
     : ci.intro
-      ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
+      ? (ci.cycle === 1 ? 'Du steigst etwas leichter ein und findest deine Gewichte.'
+        : feat('tr-rir-input') ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
+        : 'Start-Sätze laut Plan. Die App schlägt dir passende Werte vor.')
       : ci.extra
-        ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche – Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
-        : `Werte derselben Woche im letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`;
+        ? (feat('tr-rir-input') ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche – Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
+          : 'Weiter wie in der letzten Aufbauwoche, bis du den Deload einlegst.')
+        : ci.cycle === 1 ? 'Die App baut auf deinen Werten der Vorwoche auf.'
+        : feat('tr-rir-input') ? `Werte derselben Woche im letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
+        : 'Die App schlägt dir passende Werte vor.';
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
   return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
@@ -2492,7 +2550,7 @@ function renderStart() {
   const lastOwn = sessions.find(s => findDay(s.dayId));
   const from = lastOwn ? data.days.indexOf(findDay(lastOwn.dayId)) + 1 : 0;
   const order = data.days.map((_, i) => data.days[(from + i) % data.days.length]);
-  const nextDay = !draft && lastOwn ? order.find(d => open.has(d.id)) : null;
+  const nextDay = !draft ? order.find(d => open.has(d.id)) : null;
   const skippedIds = roundSkipped(ci.cycleStart, ci.week);
   data.days.forEach((day, i) => {
     const last = sessions.find(s => s.dayId === day.id);
@@ -2539,10 +2597,12 @@ function renderTraining() {
   let h = draft.own
     ? '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>'
     : draft.deload
-    ? `<p class="deload-note">Deload-Woche: halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, nie schwerer als ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
+    ? `<p class="deload-note">${feat('tr-rir-input') ? `Deload-Woche: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.`
+      : 'Deload-Woche: halbe Sätze und etwas leichter – jeder Satz sollte sich locker anfühlen.'}</p>`
     : draft.intro
-      ? `<p class="intro-note">Intro-Woche: Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
-        || `Vergleich ist die Intro-Woche des letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`}</p>`
+      ? `<p class="intro-note">Intro-Woche: ${draft.cycleNo === 1 ? 'Du steigst etwas leichter ein und findest deine Gewichte.'
+        : `Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
+          || (feat('tr-rir-input') ? `Vergleich ist die Intro-Woche des letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.` : '')}`}</p>`
       : '';
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
@@ -2615,14 +2675,17 @@ function renderTraining() {
     const bandEx = body && en.target && en.target.band;
     if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen – ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
     else if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
-    if (body || (en.target && en.target.weights)) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
+    if (en.target && !en.target.own) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
     if (en.target && en.target.own) {
       h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
     } else if (en.target) {
       const t = en.target;
+      // Heute: wirklich vorgeschlagene Wdh. (User-Regel 2026-11-06), nicht der Startwert des Plans
+      const pr = (en.planned || []).map(x => x && x.reps).filter(x => x != null);
+      const today = pr.length ? (Math.min(...pr) === Math.max(...pr) ? pr[0] : `${Math.max(...pr)}–${Math.min(...pr)}`) : t.reps;
       h += feat('tr-tank-target')
-        ? `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · Ø ${targetRirText(t)} im Tank</p>`
-        : `<p class="target">Ziel: ${t.sets} × ${t.reps} Wdh. · ${feelTargetText(t)}</p>`;
+        ? `<p class="target">Heute: ${t.sets} × ${today} Wdh. · Ø ${targetRirText(t)} im Tank</p>`
+        : `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${feelTargetText(t)}</p>`;
     }
     // Max. bei 10 Wdh., Steigerung und Ausführung kompakt nebeneinander; die Auswahl klappt darunter auf
     const t = en.target;
@@ -2807,13 +2870,13 @@ function renderReplace(en, ei) {
     <input class="inp" type="text" data-field="rep-name" data-ei="${ei}"
       autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
     <div class="suggest" hidden></div>
-    <label class="row">
+    <label class="row" ${feat('tr-max') ? '' : 'style="display:none"'}>
       <span>Max. kg bei 10 Wdh.</span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
         data-field="rep-max" data-ei="${ei}" placeholder="kg">
     </label>
-    <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
-    ${t ? `<p class="hint">Übernimmt das Ziel: ${t.sets} × ${t.reps} Wdh. · ${t.rir} im Tank. Der Plan bleibt unverändert.</p>` : ''}
+    ${feat('tr-max') ? `<p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>` : ''}
+    ${t ? `<p class="hint">Übernimmt das Ziel: ${t.sets} × ${t.reps} Wdh.${feat('tr-rir-input') ? ` · ${t.rir} im Tank` : ''}. Der Plan bleibt unverändert.</p>` : ''}
     <div class="row">
       <button class="btn" data-action="rep-cancel" data-ei="${ei}">Abbrechen</button>
       <button class="btn primary" data-action="rep-ok" data-ei="${ei}">Ersetzen</button>
@@ -2934,7 +2997,7 @@ function overloadHtml(own = false) {
     <ul><li><b>Wiederholungen:</b> mit demselben Gewicht ein, zwei Wiederholungen mehr.</li>
       <li><b>Gewicht:</b> sind die Wiederholungen geschafft, geht es eine kleine Stufe schwerer – dafür wieder mit etwas weniger Wiederholungen.</li>
       <li><b>Sätze:</b> von Woche zu Woche kommen Sätze dazu (Volumen).</li>
-      <li><b>Anstrengung:</b> die Sätze werden etwas näher an deine Grenze gebracht – es bleibt weniger im Tank.</li></ul>
+      <li><b>Anstrengung:</b> die Sätze werden etwas näher an deine Grenze gebracht${feat('tr-rir-input') ? ' – es bleibt weniger im Tank' : ''}.</li></ul>
     <p>Beispiel: 40 kg × 10 → 40 kg × 11 → 40 kg × 12 → 42,5 kg × 10 → …</p>
     <h3>Worauf es ankommt</h3>
     <ul><li><b>Kleine Schritte:</b> nicht jedes Mal alles auf einmal – lieber langsam und dafür lange steigern.</li>
@@ -3011,7 +3074,7 @@ function cycleAdjustHtml(ci) {
         <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche – z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
         ${ci.deload ? '' : `<button class="btn" data-action="cyc-end" data-m="newdl">🩹 Neuer Zyklus – mit der Deload-Woche starten</button>
         <p class="hint">Nach Krankheit oder längerer Pause: Du steigst ab sofort mit der leichten Deload-Woche wieder ein (halbe Sätze,
-          15 % weniger Gewicht), danach geht es mit der Intro-Woche weiter.</p>`}
+          15 % weniger Gewicht oder weniger Wdh.), danach geht es mit der Intro-Woche weiter.</p>`}
         <button class="btn center" data-action="cyc-end-cancel">Abbrechen</button>
       </div>`;
   }
@@ -3046,7 +3109,7 @@ function periodCard(c, active) {
       <p class="hint">${selfDeload()
         ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm, z. B. unter „⚙️ Zyklus anpassen“ über „Deload“.'
         : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
-        Deload: halbe Sätze, 15 % weniger Gewicht als in der letzten Trainingswoche, nie schwerer als ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
+        Deload: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
   }
   if (feat('plan-week-prog')) h += progressionTable();
   if (feat('plan-rir')) h += rirTable(c.buildWeeks);
@@ -3666,7 +3729,7 @@ function weekPlanHtml(week, deload, only = null) {
     h += `<div class="card week-plan"><p class="week-plan-head"><b>${esc(day.name)}</b>${times > 1 ? ` <span class="badge">${times}×</span>` : ''}
       ${est ? `<small>${estText(est)}</small>` : ''}</p><ul class="week-plan-list">${items}</ul></div>`;
   }
-  return h + `<p class="hint">${deload ? 'Deload: halbe Sätze, etwa 15 % weniger Gewicht als in der letzten Trainingswoche.'
+  return h + `<p class="hint">${deload ? 'Deload: halbe Sätze, etwa 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche.'
     : 'Sätze × Wiederholungen laut Plan. Die Gewichte schlägt die App im Training vor – passend zu dem, was du davor geschafft hast.'}</p>`;
 }
 
@@ -3772,7 +3835,7 @@ function renderSession({ id, fresh, edit, week }) {
     `${feat('session-edit') ? `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button>` : ''}<ul class="list">`;
   for (const e of s.entries) {
     const res = e.result
-      ? `<div class="result">${resultText(e.result)}<br>Nächstes Mal: <b>${fmtNum(e.result.next)} kg</b></div>`
+      ? `<div class="result">${resultText(e.result)}</div>`
       : '';
     const instead = e.replacedFrom ? ` <small>statt ${esc(e.replacedFrom)}</small>` : '';
     const comment = e.comment ? `<div class="comment-text">💬 ${esc(e.comment)}</div>` : '';
@@ -3921,8 +3984,17 @@ function modeCard() {
     </div>`;
 }
 
+// Ausgeblendete Hinweise im Training wieder einschalten (erscheint nur, wenn etwas ausgeblendet ist)
+function hintOffCard() {
+  const h = hintOff(), n = Object.keys(h.ex).length;
+  if (!h.all && !n) return '';
+  return `<div class="card"><h2>Hinweise im Training</h2>
+      <p class="hint">Hinweise auf schwerere Varianten bei mehr als ${REP_SOFT_MAX} Wdh. sind ${h.all ? 'für alle Übungen' : `für ${n} Übung${n === 1 ? '' : 'en'}`} ausgeblendet.</p>
+      <button class="btn outline" data-action="hint-on">Wieder anzeigen</button></div>`;
+}
+
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -3935,7 +4007,7 @@ function renderData() {
     <h2>Daten löschen</h2>
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
-    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (das „Max. kg bei 10 Wdh.“ wird geleert). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
     <p class="hint app-version" id="app-version"></p>
 `;
 }
@@ -4188,7 +4260,9 @@ function bwVariants(name) {
 }
 
 // Hinweis bei Eigengewicht: unter minReps() Wdh. geschafft -> leichtere Variante; über BW_MAX_REPS -> schwerere
-const BW_MAX_REPS = 15;
+const BEGINNER_UP_REPS = 15;  // Neulinge/Einsteiger: ab hier in allen Sätzen geht das Gewicht hoch
+const REP_SOFT_MAX = 20;  // weiche Obergrenze: höhere Vorschläge bleiben möglich, dazu ein Hinweis (User-Regel 2026-11-06)
+const BW_MAX_REPS = REP_SOFT_MAX;
 // Zu Hause mit vorhandenen Gewichten: ab MAXED_REPS Wdh. mit dem schwersten Gewicht eine schwerere Variante vorschlagen
 const MAXED_REPS = 20;
 const HOME_HARDER = [
@@ -4200,6 +4274,7 @@ const HOME_HARDER = [
   [/ausfallschritte|bulgarian|step-ups/, 'langsamer (3 Sekunden absenken) oder mit Pause unten'],
 ];
 function maxedHint(en) {
+  if (highHintHidden(en.name)) return '';
   const t = en.target, top = t.weights[t.weights.length - 1];
   const last = lastEntry(en.name);
   const hit = en.sets.some(x => isDone(x) && parseNum(x.weight) >= top && parseNum(x.reps) >= MAXED_REPS)
@@ -4208,10 +4283,11 @@ function maxedHint(en) {
   const n = norm(en.name), h = HOME_HARDER.find(([re]) => re.test(n));
   return `💡 ${MAXED_REPS} Wdh. mit deinem schwersten Gewicht (${fmtNum(top)} kg): Zeit für eine schwerere Variante – ${h ? h[1]
     : 'einarmig bzw. einbeinig ausführen oder langsamer (3 Sekunden absenken)'}. Oder trag schwerere Gewichte unter „Plan → 🏠 Deine Ausrüstung“ ein.
-    Tauschen kannst du die Übung oben über „⇄ Ersetzen“.`;
+    Tauschen kannst du die Übung oben über „⇄ Ersetzen“.${hintBtns(en, 'high')}`;
 }
 // Band: ab BAND_MAX_REPS Wdh. das nächststärkere Band vorschlagen (Knopf wechselt es)
 function bandHint(en) {
+  if (highHintHidden(en.name)) return '';
   const t = en.target, ei = draft.entries.indexOf(en);
   const last = lastEntry(en.name);
   const lastSame = last && !last.deload && (last.target || {}).band === t.band;
@@ -4220,8 +4296,8 @@ function bandHint(en) {
   if (!hit || en.bandNext) return '';
   const next = bandLevels().find(b => b > t.band);
   return next ? `💡 ${BAND_MAX_REPS} Wdh. geschafft – Zeit fürs nächststärkere Band. Die App rechnet dann mit etwa ${BAND_STEP_REPS} Wdh. weniger.
-      <button class="vchip" data-action="tr-band" data-ei="${ei}" data-v="${next}">Band „${BAND_LEVELS[next]}“ nehmen</button>`
-    : `💡 ${BAND_MAX_REPS} Wdh. mit deinem stärksten Band: Nimm zwei Bänder zusammen, greif das Band kürzer oder führe die Bewegung langsamer aus (3 Sekunden absenken).`;
+      <button class="vchip" data-action="tr-band" data-ei="${ei}" data-v="${next}">Band „${BAND_LEVELS[next]}“ nehmen</button>${hintBtns(en, 'high')}`
+    : `💡 ${BAND_MAX_REPS} Wdh. mit deinem stärksten Band: Nimm zwei Bänder zusammen, greif das Band kürzer oder führe die Bewegung langsamer aus (3 Sekunden absenken).${hintBtns(en, 'high')}`;
 }
 // Bandstufe im Training wählen: ohne erledigten Satz gilt sie sofort, sonst ab dem nächsten Training
 function bandRow(en, ei) {
@@ -4231,22 +4307,107 @@ function bandRow(en, ei) {
     ${en.bandNext ? `<p class="hint">Ab dem nächsten Training: Band „${BAND_LEVELS[en.bandNext]}“ (heute „${BAND_LEVELS[en.target.band]}“).</p>` : ''}`;
 }
 
+// Ausblenden der Hinweise: all/ex = zu viele Wdh. (dauerhaft, alle bzw. je Übung), low = zu schwer (Zyklus, bis zu dem es gilt)
+const hintOff = () => data.hintOff || (data.hintOff = { all: false, ex: {}, low: {} });
+const highHintHidden = name => !!(hintOff().all || hintOff().ex[nameKey(name)]);
+const lowHintHidden = name => !!draft && hintOff().low[nameKey(name)] === draft.cycleStart;
+
+// Knöpfe am Hinweis: Übung tauschen (auch im Plan) und ausblenden
+function hintBtns(en, kind, swap = null) {
+  const ei = draft.entries.indexOf(en);
+  const off = (k, label) => `<button class="vchip hint-off" data-action="hint-off" data-ei="${ei}" data-k="${k}">${label}</button>`;
+  return `<span class="hint-btns">${swap ? `<button class="vchip" data-action="hint-swap" data-ei="${ei}" data-name="${esc(swap)}">⇄ Jetzt tauschen: ${esc(swap)}</button>` : ''}
+    ${kind === 'high' ? off('ex', 'Für diese Übung ausblenden') + off('all', 'Für alle Übungen ausblenden') : off('low', 'Bis zum nächsten Zyklus ausblenden')}</span>`;
+}
+
+// Tausch-Vorschläge je Übung: leichter, schwerer. Zu Hause zählt nur, was mit der Ausrüstung geht; Reihenfolge = Vorrang
+const BW_SWAPS = [
+  [/^klimmzuge/, ['Klimmzüge assistiert (Maschine)', 'Latziehen breit', 'Klimmzüge mit Band (unterstützt)', 'Latziehen Band (Türanker)', 'Rudern umgekehrt (Tisch oder Stange)'], []],
+  [/^dips/, ['Dips assistiert (Maschine)', 'Trizepsdrücken Kabelzug (Seil)', 'Bankdips', 'Trizepsdrücken Band (Türanker)', 'Trizepsdrücken über Kopf Band'], []],
+  [/^bankdips/, ['Trizepsdrücken Kabelzug (Seil)', 'Trizepsdrücken über Kopf Kurzhantel', 'Trizepsdrücken Band (Türanker)', 'Trizepsdrücken über Kopf Band'], ['Dips (Trizeps)', 'Diamant-Liegestütze']],
+  [/^liegestutze erhoht/, ['Liegestütze auf Knien'], ['Liegestütze']],
+  [/^liegestutze auf knien/, [], ['Liegestütze erhöht', 'Liegestütze']],
+  [/^liegestutze fusse/, ['Liegestütze'], ['Diamant-Liegestütze']],
+  [/^liegestutze/, ['Liegestütze erhöht', 'Liegestütze auf Knien'], ['Liegestütze Füße erhöht', 'Diamant-Liegestütze']],
+  [/^rudern umgekehrt untergriff/, ['Bizepscurls Band', 'Bizepscurls Kurzhantel'], ['Klimmzüge Untergriff (Chin-ups)']],
+  [/^rudern umgekehrt/, ['Rudern Band sitzend', 'Rudern Kurzhantel einarmig'], ['Klimmzüge']],
+  [/^kniebeugen eigengewicht/, [], ['Goblet Squats', 'Bulgarian Split Squats ohne Gewicht', 'Einbeinige Kniebeugen zum Stuhl']],
+  [/^bulgarian split squats ohne/, ['Kniebeugen Eigengewicht'], ['Bulgarian Split Squats', 'Einbeinige Kniebeugen zum Stuhl', 'Einbeinige Kniebeugen (Pistol Squats)']],
+  [/^ausfallschritte eigengewicht/, ['Kniebeugen Eigengewicht'], ['Ausfallschritte Kurzhantel', 'Bulgarian Split Squats ohne Gewicht']],
+  [/^einbeinige kniebeugen zum/, ['Kniebeugen Eigengewicht'], ['Einbeinige Kniebeugen (Pistol Squats)']],
+  [/^einbeinige kniebeugen/, ['Einbeinige Kniebeugen zum Stuhl'], []],
+  [/^nordic/, ['Beinbeuger sitzend', 'Beincurls am Boden (Handtuch)'], []],
+  [/^beincurls am boden/, ['Beinbeuger Band (Bauchlage)', 'Glute Bridge'], ['Kreuzheben rumänisch einbeinig (Kurzhantel)', 'Nordic Hamstring Curls']],
+  [/^crunches/, [], ['Crunches Kabelzug (kniend)', 'Crunches Maschine', 'Beinheben liegend', 'Dead Bug']],
+  [/^beinheben hangend/, ['Crunches Maschine', 'Beinheben liegend', 'Crunches'], []],
+  [/^beinheben/, ['Crunches'], ['Beinheben hängend']],
+  [/^wadenheben an der treppe/, [], ['Wadenheben einbeinig']],
+  [/^glute bridge einbeinig/, ['Glute Bridge'], ['Hip Thrust Kurzhantel']],
+  [/^glute bridge/, [], ['Hip Thrust Langhantel', 'Hip Thrust Kurzhantel', 'Glute Bridge einbeinig']],
+  [/^clamshells/, [], ['Monster Walk (Band)', 'Seitliches Beinheben liegend']],
+];
+function swapFor(name, kind) {
+  const n = norm(name), hit = BW_SWAPS.find(([re]) => re.test(n));
+  if (!hit) return null;
+  const plan = activePlan() || {};
+  const inDay = new Set(draft.entries.map(e => nameKey(e.name)));
+  return hit[kind === 'easy' ? 1 : 2].find(x => !inDay.has(nameKey(x)) && (plan.equip !== 'home' || homeOk(x, data.home))
+    && (plan.equip !== 'machine' || isMachine(x))) || null;
+}
+
+// Zu Hause: selbst das leichteste Gewicht ist zu schwer (zweimal unter der Mindestgrenze) -> tauschen oder leichteres Gewicht
+function weightLowHint(en) {
+  const t = en.target, low = t.weights[0];
+  if (lowHintHidden(en.name)) return '';
+  const k = nameKey(en.name), under = sets => sets.some(x => x.weight != null && x.weight <= low && x.reps != null && x.reps < minReps());
+  const past = [];
+  for (const s of sessionsNewestFirst()) {
+    if (past.length >= 2) break;
+    const e = !s.deload && s.entries.find(x => nameKey(x.name) === k);
+    if (e) past.push(under(e.sets));
+  }
+  const now = en.sets.filter(isDone).map(x => ({ weight: parseNum(x.weight), reps: parseNum(x.reps) }));
+  const hit = now.length ? under(now) && past[0] : past[0] && past[1];
+  if (!hit) return '';
+  const g = groupOf(planExercise(en.name) || { name: en.name });
+  const inDay = new Set(draft.entries.map(e => nameKey(e.name)));
+  const swap = typeof HOME_PICKS !== 'undefined' ? (HOME_PICKS[g] || []).find(x => !inDay.has(nameKey(x)) && homeOk(x, data.home) && !homeWeights(x, data.home)) : null;
+  const kg = t.max10 != null ? Math.max(1, Math.round(t.max10)) : null;
+  return `💡 Mit deinem leichtesten Gewicht (${fmtNum(low)} kg) schaffst du keine ${minReps()} Wdh. – das ist für diese Übung noch zu schwer.
+    ${swap ? '' : `Dir fehlt ein leichteres Gewicht${kg != null && kg < low ? ` von etwa ${fmtNum(kg)} kg` : ''} – du kannst es unter „Plan → 🏠 Deine Ausrüstung“ eintragen.`}${hintBtns(en, 'low', swap)}`;
+}
+
+// Mit Gewicht über REP_SOFT_MAX Wdh.: die nächste Stufe reicht noch nicht – was stattdessen geht (weiche Grenze, ausblendbar)
+function highRepHint(en) {
+  if (highHintHidden(en.name) || !en.sets.some(x => parseNum(x.reps) > REP_SOFT_MAX)) return '';
+  const t = en.target;
+  return `💡 Mehr als ${REP_SOFT_MAX} Wdh.: Ab hier trainierst du vor allem Ausdauer, die nächste Gewichtsstufe ist aber noch zu schwer.
+    ${feat('tr-step') && !t.weights ? 'Wähle oben eine kleinere Steigerung (z. B. 1,25 kg), führe' : 'Führe'} die Übung langsamer aus (3 Sekunden absenken) oder tausche sie über „⇄ Ersetzen“ gegen eine schwerere Variante.${hintBtns(en, 'high')}`;
+}
+
 function bwHint(en) {
   const t = en.target;
   if (!t || t.own || t.deload) return '';
-  if (t.weights && !t.bodyweight) return maxedHint(en);
-  if (!t.bodyweight) return '';
+  if (!t.bodyweight) {
+    if (!t.weights) return highRepHint(en);
+    return weightLowHint(en) || maxedHint(en) || highRepHint(en);
+  }
   if (t.band) return bandHint(en);
   const done = en.sets.filter(isDone).map(x => parseNum(x.reps));
   const last = lastEntry(en.name);
   const lastReps = last && !last.deload ? last.sets.map(x => x.reps).filter(r => r != null) : [];
+  const home = (activePlan() || {}).equip === 'home';
   const v = bwVariants(en.name);
-  const swap = ' Tauschen kannst du die Übung oben über „⇄ Ersetzen“.';
-  if (done.some(r => r < minReps()) || (!done.length && lastReps.some(r => r < minReps()))) {
-    return `💡 Weniger als ${minReps()} Wdh. sind für einen sinnvollen Satz zu wenig. Nimm besser eine leichtere Variante: ${v.easy}.${swap}`;
+  const swapTxt = ' Tauschen kannst du die Übung auch oben über „⇄ Ersetzen“.';
+  if (!lowHintHidden(en.name) && (done.some(r => r < minReps()) || (!done.length && lastReps.some(r => r < minReps())))) {
+    const swap = swapFor(en.name, 'easy');
+    const easy = home ? (swap ? `„${swap}“` : 'eine kleinere Bewegung oder nur langsam ablassen') : v.easy;
+    return `💡 Weniger als ${minReps()} Wdh. sind für einen sinnvollen Satz zu wenig. Nimm besser eine leichtere Variante: ${easy}.${swapTxt}${hintBtns(en, 'low', swap)}`;
   }
-  if (en.sets.some(x => parseNum(x.reps) > BW_MAX_REPS)) {
-    return `💡 Mehr als ${BW_MAX_REPS} Wdh.: Ab hier trainierst du vor allem Ausdauer. Zeit für eine schwerere Variante: ${v.hard}.${swap}`;
+  if (!highHintHidden(en.name) && en.sets.some(x => parseNum(x.reps) > BW_MAX_REPS)) {
+    const swap = swapFor(en.name, 'hard');
+    const hard = home ? (swap ? `„${swap}“` : 'langsamer ausführen (3 Sekunden absenken) oder oben kurz halten') : v.hard;
+    return `💡 Mehr als ${BW_MAX_REPS} Wdh.: Ab hier trainierst du vor allem Ausdauer. Zeit für eine schwerere Variante: ${hard}.${swapTxt}${hintBtns(en, 'high', swap)}`;
   }
   return '';
 }
@@ -4256,14 +4417,18 @@ function buildSets(name, target) {
   // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
   // (Eigengewichtsübung: kein Gewicht, nur Wdh.)
   const last = lastEntry(name);
-  const tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(target);
+  let tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(target);
   const sets = [];
   const lastSets = last && !target.bodyweight ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
   // Zu Hause: liegt das passende Gewicht zwischen zwei vorhandenen, gilt das leichtere – dafür mehr Wdh.
   let reps0 = target.reps;
   if (target.weights && tw != null && target.max10 != null && !target.deload) {
     const ideal = target.max10 * repFactor(target.reps + target.rir);
-    reps0 = Math.min(MAXED_REPS, Math.max(target.reps, repsAtWeight(target.reps, target.rir, ideal, tw)));
+    const need = repsAtWeight(target.reps, target.rir, ideal, tw);
+    const up = wUp(tw, target), upReps = up != null ? repsAtWeight(target.reps, target.rir, ideal, up) : null;
+    // große Lücke: das leichtere Gewicht nur, solange damit höchstens MAXED_REPS Wdh. nötig sind (User-Regel 2026-11-06)
+    if (need > MAXED_REPS && up != null && upReps >= minReps()) { tw = up; reps0 = upReps; }
+    else reps0 = Math.min(MAXED_REPS, Math.max(target.reps, need));
   }
   for (let i = 0; i < target.sets; i++) {
     const ls = lastSets[i] || lastSets[lastSets.length - 1];
@@ -4486,7 +4651,7 @@ function importData(file) {
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4799,6 +4964,27 @@ const actions = {
     if (j < 0 || j >= draft.entries.length) return;
     [draft.entries[i], draft.entries[j]] = [draft.entries[j], draft.entries[i]];
     saveDraft(); render();
+  },
+  // Hinweis im Training ausblenden: je Übung, für alle (zu viele Wdh.) oder bis zum nächsten Zyklus (zu schwer)
+  'hint-off': el => {
+    const en = draft.entries[el.dataset.ei], k = nameKey(en.name), h = hintOff();
+    if (el.dataset.k === 'all') h.all = true;
+    else if (el.dataset.k === 'low') h.low[k] = draft.cycleStart;
+    else h.ex[k] = true;
+    saveData(); render();
+  },
+  'hint-on': () => { Object.assign(hintOff(), { all: false, ex: {}, low: {} }); saveData(); render(); toast('Hinweise werden wieder angezeigt'); },
+  // Übung tauschen: heute und im Plan (an allen Tagen, an denen sie steht und die neue noch nicht)
+  'hint-swap': el => {
+    const en = draft.entries[el.dataset.ei], name = el.dataset.name, old = nameKey(en.name);
+    if (en.sets.some(s => s.touched) && !confirm('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem tauschen?')) return;
+    for (const d of data.days) {
+      if (d.exercises.some(x => nameKey(x.name) === nameKey(name))) continue;
+      const i = d.exercises.findIndex(x => nameKey(x.name) === old);
+      if (i >= 0) planReplaceExercise(d, i, name);
+    }
+    replaceExercise(en, name, knownMax10(name));
+    saveDraft(); saveData(); render();
   },
   'comment-dismiss': el => {
     const s = data.sessions.find(x => x.id === el.dataset.sid);
@@ -5168,7 +5354,7 @@ const actions = {
   'deload-now': () => {
     const ci = cycleInfo();
     if (ci.deload) return;
-    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht, mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
+    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
     startDeloadNow();
     saveData(); render();
     toast('Deload-Woche eingelegt');

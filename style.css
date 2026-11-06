@@ -2355,3 +2355,16 @@ body.touring { overflow: hidden; }
 .food-fs b { color: var(--text); margin-left: 4px; }
 .food-fs-help { margin-top: 6px; }
 .food-fs-amt { margin: 8px 0 0; }
+
+/* Hinweise im Training: Knöpfe zum Tauschen und Ausblenden */
+.hint-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bw-hint .hint-btns .vchip { margin-top: 0; font-size: 13px; padding: 6px 10px; white-space: normal; text-align: left; }
+.bw-hint .hint-off { opacity: .8; }
+
+/* Anstehender Trainingstag: kräftig hervorgehoben (User-Wunsch), in allen Farbwelten */
+.day-btn.next { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; padding-top: 18px; padding-bottom: 18px; box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); }
+.day-btn.next .day-txt { color: #fff; font-size: 1.08em; }
+.day-btn.next .day-txt small { color: rgba(255, 255, 255, .88); }
+.day-btn.next .day-no { background: #fff; color: var(--accent); }
+.day-btn.next::after { color: #fff; border-color: #fff; opacity: 1; }
+.badge.next-badge { background: #fff; color: var(--accent); font-size: 14px; font-weight: 800; }
