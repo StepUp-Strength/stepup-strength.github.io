@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 /* ---------- Farben & Grundwerte ---------- */
 :root {
   --bg: #f2f3f7;
@@ -2441,3 +2442,23 @@ body.touring { overflow: hidden; }
 .welcome-health > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .welcome-health .about-list { font-size: 13.5px; }
 .welcome-why { font-size: 15px; }
+
+/* Zyklus-Rückblick (v189) */
+.review-card { background: linear-gradient(135deg, var(--accent-soft), transparent 70%), var(--card); border: 2px solid var(--accent); }
+.review-kicker { font-size: 19px; font-weight: 800; margin: 0 0 4px; }
+.review-teaser { color: var(--muted); margin: 0 0 12px; }
+.btn.link { background: none; box-shadow: none; border: 0; color: var(--muted); font-size: 15px; min-height: 40px; text-align: center; }
+.review-head h2 { margin: 2px 0 6px; font-size: 26px; }
+.review-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 14px; }
+.review-tile { background: var(--card); border-radius: 16px; padding: 14px 12px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,.08)); }
+.review-tile b { font-size: 24px; font-variant-numeric: tabular-nums; }
+.review-tile small { color: var(--muted); font-size: 13px; line-height: 1.3; }
+.review-icon { font-size: 20px; }
+.review-list { list-style: none; margin: 4px 0 6px; padding: 0; }
+.review-list li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.18)); }
+.review-list li:last-child { border-bottom: 0; }
+.review-list b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.review-list b.up { color: var(--success); }
+.review-hist > summary { cursor: pointer; }
+
+.about-copy { text-align: center; margin: 14px 0 4px; }

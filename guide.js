@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
 // Ausführliche Anleitungen für die Übungsbibliothek (Knopf „📖 Ausführlicher“ in der Übungsansicht).

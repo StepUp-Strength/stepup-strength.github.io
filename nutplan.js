@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 /* ---------- Ernährungsplan importieren (Excel, CSV, Google Sheets, Kopieren & Einfügen) ----------
    data.nutPlan = { name, importedAt, start, assign: 'weekday' | 'daytype' | 'rotation' | 'same',
                     days: [{ label, kind?: 'train'|'rest', weekday?: 0–6 (Mo = 0), kcal, p, c, f,

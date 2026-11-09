@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
 /* ---------- Speicher ---------- */
@@ -2759,7 +2760,7 @@ function skipHtml(ci) {
 }
 
 function renderStart() {
-  let h = greeting() + storageWarnCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + hintsCard();
+  let h = greeting() + storageWarnCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -3806,6 +3807,7 @@ function renderHistory() {
     }
   }
   const exercises = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  h += typeof reviewHistoryHtml === 'function' ? reviewHistoryHtml() : '';  // Zyklus-Rückblicke (charts.js)
   if (feat('ex-history') && exercises.length) h += '<h2>Übungen</h2>';
   for (const ex of feat('ex-history') ? exercises : []) {
     h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
@@ -4379,7 +4381,7 @@ function renderData() {
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
-    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
+    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>
 `;
 }

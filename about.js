@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
 /* ---------- Über die App: Gesundheitshinweis, Datenschutz, Impressum, Feedback (v188, 2026-11-09) ---------- */
@@ -85,7 +86,25 @@ function renderAbout() {
     ${aboutFeedback()}
     <details class="card about-sec" open><summary><b>⚕️ Gesundheitshinweis</b></summary>${healthListHtml()}</details>
     <details class="card about-sec"><summary><b>🔒 Datenschutz</b></summary>${aboutDatenschutz()}</details>
-    ${aboutImpressum()}`;
+    ${aboutImpressum()}
+    <details class="card about-sec"><summary><b>© Rechte & Quellen</b></summary>${aboutRights()}</details>
+    <p class="hint about-copy">© 2026 Alex Hundt · Alle Rechte vorbehalten</p>`;
+}
+
+// Urheberrecht (siehe LICENSE im Repository) und Pflichtangaben der fremden Bestandteile
+function aboutRights() {
+  return `<div class="about-text">
+    <p>StepUp Strength – Programm, Trainingslogik, Texte, Übungsbeschreibungen und Grafiken – ist urheberrechtlich geschützt.
+      © 2026 Alex Hundt, alle Rechte vorbehalten. Du darfst die App für dein eigenes Training nutzen. Kopieren, Verändern,
+      Weitergeben oder Veröffentlichen, auch in Teilen, ist ohne schriftliche Zustimmung nicht erlaubt.</p>
+    <h3>Verwendete Daten und Software</h3>
+    <p><b>Bundeslebensmittelschlüssel (BLS) 4.0</b> – Durchschnittswerte für Lebensmittel, © Max Rubner-Institut.</p>
+    <p><b>Open Food Facts</b> – Produktdaten beim Barcode-Scan und bei der Produktsuche, unter der
+      <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">Open Database License (ODbL)</a>,
+      <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">openfoodfacts.org</a>.</p>
+    <p><b>ZXing</b> (@zxing/library) – Barcode-Erkennung, unter der
+      <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener">Apache License 2.0</a>.</p>
+  </div>`;
 }
 
 views.about = { title: 'Über die App', tab: 'data', back: 'data', render: renderAbout, after: () => showAppVersion() };

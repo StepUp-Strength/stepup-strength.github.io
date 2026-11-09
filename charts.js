@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
 /* ---------- Diagramme (Übungen & Körpergewicht) ---------- */
@@ -996,3 +997,156 @@ function selectNearest(clientX) {
 }
 
 window.addEventListener('resize', () => { if (current.view === 'charts' || current.view === 'nutrition') queueDraw(); });
+
+/* ---------- Zyklus-Rückblick (v189, User-Wunsch 2026-11-09) ---------- */
+// Sobald die Deload-Woche ansteht (letzte Aufbauwoche geschafft, noch kein Deload-Training), zeigt die Startseite eine Karte
+// mit den Highlights des Zyklus; die Ansicht cyclereview { cs, from } zeigt alles. Frühere Zyklen: im Verlauf ganz unten.
+// Kraft = geschätztes „Max. bei 10 Wdh.“ wie in der App (Gewicht, Wdh. UND Tank, auf frisch umgerechnet) – sonst täuschte der
+// kleiner werdende Tank im Zyklus eine Steigerung vor. Erstes gegen letztes Training der Übung im Zyklus (gleiche Ausführung).
+const CAR_TONS = 1.4;  // ein Auto ≈ 1,4 t (für „so viel wie … Autos“)
+
+// Zyklen mit Aufbau-Trainings, älteste zuerst
+const reviewCycles = () => [...new Set(data.sessions.filter(s => s.cycleStart && !s.deload).map(s => s.cycleStart))].sort();
+const reviewCycleNo = cs => cs === data.cycle.start ? (data.cycle.no || reviewCycles().indexOf(cs) + 1) : reviewCycles().indexOf(cs) + 1;
+
+function reviewSetFresh(x, fat) {
+  if (!x || !(x.weight > 0) || !(x.reps > 0)) return null;
+  return x.weight / repFactor(x.reps + (x.rir != null ? x.rir : 0)) / (1 - (fat || 0));
+}
+
+function cycleReview(cs) {
+  const ses = data.sessions.filter(s => s.cycleStart === cs && !s.deload).sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (!ses.length) return null;
+  const r = { cs, no: reviewCycleNo(cs), trainings: ses.length, weeks: 0, sets: 0, reps: 0, kg: 0, minutes: 0, pbs: 0,
+    pbEx: new Map(), weekSets: {}, gains: [] };
+  const first = new Map(), last = new Map();
+  for (const s of ses) {
+    r.weeks = Math.max(r.weeks, s.week || 0);
+    if (s.duration) r.minutes += s.duration;
+    s.entries.forEach((e, ei) => {
+      const done = e.sets.filter(x => x.reps > 0);
+      r.sets += done.length;
+      r.weekSets[s.week] = (r.weekSets[s.week] || 0) + done.length;
+      for (const x of done) { r.reps += x.reps; if (x.weight > 0) r.kg += x.weight * x.reps; }
+      // Bestleistung je Übung und Training höchstens einmal (sonst zählt jeder Satz mit Stern einzeln)
+      if (pbFlags(e.sets, pbBest(e.name, s.date, s.id), e.target && e.target.band).some(Boolean)) {
+        r.pbs++; r.pbEx.set(e.name, (r.pbEx.get(e.name) || 0) + 1);
+      }
+      const fat = sessionFat(s, ei);
+      const exact = done.filter(x => !x.open);  // „locker“ ist nach oben offen – nur wenn es nichts anderes gibt
+      const vals = (exact.length ? exact : done).map(x => reviewSetFresh(x, fat)).filter(v => v != null);
+      if (!vals.length) return;
+      const k = nameKey(e.name) + '|' + variantOf(done[0]), v = Math.max(...vals);
+      if (!first.has(k)) first.set(k, { name: e.name, v, date: s.date });
+      last.set(k, { name: e.name, v, date: s.date });
+    });
+  }
+  for (const [k, f] of first) {
+    const l = last.get(k);
+    if (l && l.date > f.date) r.gains.push({ name: f.name, pct: (l.v / f.v - 1) * 100 });
+  }
+  r.gains.sort((a, b) => b.pct - a.pct);
+  r.avgGain = r.gains.length ? r.gains.reduce((a, g) => a + g.pct, 0) / r.gains.length : null;
+  const wk = Object.keys(r.weekSets).map(Number).sort((a, b) => a - b);
+  r.setsFirst = wk.length > 1 ? r.weekSets[wk[0]] : null;
+  r.setsLast = wk.length > 1 ? r.weekSets[wk[wk.length - 1]] : null;
+  // Vergleich mit dem Zyklus davor: bewegte kg pro Woche
+  const all = reviewCycles(), prev = all[all.indexOf(cs) - 1];
+  if (prev) {
+    const ps = data.sessions.filter(s => s.cycleStart === prev && !s.deload);
+    const pw = Math.max(1, ...ps.map(s => s.week || 1));
+    const pkg = ps.reduce((a, s) => a + s.entries.reduce((b, e) => b + e.sets.reduce((c, x) => c + (x.weight > 0 && x.reps > 0 ? x.weight * x.reps : 0), 0), 0), 0);
+    if (pkg > 0 && r.kg > 0) r.vsPrev = (r.kg / Math.max(1, r.weeks)) / (pkg / pw) * 100 - 100;
+  }
+  return r;
+}
+
+const reviewPct = p => `${p >= 0 ? '+' : '−'}${fmtNum(round1(Math.abs(p)))} %`;
+const reviewTons = kg => fmtNum(round1(kg / 1000));
+
+// Kurzfassung (Startseiten-Karte)
+function reviewTeaser(r) {
+  return [`${r.trainings} Training${r.trainings === 1 ? '' : 's'}`,
+    r.pbs ? `${r.pbs} Bestleistung${r.pbs === 1 ? '' : 'en'}` : null,
+    r.avgGain != null && r.avgGain >= 0.5 ? `Ø ${reviewPct(r.avgGain)} stärker` : null,
+    r.kg >= 1000 ? `${reviewTons(r.kg)} t bewegt` : null].filter(Boolean).join(' · ');
+}
+
+// Startseite: Deload steht an, noch kein Deload-Training in diesem Zyklus, nicht ausgeblendet
+function reviewStartCard() {
+  if (!hasActivePlan() || ownPlan()) return '';
+  const ci = cycleInfo(), cs = ci.cycleStart;
+  if (!ci.deload || data.reviewHidden === cs || data.sessions.some(s => s.cycleStart === cs && s.deload)) return '';
+  const r = cycleReview(cs);
+  if (!r || r.trainings < 2) return '';
+  return `<div class="card review-card"><p class="review-kicker">🏁 Zyklus ${r.no} geschafft!</p>
+      <p class="review-teaser">${reviewTeaser(r)}</p>
+      <button class="btn primary" data-action="review-open" data-cs="${esc(cs)}">Rückblick ansehen</button>
+      <button class="btn link" data-action="review-hide" data-cs="${esc(cs)}">Ausblenden</button></div>`;
+}
+
+function renderCycleReview({ cs }) {
+  const r = cycleReview(cs);
+  if (!r) return '<p class="hint">Für diesen Zyklus gibt es keine Trainings.</p>';
+  const simple = !feat('tr-rir-input');
+  const tile = (icon, big, small) => `<div class="review-tile"><span class="review-icon" aria-hidden="true">${icon}</span><b>${big}</b><small>${small}</small></div>`;
+  const hours = r.minutes >= 60 ? `${fmtNum(round1(r.minutes / 60))} Std.` : `${r.minutes} min`;
+  const cars = Math.round(r.kg / 1000 / CAR_TONS);
+  let h = `<div class="card review-head"><p class="review-kicker">🏁 Zyklus ${r.no}</p>
+      <h2>Stark gemacht!</h2>
+      <p class="hint">${r.weeks} Woche${r.weeks === 1 ? '' : 'n'} Aufbau, ${r.trainings} Trainings${r.minutes ? ` und ${hours} Training` : ''}.
+        Das hast du in diesem Zyklus geschafft:</p></div>
+    <div class="review-tiles">
+      ${tile('⭐', r.pbs, r.pbs === 1 ? 'Bestleistung' : 'Bestleistungen')}
+      ${r.avgGain != null ? tile('📈', reviewPct(r.avgGain), 'stärker im Schnitt') : ''}
+      ${r.kg >= 100 ? tile('🏗️', `${reviewTons(r.kg)} t`, cars >= 1 ? `bewegt – so viel wie ${cars} Auto${cars === 1 ? '' : 's'}` : 'bewegt') : ''}
+      ${tile('🔁', deNum(r.sets), `Sätze · ${deNum(r.reps)} Wdh.`)}
+    </div>`;
+  const top = r.gains.filter(g => g.pct >= 1).slice(0, 5);
+  const cut = data.nutrition && ['diet', 'minicut'].includes(data.nutrition.phase);
+  h += `<div class="card"><h2>📈 Deine größten Fortschritte</h2>${top.length
+    ? `<ul class="review-list">${top.map(g => `<li><span>${esc(g.name)}</span><b class="up">${reviewPct(g.pct)}</b></li>`).join('')}</ul>
+       <p class="hint">${simple ? 'Geschätzte Kraft vom ersten bis zum letzten Training der Übung im Zyklus.'
+         : 'Geschätztes „Max. bei 10 Wdh.“ (frisch, mit Tank) vom ersten bis zum letzten Training der Übung im Zyklus.'}</p>`
+    : `<p class="hint">Deine Kraft ist in diesem Zyklus stabil geblieben${cut ? ' – im Kaloriendefizit ist genau das ein Erfolg' : ''}.</p>`}</div>`;
+  if (r.pbEx.size) {
+    const pb = [...r.pbEx].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    h += `<div class="card"><h2>⭐ Bestleistungen</h2><ul class="review-list">${pb.map(([n, c]) =>
+      `<li><span>${esc(n)}</span><b>${c}× ★</b></li>`).join('')}</ul>
+      <p class="hint">Wie oft du bei der Übung eine neue Bestleistung geschafft hast – je Training einmal gezählt.</p></div>`;
+  }
+  const more = [];
+  if (r.setsFirst && r.setsLast && r.setsLast > r.setsFirst) more.push(`Sätze pro Woche: <b>${r.setsFirst} → ${r.setsLast}</b> – dein Trainingsreiz ist gewachsen.`);
+  if (r.vsPrev != null && Math.abs(r.vsPrev) >= 1) {
+    more.push(`Pro Woche hast du <b>${fmtNum(round1(Math.abs(r.vsPrev)))} % ${r.vsPrev > 0 ? 'mehr' : 'weniger'}</b> Gewicht bewegt als im Zyklus davor.`);
+  }
+  if (more.length) h += `<div class="card"><h2>🔍 Im Vergleich</h2>${more.map(t => `<p>${t}</p>`).join('')}</div>`;
+  const ci = hasActivePlan() ? cycleInfo() : null;
+  if (ci && ci.deload && ci.cycleStart === cs && !data.sessions.some(s => s.cycleStart === cs && s.deload)) {
+    h += `<div class="card deload-note"><p><b>😮‍💨 Jetzt kommt die Deload-Woche.</b> Halbe Sätze und etwas leichter – dein Körper
+      verarbeitet jetzt den Trainingsreiz, danach geht es stärker in den nächsten Zyklus. Beim ersten Deload-Training fragt dich die
+      App kurz, wie sich der Zyklus angefühlt hat.</p></div>
+      <button class="btn primary" data-action="tab" data-tab="start">Zum Training</button>`;
+  }
+  return h;
+}
+
+// Verlauf: frühere Rückblicke (der laufende Zyklus erst, wenn seine Aufbauwochen geschafft sind)
+function reviewHistoryHtml() {
+  const ci = hasActivePlan() ? cycleInfo() : null;
+  const list = reviewCycles().filter(cs => !(ci && cs === ci.cycleStart && !ci.deload))
+    .filter(cs => data.sessions.filter(s => s.cycleStart === cs && !s.deload).length >= 2).reverse();
+  if (!list.length) return '';
+  return `<details class="card review-hist"><summary><b>🏁 Zyklus-Rückblicke</b></summary>${list.map(cs => {
+    const ses = data.sessions.filter(s => s.cycleStart === cs && !s.deload).map(s => s.date).sort();
+    return `<button class="btn nav" data-action="review-open" data-cs="${esc(cs)}" data-from="history">Zyklus ${reviewCycleNo(cs)}<small>${fmtDate(ses[0])} – ${fmtDate(ses[ses.length - 1])}</small></button>`;
+  }).join('')}</details>`;
+}
+
+views.cyclereview = { title: 'Zyklus-Rückblick', tab: p => p.from === 'history' ? 'history' : 'start', back: p => [p.from || 'start', {}],
+  render: renderCycleReview };
+
+Object.assign(actions, {
+  'review-open': el => go('cyclereview', { cs: el.dataset.cs, from: el.dataset.from || 'start' }),
+  'review-hide': el => { data.reviewHidden = el.dataset.cs; saveData(); render(); },
+});

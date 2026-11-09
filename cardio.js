@@ -1,3 +1,4 @@
+/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 /* ---------- Cardio: Ausdauereinheiten eintragen, Kalorienverbrauch schätzen ----------
    data.cardio = [{ id, date: 'JJJJ-MM-TT', type, level: 'easy'|'mid'|'hard', min, kcal, own, km? }]  (km: Strecke, freiwillig)
    kcal = Mehrverbrauch gegenüber Ruhe: (MET − 1) × kg × Stunden (MET-Werte nach dem Compendium of Physical Activities).

@@ -1,0 +1,46 @@
+StepUp Strength
+Copyright (c) 2026 Alex Hundt. Alle Rechte vorbehalten. / All rights reserved.
+
+DEUTSCH
+
+Diese Software und alle Dateien in diesem Repository – Quellcode, Texte, Übungsbeschreibungen,
+Trainingslogik, Grafiken, Icons und Daten – sind urheberrechtlich geschützt.
+
+Erlaubt ist:
+- die App unter https://stepup-strength.github.io/ für das eigene Training zu nutzen,
+- den Quellcode in diesem Repository anzusehen.
+
+Ohne vorherige schriftliche Zustimmung des Rechteinhabers ist insbesondere nicht erlaubt,
+die Software oder Teile davon zu kopieren, zu verändern, weiterzugeben, zu veröffentlichen,
+zu verkaufen, unterzulizenzieren oder für eigene Apps, Websites oder Dienste zu verwenden.
+
+Es wird keine Lizenz erteilt – weder ausdrücklich noch stillschweigend –, soweit sie nicht
+oben ausdrücklich genannt ist.
+
+ENGLISH
+
+This software and all files in this repository – source code, texts, exercise descriptions,
+training logic, graphics, icons and data – are protected by copyright.
+
+You may:
+- use the app at https://stepup-strength.github.io/ for your own training,
+- view the source code in this repository.
+
+Without prior written permission of the copyright holder you may not copy, modify,
+distribute, publish, sell, sublicense or use the software or any part of it for your own
+apps, websites or services.
+
+No license, express or implied, is granted except as stated above.
+
+FREMDE BESTANDTEILE / THIRD-PARTY COMPONENTS
+
+Für die folgenden Bestandteile gelten die Rechte und Lizenzen ihrer Urheber:
+The following components are subject to the rights and licenses of their respective owners:
+
+- zxing.min.js – ZXing for JavaScript (@zxing/library), Apache License 2.0,
+  https://github.com/zxing-js/library – https://www.apache.org/licenses/LICENSE-2.0
+- bls.js – Nährwertdaten aus dem Bundeslebensmittelschlüssel (BLS) 4.0,
+  © Max Rubner-Institut (MRI), https://www.mri.bund.de
+- Produktdaten, die die App zur Laufzeit von Open Food Facts abruft (nicht in diesem
+  Repository), stehen unter der Open Database License (ODbL),
+  https://world.openfoodfacts.org – https://opendatacommons.org/licenses/odbl/1-0/
