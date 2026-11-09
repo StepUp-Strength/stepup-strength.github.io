@@ -113,6 +113,7 @@ function upgradeData(d) {
   }
   if (!d.tour) d.tour = { seen: {}, off: false };       // Einführungen: gesehene Schritte (tour.js)
   if (!d.hintOff) d.hintOff = { all: false, ex: {}, low: {} };  // ausgeblendete Hinweise im Training (siehe bwHint)
+  if (d.pauseAsked === undefined) d.pauseAsked = null;  // letztes Training, nach dem schon wegen einer Pause gefragt wurde
   if (d.home === undefined) d.home = null;              // Heim-Ausrüstung { db:[kg], kb:[kg], bands:[1–4], anchor, bar, bench 0/1/2, dip }
   if (!d.roundSkips) d.roundSkips = {};                 // Durchlauf (roundKey) -> [dayId, …]: in dieser Woche ausgelassene Tage                 // Zyklus -> { from, by }: Vergleich um die Verlängerung des Vorzyklus versetzt
   if (d.nutrition === undefined) d.nutrition = null;    // Ernährung: Phase, Angaben, Ziel (siehe nutrition.js)
@@ -592,6 +593,32 @@ function capacityAt(cap, weight, newWeight) {
 
 const isDone = s => parseNum(s.reps) != null && parseNum(s.rir) != null;
 
+// Tippfehler (User-Regel 2026-11-06): nachfragen, nichts wird geblockt. Trainingsgewicht: mehr als 10 % Unterschied zum Vorschlag
+// (sonst zum letzten Mal), aber nie bei genau einer Gewichtsstufe rauf oder runter – sonst käme die Frage bei kleinen Gewichten bei jedem
+// normalen Sprung. Wdh.: ab 10 Unterschied. Körpergewicht: ab 5 kg.
+const TYPO_WEIGHT_PCT = 0.1, TYPO_KG = 5, TYPO_REPS = 10;
+function typoInfo(en, si) {
+  const s = en.sets[si];
+  if (!s || s.typoOk === `${s.weight}|${s.reps}`) return null;
+  const last = lastEntry(en.name);
+  const ls = last && last.sets.length ? last.sets[Math.min(si, last.sets.length - 1)] : null;
+  const w = parseNum(s.weight), r = parseNum(s.reps);
+  const rw = parseNum(s.refW), rr = parseNum(s.refR);
+  const refW = rw != null ? rw : ls && ls.weight, refR = rr != null ? rr : ls && ls.reps;
+  if (s.manualWeight && w != null && refW != null && Math.abs(w - refW) > refW * TYPO_WEIGHT_PCT + 1e-9 && w !== wUp(refW, en.target) && w !== wDown(refW, en.target)) {
+    return { f: 'tr-weight', text: `${fmtNum(w)} kg? ${rw != null ? 'Vorgeschlagen waren' : 'Letztes Mal waren es'} ${fmtNum(refW)} kg.` };
+  }
+  if (s.auto === false && r != null && refR != null && Math.abs(r - refR) >= TYPO_REPS) {
+    return { f: 'tr-reps', text: `${r} Wdh.? ${rr != null ? 'Vorgeschlagen waren' : 'Letztes Mal waren es'} ${refR}.` };
+  }
+  return null;
+}
+function typoHtml(en, ei, si) {
+  const t = typoInfo(en, si);
+  return t ? `<span>🔎 ${t.text}</span><button class="vchip" data-action="typo-ok" data-ei="${ei}" data-si="${si}">Stimmt so</button>
+    <button class="vchip" data-action="typo-fix" data-ei="${ei}" data-si="${si}" data-f="${t.f}">Korrigieren</button>` : '';
+}
+
 // Weniger Wdh. als das wird bei Übungen mit Gewicht nie vorgeschlagen
 // Neulinge und Einsteiger (plan.level): nie unter 8 Wdh., Wdh.-Bereiche eher 10–12 (User-Regel 2026-11-05) – sonst 5
 const MIN_REPS_BASE = 5, MIN_REPS_BEGINNER = 8;
@@ -959,6 +986,19 @@ function curveAt(arr, week, len = curveLen()) {
 // Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
 const KINDS = { compound: 'Grundübung', normal: 'Normale Übung', assist: 'Assistenzübung' };
 const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
+// Wie hat sich der Zyklus angefühlt? (User-Regel 2026-11-08): zu schwer +0,5 Wdh. im Tank, zu leicht −0,5, passt so ±0 – für alle
+// Übungen des Plans, summiert über die Zyklen (Claudes Grenze: insgesamt höchstens ±2), nie unter 0 (siehe rirRange).
+// Gefragt beim ersten Deload-Training (dann spürt man die Belastung noch voll), wirksam erst ab dem nächsten Zyklus:
+// plan.feelLog [{ cs: Zyklus, step }] zählt nur für spätere Zyklen. plan.rirAdj = schon verrechnete Anpassung aus v171.
+const FEEL_STEP = 0.5, FEEL_MAX = 2;
+function rirFeelAdj() {
+  const p = activePlan();
+  if (!p || !(p.rirAdj || (p.feelLog || []).length)) return 0;
+  const cur = cycleInfo().cycleStart;
+  let adj = p.rirAdj || 0;
+  for (const e of p.feelLog || []) if (e.cs && e.cs !== cur) adj = Math.max(-FEEL_MAX, Math.min(FEEL_MAX, adj + e.step));
+  return adj;
+}
 const COMPOUND = /^(kniebeugen|frontkniebeugen|bankdrucken[^(]*\(langhantel|kreuzheben|schulterdrucken langhantel|rudern langhantel|dips|umsetzen|reissen)/;
 const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken|beinstrecker|beinbeuger|butterfly|fliegende|crossover|wadenheben|face pulls|reverse|crunches|sit-ups|beinheben|knieheben|plank|seitstutz|russian|bauchroller|rotation|holzhacker|shrugs|abduktoren|adduktoren|handgelenk|uberzuge|glute|sissy/;
 
@@ -1001,7 +1041,7 @@ function rirRange(kind, week, buildWeeks, group) {
   const half = v => Math.round(v * 2) / 2;
   const lo = half(curveAt(arr.map(b => Array.isArray(b) ? b[0] : b), week));
   const hi = half(curveAt(arr.map(b => Array.isArray(b) ? b[1] : b), week));
-  const off = KIND_OFFSET[kind || 'normal'];
+  const off = KIND_OFFSET[kind || 'normal'] + rirFeelAdj();  // + Anpassung aus „Wie hat sich der Zyklus angefühlt?“
   return [Math.max(0, lo + off), Math.max(0, hi + off)];
 }
 
@@ -2248,11 +2288,15 @@ const views = {
   firstmax: { title: 'Neue Übungen',     tab: 'start', render: renderFirstMax, cancel: () => CANCEL_START,
     back: p => p.choice ? ['cyclechoice', { id: p.id, ...p.choice }] : ['start', {}] },
   cyclechoice: { title: 'Neuer Zyklus',  tab: 'start', back: 'start', render: renderCycleChoice, cancel: () => CANCEL_START },
+  pausecheck: { title: 'Wieder da', tab: 'start', back: 'start', render: p => renderPauseCheck(p) },
+  cyclefeel: { title: 'Neuer Zyklus', tab: 'start', back: 'start', render: p => renderCycleFeel(p) },
   entryweek: { title: 'Neuer Plan',      tab: 'start', back: 'start', render: renderEntryWeek, cancel: () => CANCEL_START },
   data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: () => { showAppVersion(); storageInfoFill(); } },
 };
 
 function go(view, params = {}) {
+  exRename = null;  // offenes Umbenennen-Feld schließt beim Wechsel der Ansicht
+  if (!current || current.view !== view || (params.id && params.id !== current.params.id)) dayReorder = null;
   current = { view, params };
   render();
   window.scrollTo(0, 0);
@@ -2623,7 +2667,7 @@ function renderTraining() {
         <button class="icon-btn" data-action="tr-move" data-ei="${ei}" data-dir="1" aria-label="Nach unten" ${ei === draft.entries.length - 1 ? 'disabled' : ''}>↓</button>
       </li>`).join('') +
       `</ul><button class="btn primary" data-action="reorder-toggle">✔ Fertig</button>
-      <p class="hint">Gilt nur für dieses Training. Eingetragene Werte bleiben erhalten.</p></div>`;
+      <p class="hint">Gilt nur für dieses Training. Eingetragene Werte bleiben erhalten. Dauerhaft änderst du die Reihenfolge im Plan beim Trainingstag.</p></div>`;
   }
   h += '<button class="btn outline" data-action="reorder-toggle">⇅ Reihenfolge ändern</button>';
   // Ansicht: alle Übungen untereinander (scrollen) oder eine Übung je Bildschirm (wischen) – profile.swipe
@@ -2766,6 +2810,7 @@ function renderTraining() {
           : `<button class="feel-btn ${s.rir !== '' && s.rir != null ? 'set' : ''}" data-action="tr-feel-open" data-ei="${ei}" data-si="${si}"
             aria-label="Wie hat sich Satz ${si + 1} angefühlt?">${feelIcon(en, s)}</button>`}
         <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>
+        <div class="typo-hint" data-typo="${ei}-${si}">${typoHtml(en, ei, si)}</div>
         ${!rirInput && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
           `<button class="vchip" data-action="tr-feel" data-ei="${ei}" data-si="${si}" data-f="${f.k}">${f.icon}<small>${f.label}</small></button>`).join('')}</div>` : ''}`;
     });
@@ -2934,11 +2979,10 @@ function renderPlan() {
   if (!hasActivePlan()) {
     return h + `<p class="hint">${data.plans.length ? 'Kein Plan aktiv. Tippe einen Plan an, um ihn wieder zu aktivieren, oder erstelle einen neuen.'
       : 'Noch kein Plan vorhanden. Erstelle deinen ersten Plan.'}</p>
-      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${typeof TP_OPEN_BTN === 'string' ? TP_OPEN_BTN : ''}${libBtn}`;
+      <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
   }
   h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
     <button class="btn outline" data-action="plan-end">⏹ „${esc(active.name)}“ beenden</button>
-    ${feat('plans-multi') && typeof TP_OPEN_BTN === 'string' ? TP_OPEN_BTN : ''}
     ${libBtn}
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
@@ -3210,7 +3254,11 @@ let planSwap = null;  // { day, i } – geöffnetes „Ersetzen“ im Trainingst
 
 function planSwapHtml(day, ex, i) {
   if (!planSwap || planSwap.day !== day.id || planSwap.i !== i) {
-    return `<button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Übung ersetzen</button>`;
+    if (ex.name.trim() && exRename === ex.name) return renameFormHtml(ex.name);
+    return ex.name.trim() ? `<div class="row plan-ex-btns">
+        <button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Ersetzen</button>
+        <button class="btn outline plan-swap-btn" data-action="ex-rename-open" data-name="${esc(ex.name)}">✎ Umbenennen</button></div>`
+      : `<button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Übung ersetzen</button>`;
   }
   // die zuletzt ersetzte Übung immer als Erstes (zum schnellen Zurücktauschen)
   const prev = ex.replacedFrom && nameKey(ex.replacedFrom) !== nameKey(ex.name)
@@ -3230,6 +3278,62 @@ function planSwapHtml(day, ex, i) {
       <p class="hint">Die neue Übung übernimmt den Platz im Plan mit denselben Sätzen. Gespeicherte Trainings bleiben, wie sie sind;
         das Startgewicht kommt aus früheren Trainings mit dieser Übung oder wird beim ersten Mal ermittelt.</p>
     </div>`;
+}
+
+// Übung umbenennen (User-Wunsch 2026-11-09): überall – alle Pläne, Verlauf, laufendes Training, eigene Übungen,
+// ausgeblendete Hinweise. Verlauf, Rekorde und Diagramme stehen danach unter dem neuen Namen. Eine Übung aus der
+// Bibliothek wird dabei zur eigenen Übung (Art, Muskelgruppe und – als „ähnliche Übung“ – Figur und Tipps bleiben).
+var exRename = null;  // Name der Übung, deren Umbenennen-Feld offen ist
+const exNameUsed = k => data.plans.some(p => p.days.some(d => d.exercises.some(e => nameKey(e.name) === k)))
+  || data.sessions.some(s => s.entries.some(en => nameKey(en.name) === k));
+
+function renameFormHtml(name) {
+  return `<div class="replace ex-rename">
+      <label class="lbl" for="ren-name">„${esc(name)}“ umbenennen</label>
+      <input class="inp" id="ren-name" type="text" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(name)}">
+      <div class="row"><button class="btn" data-action="ex-rename-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="ex-rename-ok">✔ Speichern</button></div>
+      <p class="hint">Der neue Name gilt überall: in allen Plänen und im Verlauf. Deine bisherigen Trainings, Rekorde und
+        Diagramme bleiben erhalten und stehen dann unter dem neuen Namen.</p>
+    </div>`;
+}
+
+function renameExercise(from, to, ask = true) {
+  to = String(to || '').trim().replace(/\s+/g, ' ');
+  const kf = nameKey(from), kt = nameKey(to);
+  if (!to) { alert('Bitte gib einen Namen ein.'); return false; }
+  if (to === from.trim()) return true;
+  const custom = customExercise(from), builtin = builtinExercise(from);
+  if (kt !== kf && (builtinExercise(to) || customExercise(to) || exNameUsed(kt))) {
+    alert(`„${to}“ gibt es schon. Bitte wähle einen anderen Namen.\n\nWillst du stattdessen eine andere Übung trainieren, nimm im Plan „⇄ Übung ersetzen“.`);
+    return false;
+  }
+  const n = data.sessions.filter(s => s.entries.some(en => nameKey(en.name) === kf)).length;
+  if (ask && !confirm(`„${from.trim()}“ wirklich in „${to}“ umbenennen?\n\nDer neue Name gilt überall – in allen Plänen und im Verlauf.`
+    + (n ? ` Deine ${n === 1 ? 'bisherigen Einträge aus 1 Training werden' : `bisherigen Einträge aus ${n} Trainings werden`} auf den neuen Namen übertragen (Gewichte, Rekorde, Diagramme).` : '')
+    + (builtin && kt !== kf ? `\n\nDie Übung erscheint danach unter „★ Eigene Übungen“; Figur und Tipps von „${from.trim()}“ bleiben verknüpft.` : ''))) return false;
+  // Art und Muskelgruppe festhalten, bevor sich der Name ändert (sonst würde neu geraten)
+  const kind = kindOf({ name: from }), group = groupOf({ name: from });
+  const fix = o => {
+    if (!o) return;
+    if (nameKey(o.name) === kf) {
+      if (!custom && !builtin) { if (!o.kind && kindOf({ name: to }) !== kind) o.kind = kind; if (!o.group && group && groupOf({ name: to }) !== group) o.group = group; }
+      o.name = to;
+    }
+    if (o.replacedFrom && nameKey(o.replacedFrom) === kf) o.replacedFrom = to;
+  };
+  for (const p of data.plans) for (const d of p.days) d.exercises.forEach(fix);
+  for (const s of data.sessions) s.entries.forEach(fix);
+  if (draft) { draft.entries.forEach(fix); saveDraft(); }
+  if (custom) custom.name = to;
+  else if (builtin && kt !== kf) data.customExercises.push({ name: to, kind, group, like: libEntry(from) ? from.trim() : '', note: '' });
+  for (const m of [data.hintsDismissed, hintOff().ex, hintOff().low]) if (kt !== kf && m[kf] !== undefined) { m[kt] = m[kf]; delete m[kf]; }
+  if (typeof chartState !== 'undefined' && nameKey(chartState.name) === kf) chartState.name = to;
+  registerCustomExercises();
+  saveData();
+  exRename = null;
+  toast(`Umbenannt in „${to}“ ✔`);
+  return true;
 }
 
 // Übung tauschen: Name, Art und Muskelgruppe neu (automatisch), Max. aus früheren Trainings; Platz und Sätze bleiben
@@ -3271,11 +3375,25 @@ function ownExerciseCard(ex, i) {
       `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
     </div>
     <div class="row">
-      <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
-      <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten">↓</button>
       <button class="icon-btn danger" data-action="ex-del" data-i="${i}">Entfernen</button>
     </div>
   </div>`;
+}
+
+// Reihenfolge der Übungen im Plan ändern (User-Wunsch 2026-11-09): kompakte Liste mit Pfeilen, bleibt dauerhaft im Plan
+var dayReorder = null;  // id des Trainingstags, dessen Reihenfolge gerade geändert wird
+function dayReorderHtml(day) {
+  const n = day.exercises.length;
+  if (n < 2) return '';
+  if (dayReorder !== day.id) return '<button class="btn outline" data-action="day-reorder">⇅ Reihenfolge ändern</button>';
+  return `<div class="card"><h2>Reihenfolge</h2><ul class="list reorder">${day.exercises.map((ex, i) => `<li class="bw-row">
+        <span>${i + 1}. ${esc(ex.name.trim() || 'Neue Übung')}</span>
+        <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten" ${i === n - 1 ? 'disabled' : ''}>↓</button>
+      </li>`).join('')}</ul>
+    <button class="btn primary" data-action="day-reorder">✔ Fertig</button>
+    <p class="hint">Die Reihenfolge bleibt im Plan, bis du sie wieder änderst – in allen kommenden Trainings dieses Tages.
+      Ein schon begonnenes Training behält seine Reihenfolge.</p></div>`;
 }
 
 function renderDay({ id }) {
@@ -3285,7 +3403,7 @@ function renderDay({ id }) {
     return `<label class="lbl">Name des Trainingstags
         <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}"></label>
       <p class="hint">Eigener Plan: Sätze und Wiederholungen legst du pro Übung selbst fest – die App steigert nichts.</p>
-      <h2>Übungen</h2>${day.exercises.map(ownExerciseCard).join('')}
+      <h2>Übungen</h2>${dayReorderHtml(day)}${dayReorder === day.id ? '' : day.exercises.map(ownExerciseCard).join('')}
       <button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
       <button class="btn primary" data-action="day-done">✔ Fertig</button>
       <p class="hint">Änderungen werden automatisch gespeichert.</p>
@@ -3304,7 +3422,8 @@ function renderDay({ id }) {
         Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.`
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
     ${feat('day-volume') ? volumeSummary(day) : ''}
-    <h2>Übungen</h2>`;
+    <h2>Übungen</h2>${dayReorderHtml(day)}`;
+  if (dayReorder === day.id) return h;
   const bw = data.cycle.buildWeeks;
   const autoWeeks = Array.from({ length: bw }, (_, w) => autoSetsForDay(day, w + 1, false));
   const autoDeload = autoSetsForDay(day, 0, true);
@@ -3355,8 +3474,6 @@ function renderDay({ id }) {
         `<button class="vchip ${stepFor(ex) === v ? 'on' : ''}" data-action="set-step" data-i="${i}" data-v="${v}">${fmtNum(v)} kg</button>`).join('')}
       </div>` : ''}`}
       <div class="row">
-        <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben">↑</button>
-        <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten">↓</button>
         <button class="icon-btn danger" data-action="ex-del" data-i="${i}">Entfernen</button>
       </div>
     </div>`;
@@ -3477,6 +3594,8 @@ function renderExercise({ name }) {
     ? `<p class="sub">Höchstes Gewicht: <b>${fmtNum(Math.max(...weights))} kg</b> · ${rows.length} Trainings</p>`
     : '';
   if (libEntry(name)) h += `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(name)}">ⓘ Ausführung ansehen</button>`;
+  h += exRename === name ? renameFormHtml(name)
+    : `<button class="btn outline" data-action="ex-rename-open" data-name="${esc(name)}">✎ Übung umbenennen</button>`;
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
@@ -4003,7 +4122,9 @@ function renderData() {
     <button class="btn primary" data-action="export">Sicherung exportieren</button>
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
-    <p class="hint">Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
+    <p class="hint">${data.lastExportName ? `Letzte Sicherung: <b>${esc(data.lastExportName)}</b>. ` : ''}Sicherungen heißen immer
+      „StepUp-Sicherung …“ mit Datum und Uhrzeit – such beim Importieren in der Dateien-App einfach nach „StepUp“.
+      Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
     <h2>Daten löschen</h2>
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
@@ -4038,6 +4159,10 @@ function beginCheck(id) {
   }
   if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
   if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
+  const pause = pauseInfo();
+  if (pause && !activePlan().askEntry) { go('pausecheck', { id, days: pause.days }); return; }
+  const feel = feelInfo(id);
+  if (feel) { go('cyclefeel', { id, ...feel }); return; }
   // neuer Plan aus dem Assistenten: erst fragen, mit welcher Zykluswoche er beginnt
   if (activePlan().askEntry) {
     if (!feat('entry-week')) { delete activePlan().askEntry; saveData(); }  // Einfach: immer mit der Intro-Woche
@@ -4045,6 +4170,61 @@ function beginCheck(id) {
   }
   if (!askSkipRound(day)) return;
   beginAfterRound(id);
+}
+
+// Einmal je Zyklus fragen: beim ersten Deload-Training (nach mindestens einem Aufbau-Training in diesem Zyklus). Wurde der
+// Zyklus ohne Deload beendet, beim ersten Training des neuen Zyklus nach dem alten fragen (late, gilt dann sofort).
+// Nicht nach einem Neustart wegen einer Pause (plan.feelSkip).
+function feelInfo(id) {
+  const p = activePlan();
+  if (!p || ownPlan() || p.askEntry) return null;
+  const done = cs => (p.feelLog || []).some(e => e.cs === cs) || (p.feelSkip || []).includes(cs);
+  const mine = s => !!findDay(s.dayId);
+  const ci = trainingRound(id);
+  if (ci.deload) {
+    if (done(ci.cycleStart) || data.sessions.some(s => s.cycleStart === ci.cycleStart && s.deload)) return null;
+    return data.sessions.some(s => mine(s) && s.cycleStart === ci.cycleStart && !s.deload) ? { cs: ci.cycleStart } : null;
+  }
+  if (data.sessions.some(s => s.cycleStart === ci.cycleStart)) return null;  // Zyklus läuft schon
+  const prev = sessionsNewestFirst().find(s => mine(s) && s.cycleStart && s.cycleStart !== ci.cycleStart);
+  return prev && !done(prev.cycleStart) && !prev.deload ? { cs: prev.cycleStart, late: true } : null;
+}
+function renderCycleFeel({ id, late }) {
+  const adj = rirFeelAdj(), rir = feat('tr-rir-input');
+  const opt = (m, title, text) => `<button class="split-opt freq-opt" data-action="cycle-feel" data-m="${m}"><b>${title}</b><small>${text}</small></button>`;
+  const atMax = adj >= FEEL_MAX, atMin = adj <= -FEEL_MAX;
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(findDay(id).name)}</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏁</span><h2>${late ? 'Zyklus geschafft!' : 'Gleich kommt die Deload-Woche.'} Wie hat sich das Training in diesem Zyklus angefühlt?</h2></div>
+      <p class="hint wiz-q-explain">${late ? 'Danach richtet die App den neuen Zyklus aus.'
+        : 'Jetzt spürst du die Belastung noch am deutlichsten. Deine Antwort gilt ab der nächsten Intro-Woche – die Deload-Woche bleibt, wie sie ist.'}${rir && adj ? ` Bisher angepasst: ${adj > 0 ? '+' : '−'}${fmtNum(Math.abs(adj))} Wdh. im Tank.` : ''}</p>
+      ${opt('hard', 'Zu schwer', atMax ? 'Mehr Luft gibt die App nicht dazu, sie ist schon an ihrer Grenze. Es bleibt wie im letzten Zyklus.'
+        : rir ? 'Im neuen Zyklus bleibt in jedem Satz 0,5 Wdh. mehr im Tank.' : 'Der neue Zyklus wird etwas leichter.')}
+      ${opt('easy', 'Zu leicht', atMin ? 'Näher ans Muskelversagen geht die App nicht, sie ist schon an ihrer Grenze. Es bleibt wie im letzten Zyklus.'
+        : rir ? 'Im neuen Zyklus bleibt in jedem Satz 0,5 Wdh. weniger im Tank (nie unter 0).' : 'Der neue Zyklus wird etwas fordernder.')}
+      ${opt('ok', 'Passt so', 'Alles bleibt wie im letzten Zyklus.')}
+    </div>`;
+}
+
+// Wiedereinstieg (User-Regel 2026-11-06): ab 7 Tagen ohne Training einmal fragen; bei nur 1 Training pro Woche ab 14 Tagen
+function pauseInfo() {
+  const lastOwn = sessionsNewestFirst().find(s => findDay(s.dayId));
+  if (!lastOwn || data.pauseAsked === lastOwn.id || cycleInfo().deload) return null;
+  const days = Math.floor((Date.parse(todayISO() + 'T12:00:00') - Date.parse(lastOwn.date.slice(0, 10) + 'T12:00:00')) / DAY);
+  const perWeek = activeDays().reduce((a, d) => a + dayTimes(d, cycleInfo().week), 0);
+  return days >= (perWeek <= 1 ? 14 : 7) ? { days, id: lastOwn.id } : null;
+}
+function renderPauseCheck({ id, days }) {
+  const opt = (m, title, text) => `<button class="split-opt freq-opt" data-action="pause-choice" data-m="${m}"><b>${title}</b><small>${text}</small></button>`;
+  const long = days >= 14;
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(findDay(id).name)}</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">👋</span><h2>Schön, dass du wieder da bist!</h2></div>
+      <p class="hint wiz-q-explain">Dein letztes Training ist <b>${days} Tage</b> her. Wie möchtest du weitermachen?</p>
+      ${opt('dl', `Mit leichter Woche einsteigen${long ? ' (empfohlen)' : ''}`, 'Es geht mit einer leichten Deload-Woche los, danach beginnt der Zyklus mit der Intro-Woche.')}
+      ${feat('tr-rir-input') ? opt('new', 'Neuer Zyklus mit der Intro-Woche', 'Für kürzere Pausen oder wenn du dich fit fühlst: Der Zyklus beginnt neu, ohne leichte Woche davor.') : ''}
+      ${opt('go', `Einfach weitermachen${long ? '' : ' (empfohlen)'}`, 'Alles bleibt wie geplant, du machst dort weiter, wo du aufgehört hast.')}
+    </div>`;
 }
 
 // choice: die Zyklus-Frage wurde gerade beantwortet ({ from, by }) – „Zurück“ führt dann wieder dorthin
@@ -4602,21 +4782,31 @@ function saveTraining() {
 }
 
 // Als gesichert gilt erst, was wirklich geteilt bzw. heruntergeladen wurde (Abbrechen im Teilen-Menü zählt nicht)
-function markExported() {
+function markExported(filename) {
   data.lastExport = new Date().toLocaleDateString('sv-SE');  // für die Sicherungs-Erinnerung
+  data.lastExportName = filename;                             // in Optionen angezeigt – damit man die Datei wiederfindet
   saveData();
+}
+
+// Dateiname der Sicherung (User-Wunsch 2026-11-09): gleich erkennbar und in der Dateien-App leicht zu finden –
+// immer mit „StepUp-Sicherung“ vorn, dann Name und Ortszeit (Datum zuerst, damit sie nach Namen sortiert zeitlich stehen),
+// z. B. „StepUp-Sicherung Alex 2026-11-09 14.30.json“
+function backupFileName(now = new Date()) {
+  const who = String((data.profile && data.profile.name) || '').replace(/[\\/:*?"<>|.]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30).trim();
+  const hm = `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}`;
+  return `StepUp-Sicherung ${who ? who + ' ' : ''}${now.toLocaleDateString('sv-SE')} ${hm}.json`;
 }
 
 async function exportData() {
   const json = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
-  const filename = `training-sicherung-${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = backupFileName();
   const file = new File([json], filename, { type: 'application/json' });
 
   // iPhone: Teilen-Menü -> „In Dateien sichern“
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'Trainings-Sicherung' });
-      markExported();
+      await navigator.share({ files: [file], title: 'StepUp-Sicherung' });
+      markExported(filename);
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
@@ -4629,7 +4819,7 @@ async function exportData() {
   a.download = filename;
   document.body.appendChild(a);
   a.click();
-  markExported();
+  markExported(filename);
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
@@ -4643,15 +4833,17 @@ function importData(file) {
       alert('Diese Datei ist keine gültige Trainings-Sicherung.');
       return;
     }
-    const plans = Array.isArray(d.plans) ? `${d.plans.length} Plänen` : `${d.days.length} Trainingstagen`;
-    if (!confirm(`Sicherung mit ${plans} und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
+    const plans = Array.isArray(d.plans) ? `${d.plans.length} ${d.plans.length === 1 ? 'Plan' : 'Plänen'}` : `${d.days.length} Trainingstagen`;
+    const at = d.exportedAt && !isNaN(new Date(d.exportedAt)) ? new Date(d.exportedAt) : null;
+    const from = at ? ` vom ${at.toLocaleDateString('de-DE')}, ${at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr,` : '';
+    if (!confirm(`Sicherung${from} mit ${plans} und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
     data = upgradeData({
       app: 'trainingsapp', version: 1,
       plans: d.plans, activePlanId: d.activePlanId,
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile,
     });
     registerCustomExercises();
@@ -4776,6 +4968,7 @@ const actions = {
   'libc-new': () => { libForm = null; go('libadd', {}); },
   'libc-edit': el => { libForm = null; go('libadd', { name: el.dataset.name }); },
   'libc-cancel': () => {
+    exRename = null;
     const name = libForm && libForm.orig;
     libForm = null;
     if (name) go('libex', { name }); else go('library');
@@ -4795,12 +4988,10 @@ const actions = {
     const like = (f.like || '').trim();
     const c = { name, kind: f.kind, group: f.group, like: like && builtinExercise(like) ? like : '', note: (f.note || '').trim() };
     if (f.orig) {
-      const i = data.customExercises.findIndex(x => nameKey(x.name) === nameKey(f.orig));
+      // Name geändert: überall umbenennen – Pläne und Verlauf ziehen mit (mit Rückfrage)
+      if (name !== f.orig && !renameExercise(f.orig, name)) return;
+      const i = data.customExercises.findIndex(x => nameKey(x.name) === nameKey(name));
       data.customExercises[i] = c;
-      // Umbenannt: auch in allen Plänen umbenennen (der Verlauf behält den alten Namen)
-      if (renamed) data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => {
-        if (nameKey(e.name) === nameKey(f.orig)) e.name = name;
-      })));
     } else data.customExercises.push(c);
     registerCustomExercises();
     saveData();
@@ -4879,6 +5070,25 @@ const actions = {
     toast(now.cycleStart !== ci.cycleStart || now.week !== ci.week ? `Woche geschafft – weiter mit ${ciLabel(now)}`
       : list.length ? `${new Set(list).size} Tag${new Set(list).size === 1 ? '' : 'e'} ausgelassen` : 'Keine Tage ausgelassen');
     render();
+  },
+  'pause-choice': el => {
+    const { id } = current.params, p = pauseInfo();
+    const endedCycle = cycleInfo().cycleStart;  // wird bei „leichte Woche“/„neuer Zyklus“ beendet
+    if (p) data.pauseAsked = p.id;
+    if (el.dataset.m === 'dl') actions['cyc-end']({ dataset: { m: 'newdl' } });
+    else if (el.dataset.m === 'new') actions['cyc-end']({ dataset: { m: 'new' } });
+    if (el.dataset.m !== 'go' && endedCycle) { const pl = activePlan(); pl.feelSkip = [...(pl.feelSkip || []), endedCycle]; }  // Neustart nach Pause: keine Zyklus-Frage
+    saveData();
+    beginCheck(id);
+  },
+  // Wie hat sich der Zyklus angefühlt? -> Tank-Anpassung für den neuen Zyklus
+  'cycle-feel': el => {
+    const p = activePlan(), m = el.dataset.m, { id, cs, late } = current.params;
+    const step = m === 'hard' ? FEEL_STEP : m === 'easy' ? -FEEL_STEP : 0;
+    p.feelLog = [...(p.feelLog || []), { cs, step, m, at: todayISO() }];
+    saveData();
+    if (step) toast(`${late ? 'Der neue' : 'Der nächste'} Zyklus wird etwas ${m === 'hard' ? 'leichter' : 'fordernder'}`);
+    beginCheck(id);
   },
   'entry-week': el => go('entryweek', { ...current.params, w: el.dataset.w }),
   // Einstiegswoche des neuen Plans übernehmen (Deload „selbst bestimmen“: die erste Woche ist der Deload), dann wie gewohnt weiter
@@ -5056,7 +5266,22 @@ const actions = {
     if (sets.length) sets.pop();
     saveDraft(); render();
   },
-  'tr-save': () => saveTraining(),
+  'typo-ok': el => {
+    const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    s.typoOk = `${s.weight}|${s.reps}`;
+    saveDraft();
+    $view.querySelector(`[data-typo="${el.dataset.ei}-${el.dataset.si}"]`).innerHTML = '';
+  },
+  'typo-fix': el => {
+    const input = $view.querySelector(`[data-field="${el.dataset.f}"][data-ei="${el.dataset.ei}"][data-si="${el.dataset.si}"]`);
+    if (input) { input.focus(); input.select(); }
+  },
+  'tr-save': () => {
+    // noch nicht bestätigte Auffälligkeiten einmal gesammelt nachfragen
+    const open = draft.entries.flatMap(en => en.sets.map((x, i) => (x.touched ? typoInfo(en, i) : null)).filter(Boolean).map(t => `• ${en.name}: ${t.text}`));
+    if (open.length && !confirm(`Bitte einmal prüfen:\n${open.join('\n')}\n\nOK = so speichern, Abbrechen = zurück`)) return;
+    saveTraining();
+  },
   'tr-cancel': () => {
     if (!confirm('Training wirklich verwerfen? Die Eingaben gehen verloren.')) return;
     draft = null; saveDraft(); go('start');
@@ -5070,6 +5295,7 @@ const actions = {
   },
   'open-day': el => go('day', { id: el.dataset.id }),
   'day-done': () => {
+    dayReorder = null;
     const missing = ownPlan() ? [] : findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null && !isBodyweight(e));
     if (missing.length && !confirm(
       `Bei ${missing.length === 1 ? '1 Übung' : missing.length + ' Übungen'} fehlt noch „Max. kg bei 10 Wdh.“:\n\n` +
@@ -5187,7 +5413,7 @@ const actions = {
     saveDraft(); render();
     toast(`Ersetzt durch ${name}`);
   },
-  'plan-swap-open': el => { planSwap = { day: current.params.id, i: Number(el.dataset.i) }; render(); },
+  'plan-swap-open': el => { exRename = null; planSwap = { day: current.params.id, i: Number(el.dataset.i) }; render(); },
   'plan-swap-cancel': () => { planSwap = null; render(); },
   'plan-swap-pick': el => { if (planReplaceExercise(findDay(current.params.id), Number(el.dataset.i), el.dataset.name)) render(); },
   'plan-swap-ok': el => {
@@ -5201,6 +5427,7 @@ const actions = {
     day.exercises.splice(el.dataset.i, 1);
     saveData(); render();
   },
+  'day-reorder': () => { dayReorder = dayReorder === current.params.id ? null : current.params.id; render(); },
   'ex-up': el => { moveExercise(findDay(current.params.id), +el.dataset.i, -1); saveData(); render(); },
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
   'plan-activate': el => {
@@ -5425,6 +5652,18 @@ const actions = {
   },
 
   // aus dem Verlauf oder z. B. aus der Bibliothek: „Zurück“ führt wieder dorthin
+  'ex-rename-open': el => {
+    exRename = el.dataset.name; planSwap = null; render();
+    const inp = document.getElementById('ren-name');
+    if (inp) { inp.focus(); inp.select(); }
+  },
+  'ex-rename-cancel': () => { exRename = null; render(); },
+  'ex-rename-ok': () => {
+    const from = exRename, to = document.getElementById('ren-name').value;
+    if (!renameExercise(from, to)) return;
+    if (current.view === 'exercise') go('exercise', { ...current.params, name: to.trim().replace(/\s+/g, ' ') });
+    else render();
+  },
   'open-exercise': el => go('exercise', { name: el.dataset.name, from: current.view, fromParams: current.params }),
   'open-session': el => go('session', { id: el.dataset.id, week: el.dataset.week }),
   // Kalender: Monat blättern bzw. Tag antippen (nochmal antippen = abwählen)
@@ -5656,6 +5895,7 @@ const fields = {
   'tr-max': el => { el.classList.toggle('missing', parseNum(el.value) == null); },
   'tr-weight': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    if (s.refW === undefined) s.refW = s.weight;  // Wert vor dem Eintippen: Maßstab für die Tippfehler-Frage
     s.weight = el.value;
     // Aufwärmen richtet sich nach dem ersten Arbeitssatz
     const en = draft.entries[el.dataset.ei];
@@ -5668,6 +5908,7 @@ const fields = {
   },
   'tr-reps': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    if (s.refR === undefined) s.refR = s.reps;
     s.reps = el.value;
     s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
     s.touched = true;
@@ -5818,6 +6059,11 @@ document.addEventListener('change', e => {
     return;
   }
   if (e.target.dataset && e.target.dataset.field === 'tr-max') { applyTrainingMax(e.target); return; }
+  if (e.target.dataset && (e.target.dataset.field === 'tr-weight' || e.target.dataset.field === 'tr-reps') && draft) {
+    const { ei, si } = e.target.dataset, box = $view.querySelector(`[data-typo="${ei}-${si}"]`);
+    if (box) box.innerHTML = typoHtml(draft.entries[ei], ei, si);
+    return;
+  }
   if (e.target.id === 'import-file' && e.target.files[0]) {
     importData(e.target.files[0]);
     e.target.value = '';

@@ -902,6 +902,8 @@ Object.assign(actions, {
   'bw-save': () => {
     const kg = parseNum(document.getElementById('bw-kg').value);
     if (kg == null || kg < 20 || kg > 400) { alert('Bitte ein gültiges Körpergewicht in kg eintragen.'); return; }
+    const lastKg = currentBodyweight();
+    if (lastKg != null && Math.abs(lastKg - kg) >= TYPO_KG && !confirm(`${fmtNum(kg)} kg? Zuletzt waren es ${fmtNum(lastKg)} kg.\n\nOK = so speichern, Abbrechen = zurück`)) return;
     saveBodyweight(document.getElementById('bw-date').value || todayISO(), kg);
     saveData();
     toast('Körpergewicht gespeichert ✔');

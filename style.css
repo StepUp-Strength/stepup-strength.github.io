@@ -2368,3 +2368,17 @@ body.touring { overflow: hidden; }
 .day-btn.next .day-no { background: #fff; color: var(--accent); }
 .day-btn.next::after { color: #fff; border-color: #fff; opacity: 1; }
 .badge.next-badge { background: #fff; color: var(--accent); font-size: 14px; font-weight: 800; }
+
+/* Rückfrage bei ungewöhnlichen Werten im Satz */
+.typo-hint { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); font-size: 14px; }
+.typo-hint:empty { display: none; }
+.typo-hint span { flex: 1 1 100%; font-weight: 650; }
+.typo-hint .vchip { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; }
+
+/* Unterbrochene Ernährungsphase */
+.nut-pause .row { margin: 8px 0; }
+.nut-pause .btn { margin-top: 8px; }
+
+/* Übung im Plan: Ersetzen und Umbenennen nebeneinander, Umbenennen-Feld (v174) */
+.plan-ex-btns { gap: 8px; margin-top: 0; }
+.plan-ex-btns .btn, .ex-rename .row .btn { flex: 1 1 0; min-width: 0; white-space: nowrap; padding-left: 8px; padding-right: 8px; }

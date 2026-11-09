@@ -634,8 +634,9 @@ function foodCloseDay(date, fill) {
 
 // vergangene Tage (letzte 7) mit Einträgen, die noch nicht abgeschlossen sind – neueste zuerst
 function foodOpenDays() {
+  if (nutPaused()) return [];  // Phase unterbrochen: keine Erinnerungen
   const out = [];
-  for (let i = 1; i <= 7; i++) { const d = addDaysISO(todayISO(), -i); if (!foodClosed(d) && foodOn(d).length) out.push(d); }
+  for (let i = 1; i <= 7; i++) { const d = addDaysISO(todayISO(), -i); if (!foodClosed(d) && foodOn(d).length && !nutPausedOn(d)) out.push(d); }
   return out;
 }
 
@@ -696,6 +697,7 @@ function foodDayLabel(date) {
 
 // Tagesziel (falls die Ernährung eingerichtet ist)
 function foodGoal(date = todayISO()) {
+  if (nutPausedOn(date)) return null;  // Phase unterbrochen: kein Tagesziel
   if (typeof nutPlanActive === 'function' && nutPlanActive()) return nutForDay(null, date);  // Ernährungsplan
   const n = data.nutrition;
   const kg = nutWeight();
