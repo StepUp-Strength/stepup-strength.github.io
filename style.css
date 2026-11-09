@@ -971,6 +971,35 @@ button.pill:active { transform: scale(.95); }
   line-height: 1.4;
 }
 .intro-note { background: var(--accent-soft); color: var(--accent-text); }
+/* „So trägst du dein Training ein“ oben im Training */
+.entry-help {
+  margin: 0 0 14px;
+  padding: 16px 16px 14px;
+  border-radius: 18px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.45;
+}
+.entry-help-title { display: block; margin-bottom: 6px; font-size: 18px; color: var(--accent-text); }
+.entry-help ol { margin: 0; padding-left: 22px; }
+.entry-help ol > li { margin: 0 0 6px; }
+.entry-help .feel-legend { margin: 6px 0 0; padding: 0; list-style: none; }
+.entry-help .feel-legend li { margin: 0 0 4px; }
+.entry-help-key { margin: 10px 0 0; }
+.entry-help .btn { min-height: 52px; margin: 12px 0 0; text-align: center; font-size: 18px; }
+.help-link {
+  display: block;
+  margin: -6px 0 14px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: left;
+}
 .deload-note { background: var(--warn-soft); color: var(--warn-text); }
 .pill.past { background: var(--line-strong); color: var(--text); }
 .pill.now { background: var(--accent); color: #fff; }
@@ -2392,3 +2421,23 @@ body.touring { overflow: hidden; }
 .wiz-pday-pos { margin: 6px 0 4px; }
 
 .max-mini .max-today { display: block; font-weight: 500; color: var(--muted); }
+
+/* Minicut-Hinweis beim Einrichten (v187) */
+.nut-mc-list { margin: 6px 0 0; padding-left: 18px; }
+.nut-mc-list li { margin: 3px 0; }
+
+/* Über die App + Begrüßung (v188) */
+.about-btn { margin-top: 18px; }
+.about-sec > summary { cursor: pointer; list-style: none; padding: 2px 0; }
+.about-sec > summary::-webkit-details-marker { display: none; }
+.about-sec > summary::after { content: '›'; float: right; color: var(--muted); transition: transform .2s; }
+.about-sec[open] > summary::after { transform: rotate(90deg); }
+.about-list, .welcome-why { margin: 8px 0 0; padding-left: 20px; }
+.about-list li, .welcome-why li { margin: 6px 0; line-height: 1.45; }
+.about-text h3 { font-size: 15px; margin: 14px 0 4px; }
+.about-text p { margin: 4px 0; line-height: 1.5; }
+.welcome-why { text-align: left; }
+.welcome-health { text-align: left; margin: 8px 0 4px; font-size: 14px; }
+.welcome-health > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+.welcome-health .about-list { font-size: 13.5px; }
+.welcome-why { font-size: 15px; }

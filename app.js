@@ -625,6 +625,12 @@ function condSet(s, a, b, t) {
   const exact = s.weight * ratio;
   let w = wSnap(exact, t, Math.floor);
   if (!(w > 0)) w = wSnap(exact, t, Math.ceil);
+  // Leichtes Gewicht, die Stufe wäre ein Sprung über 25 %: Gewicht halten, nur die Wdh. umrechnen – sonst ginge über die
+  // Umrechnung auf z. B. 2,5 kg × 30+ Wdh. Leistung verloren (repFactor endet bei 30 Wdh.; Fehler bis v182: 5 × 13 → 5 × 9)
+  if (w !== s.weight && Math.abs(w - s.weight) / s.weight > 0.25) {
+    const keep = Math.round(capacityAt(cap, exact, s.weight) - rir);
+    if (keep >= minReps()) return { ...s, reps: keep };
+  }
   return { ...s, weight: w, reps: Math.max(1, Math.round(capacityAt(cap, exact, w) - rir)) };
 }
 // Bezugstraining (Vergleichswoche, Vorwoche …) auf die Vorermüdung des Ziels t umrechnen; rawSets = wie damals geschafft
@@ -2067,6 +2073,39 @@ function adjustProposal(p, rule, t, prevV, cmpV, i, k) {
   return { p, rule };
 }
 
+// Einfach-Modus (User-Regel 2026-11-09): „😊 locker“ heißt nur „mindestens 4 im Tank“ – nach oben offen. Stützt sich der
+// Vorschlag auf so einen Satz, gilt als Untergrenze die letzte genaue Leistung der Übung (💪 gut, 😤 hart, 🔥 ging nichts mehr
+// oder Tank-Zahl, höchstens OPEN_DAYS alt), umgerechnet auf Ziel, Tank und Vorermüdung von heute. Gewicht immer abgerundet.
+const OPEN_DAYS = 42;
+function openMax(name) {
+  const k = nameKey(name), since = addDaysISO(todayISO(), -OPEN_DAYS);
+  for (const s of sessionsNewestFirst()) {
+    if (s.date.slice(0, 10) < since) break;
+    if (s.deload) continue;
+    const ei = s.entries.findIndex(e => nameKey(e.name) === k);
+    if (ei < 0) continue;
+    const sets = s.entries[ei].sets.filter(x => !x.variant);
+    const j = sets.findIndex(x => !x.open && x.weight > 0 && x.reps != null && x.rir != null);
+    if (j < 0) continue;
+    const x = sets[j], f = repFactor(x.reps + x.rir + FATIGUE * j);
+    return x.weight / f / (1 - sessionFat(s, ei));  // frisch, ohne Vorermüdung
+  }
+  return null;
+}
+function openFloor(en, t, i, k) {
+  if (t.own || t.hold || t.deload || t.bodyweight || t.noLoadUp) return null;
+  const refs = [en.prevWeek, en.compare].map(r => r && ofVariant(r.sets, '')).filter(x => x && x.length);
+  if (!refs.some(r => refAt(r, k).open)) return null;
+  const m = openMax(en.name);
+  if (m == null) return null;
+  const em = effMax({ ...t, max10: m });
+  const w = wSnap(em * repFactor(t.reps + t.rir), t, Math.floor);
+  if (!(w > 0)) return null;
+  const reps = Math.floor(10 + (1 - w / em) / 0.025 - t.rir - FATIGUE * k + 1e-9);
+  if (reps < minReps()) return null;
+  return { weight: w, reps: Math.min(reps, Math.max(goalReps(t, i), REP_SOFT_MAX)) };
+}
+
 function proposeSet(en, i, v) {
   const t = en.target;
   const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
@@ -2085,6 +2124,10 @@ function proposeSet(en, i, v) {
       const lastV = lastVariantSets(en.name, v).map(s => t.bodyweight ? { ...s, weight: null } : s);
       if (lastV.length) p = fromRef(refAt(lastV, k), t, k === 0, i);
     }
+  }
+  if (p && !v && rule !== 'brake') {
+    const fl = openFloor(en, t, i, k);
+    if (fl && lighterSet(p, fl)) { p = fl; rule = 'open'; }
   }
   const firstV = ofVariant(en.weekFirst && en.weekFirst.sets, v);
   if (firstV.length && !t.hold) {
@@ -2806,11 +2849,10 @@ function renderTraining() {
   const lastDur = lastDuration(draft.dayId);
   h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
     <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + timeCutNote() + h;
-  h += `<p class="sub">${fmtDate(draft.date, true)}<br>${!feat('tr-rir-input')
-    ? 'Trag nach jedem Satz ein, was du geschafft hast, und tippe an, wie er sich angefühlt hat – die App passt die nächsten Sätze daran an.'
-    : draft.own
-    ? 'Trag nach jedem Satz ein, was du geschafft hast und wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt.'
-    : 'Trag nach jedem Satz ein, wie viele Wdh. noch im Tank waren – damit gilt der Satz als erledigt und die Wdh. der folgenden Sätze passen sich an.'}</p>`;
+  h += draft.own
+    ? `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, was du geschafft hast${feat('tr-rir-input')
+      ? ' und wie viele Wdh. noch im Tank waren' : ' und tippe an, wie er sich angefühlt hat'} – damit gilt der Satz als erledigt.</p>`
+    : `<p class="sub">${fmtDate(draft.date, true)}</p>` + entryHelpHtml();
   if (feat('tr-prog')) h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
@@ -2989,6 +3031,36 @@ function renderTraining() {
     <div class="spacer"></div>
     <button class="btn danger" data-action="tr-cancel">Training verwerfen</button>`;
   return h;
+}
+
+// Erklärung oben im Training (User-Wunsch 2026-11-09): offen, bis „Verstanden“ (profile.entryHelpKnown), danach aufklappbar
+let entryHelpOpen = false;
+function entryHelpHtml() {
+  const known = data.profile && data.profile.entryHelpKnown;
+  if (known && !entryHelpOpen) {
+    return '<button class="help-link" data-action="entry-help-toggle">ℹ️ So trägst du dein Training ein</button>';
+  }
+  const simple = !feat('tr-rir-input');
+  const last = simple
+    ? `<li>Tippe im letzten Feld an, <b>wie schwer dir der Satz gefallen ist</b>:
+        <ul class="feel-legend">
+          <li>😊 <b>locker</b> – es wären noch deutlich mehr gegangen (4 oder mehr)</li>
+          <li>💪 <b>gut</b> – genau richtig: noch so viele, wie bei der Übung steht</li>
+          <li>😤 <b>hart</b> – es ging gerade noch (vielleicht noch 1)</li>
+          <li>🔥 <b>ging nichts mehr</b> – keine einzige Wdh. mehr</li>
+        </ul></li>`
+    : '<li>Trag im letzten Feld ein, <b>wie viele Wdh. noch im Tank waren</b> – wie viele du noch geschafft hättest, bevor nichts mehr ging (0 = gar keine mehr).</li>';
+  return `<div class="entry-help">
+    <b class="entry-help-title">So trägst du dein Training ein</b>
+    <ol>
+      <li>Die App gibt dir für jeden Satz <b>Gewicht und Wiederholungen</b> vor.</li>
+      <li>Versuch, diese Vorgabe zu erfüllen. Nimmst du ein anderes Gewicht oder schaffst mehr oder weniger Wdh., trag die echten Werte ein.</li>
+      ${last}
+    </ol>
+    <p class="entry-help-key"><b>Wichtig:</b> Daraus berechnet die App deine weiteren Vorgaben – für die nächsten Sätze und fürs nächste Training.
+      Gib es deshalb ehrlich an${simple ? ', auch wenn es sich nicht wie „gut“ angefühlt hat' : ' und schätz lieber, statt einfach das Ziel einzutragen'}.</p>
+    <button class="btn ${known ? 'outline' : 'primary'}" data-action="${known ? 'entry-help-toggle' : 'entry-help-ok'}">${known ? 'Zuklappen' : '✔ Verstanden'}</button>
+  </div>`;
 }
 
 // Einfach-Modus: Gefühl statt Tank-Zahl. Intern wird daraus „Wdh. im Tank“ relativ zum Ziel der Übung.
@@ -4307,6 +4379,7 @@ function renderData() {
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>
 `;
 }
@@ -4867,9 +4940,38 @@ function refreshPrefat() {
     const f = preFatigue(list, i);
     if (Math.abs((en.target.fat || 0) - f) < 1e-9) return;
     if (en.sets.some(s => s.touched || isDone(s))) { en.target.fat = f; return; }
-    const variants = en.sets.map(variantOf);
-    setupEntry(en, { ...(en.plan || en.target), fat: f }, j => variants[Math.min(j, variants.length - 1)] || '');
+    rebuildEntry(en, { ...(en.plan || en.target), fat: f });
   });
+}
+
+// Satz anhängen wie „+ Satz“: Gewicht des letzten Satzes, 1 Wdh. weniger
+function addAutoSet(en) {
+  const prev = en.sets[en.sets.length - 1];
+  const prevReps = prev ? parseNum(prev.reps) : null;
+  en.sets.push({
+    weight: prev ? prev.weight : '',
+    reps: prevReps != null ? String(Math.max(1, prevReps - FATIGUE)) : (en.target ? String(en.target.reps) : ''),
+    rir: '',
+    auto: true,
+    variant: variantOf(prev),
+  });
+}
+
+// Übung im laufenden Training neu vorschlagen (Vorermüdung, Max., Gewichtsstufe, Band, Tausch) – die aktuelle Satzzahl
+// bleibt: vom Zeitlimit gekürzte Sätze kommen nicht zurück, von Hand angehängte bleiben (Fehler bis v181: volle Plan-Sätze)
+function rebuildEntry(en, target) {
+  const keep = en.sets.length, variants = en.sets.map(variantOf);
+  setupEntry(en, target, j => variants[Math.min(j, variants.length - 1)] || '');
+  if (!keep) return;
+  if (en.sets.length > keep) {
+    en.sets.length = keep;
+    en.planned.length = Math.min(en.planned.length, keep);
+    en.target = { ...en.target, sets: keep };
+  } else if (en.sets.length < keep) {
+    while (en.sets.length < keep) addAutoSet(en);
+    const ei = draft.entries.indexOf(en);
+    if (ei >= 0) recalcSets(ei);
+  }
 }
 
 // Übung im laufenden Training gegen eine andere tauschen (Plan bleibt unverändert)
@@ -4879,9 +4981,7 @@ function replaceExercise(en, name, max10) {
   const plan = en.plan || en.target;  // Ziel laut Plan (ohne Deload-/Intro-Anpassung)
   en.name = name;
   en.replacedFrom = nameKey(name) === nameKey(original) ? null : original;
-  const variants = en.sets.map(variantOf);
-  setupEntry(en, { ...plan, max10, step: stepFor(ex || { name, step: null }), weights: weightsFor(name) },
-    i => variants[Math.min(i, variants.length - 1)]);
+  rebuildEntry(en, { ...plan, max10, step: stepFor(ex || { name, step: null }), weights: weightsFor(name) });
 }
 
 // Ergebnis einer Übung fürs nächste Mal, gemessen am ersten normalen Satz (null, wenn Werte fehlen).
@@ -4929,6 +5029,7 @@ function saveTraining() {
         .map(s => ({
           weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir),
           ...(s.variant ? { variant: s.variant } : {}),
+          ...(s.open ? { open: 1 } : {}),
         }))
         .filter(s => s.weight != null || s.reps != null),
     }))
@@ -5140,8 +5241,7 @@ function applyTrainingMax(el) {
   const ex = planExercise(en.name);
   if (ex) { ex.max10 = v; saveData(); }
   if (!en.sets.some(isDone) && en.plan) {
-    const variants = en.sets.map(variantOf);
-    setupEntry(en, { ...en.plan, max10: v }, i => variants[Math.min(i, variants.length - 1)]);
+    rebuildEntry(en, { ...en.plan, max10: v });
   } else {
     en.target.max10 = v;
     if (en.plan) en.plan.max10 = v;
@@ -5314,10 +5414,13 @@ const actions = {
     en.feelOpen = en.feelOpen === Number(el.dataset.si) ? null : Number(el.dataset.si);
     render();
   },
+  'entry-help-ok': () => { data.profile = data.profile || {}; data.profile.entryHelpKnown = true; entryHelpOpen = false; saveData(); render(); },
+  'entry-help-toggle': () => { entryHelpOpen = !entryHelpOpen; render(); },
   'tr-feel': el => {
     const ei = Number(el.dataset.ei), si = Number(el.dataset.si);
     const en = draft.entries[ei];
     fields['tr-rir']({ value: String(feelRir(en.target, el.dataset.f)), dataset: { ei: String(ei), si: String(si) } });
+    if (el.dataset.f === 'easy') en.sets[si].open = 1;  // „locker“ = mindestens so viel im Tank, nach oben offen (openFloor)
     en.feelOpen = null;
     render();
   },
@@ -5424,8 +5527,7 @@ const actions = {
     en.stepOpen = false;
     if (en.target.step !== v) {
       if (!en.sets.some(isDone) && en.plan) {
-        const variants = en.sets.map(variantOf);
-        setupEntry(en, { ...en.plan, step: v }, i => variants[Math.min(i, variants.length - 1)]);
+        rebuildEntry(en, { ...en.plan, step: v });
       } else {
         en.target.step = v;
         if (en.plan) en.plan.step = v;
@@ -5441,8 +5543,7 @@ const actions = {
     if (ex) { ex.band = v; saveData(); }
     if (!en.sets.some(isDone) && en.plan) {
       en.bandPick = v; en.bandNext = null;
-      const variants = en.sets.map(variantOf);
-      setupEntry(en, en.plan, i => variants[Math.min(i, variants.length - 1)]);
+      rebuildEntry(en, en.plan);
     } else en.bandNext = v === en.target.band ? null : v;
     saveDraft(); render();
   },
@@ -5454,17 +5555,7 @@ const actions = {
   },
 
   'tr-add-set': el => {
-    const sets = draft.entries[el.dataset.ei].sets;
-    const prev = sets[sets.length - 1];
-    const t = draft.entries[el.dataset.ei].target;
-    const prevReps = prev ? parseNum(prev.reps) : null;
-    sets.push({
-      weight: prev ? prev.weight : '',
-      reps: prevReps != null ? String(Math.max(1, prevReps - FATIGUE)) : (t ? String(t.reps) : ''),
-      rir: '',
-      auto: true,
-      variant: variantOf(prev),
-    });
+    addAutoSet(draft.entries[el.dataset.ei]);
     recalcSets(+el.dataset.ei);
     refreshPrefat();
     saveDraft(); render();
@@ -6154,6 +6245,7 @@ const fields = {
   'tr-rir': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.rir = el.value;
+    delete s.open;
     s.touched = true;
     recalcSets(+el.dataset.ei);
     saveDraft();
@@ -6443,8 +6535,14 @@ function welcomeHtml() {
   if (welc.step === 1) {
     return `${icon}${dots}
       ${welc.fresh ? `<h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
-      <p>Schön, dass du auf StepUp Strength aufmerksam geworden bist! Viel Spaß auf deiner Reise – nimm dir ruhig
-        etwas Zeit, um dich mit den Möglichkeiten der App vertraut zu machen. 🙂</p>`
+      <ul class="welcome-why">
+        <li>Für jeden Satz sagt dir die App <b>Gewicht und Wiederholungen</b> – passend zu deiner Kraft.</li>
+        <li>Sie <b>lernt aus jedem Training</b> und steigert dich Schritt für Schritt, mit Erholungswochen zur richtigen Zeit.</li>
+        <li>Dein <b>Plan in wenigen Minuten</b> – fürs Studio, an Maschinen oder zu Hause. Oder du übernimmst deinen eigenen.</li>
+        <li>Auf Wunsch auch <b>Ernährung</b>: Kalorienziel, Tagebuch und Barcode-Scanner.</li>
+        <li><b>Ohne Konto, ohne Werbung</b> – deine Daten bleiben auf deinem Handy.</li>
+      </ul>
+      <details class="welcome-health"><summary>⚕️ Wichtig: Gesundheitshinweis</summary>${typeof healthListHtml === 'function' ? healthListHtml() : ''}</details>`
       : `<h2 id="welcome-title">Etwas persönlicher</h2>
       <p>Verrate der App kurz, wie du heißt – dann kann sie dich persönlich ansprechen und sich etwas mehr auf dich einstellen.</p>`}
       <div class="welcome-form">

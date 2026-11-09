@@ -174,6 +174,26 @@ function nutStartLine() {
           : n.goalKg != null && n.phase !== 'recomp' && n.goalKg !== n.startKg && (kg - n.startKg) / (n.goalKg - n.startKg) >= 1 ? '<small>🎯 Ziel erreicht</small>' : '')(nutCalc(n, kg))}</span></button>`;
 }
 
+// Hinweis beim Einrichten (User-Wunsch 2026-11-09): Der Minicut begrenzt den Trainingszyklus – nach den Minicut-Wochen folgt
+// Deload + Erhaltungswoche, danach höchstens ein zweiter Durchgang (bis 4 Wochen), dann Phase wechseln. Mit laufendem Plan
+// zusätzlich, in welcher Woche der eigene Zyklus dann endet.
+function nutMinicutNote(w) {
+  let mine = '';
+  if (nutPlanCoupled() && !selfDeload()) {
+    const ci = cycleInfo();
+    const left = data.cycle.buildWeeks - ci.week + 1;  // Trainingswochen bis zum regulären Deload (diese mitgezählt)
+    if (!ci.deload && left > w) mine = `<br><b>Bei dir:</b> Du bist in Woche ${ci.week} von ${data.cycle.buildWeeks}. Mit ${w} Wochen
+      Minicut endet dein Zyklus schon nach Woche ${ci.week + w - 1}, statt nach Woche ${data.cycle.buildWeeks}.`;
+  }
+  return `<div class="deload-note nut-small">⚡ <b>Minicut und Training</b>
+      <ul class="nut-mc-list">
+        <li>Der Minicut <b>begrenzt deinen Trainingszyklus</b> auf die gewählte Dauer. Danach folgt automatisch 1 Woche auf
+          Erhaltungskalorien und im Training gleichzeitig die <b>Deload-Woche</b> – auch wenn dein Zyklus eigentlich länger wäre.</li>
+        <li>Danach ist noch <b>ein</b> weiterer Durchgang möglich: höchstens ${NUT_MINICUT_MAX} Wochen Training im Defizit, dann wieder Deload.</li>
+        <li>Spätestens dann solltest du die <b>Phase wechseln</b>: weiter mit Aufbau oder ein paar Wochen auf Erhaltung.</li>
+      </ul>${mine}</div>`;
+}
+
 // Defizit-Wochen zählen ohne Erhaltungswochen dazwischen (Deload, siehe nutBreakNow); danach Erhaltungswoche (maintFrom,
 // läuft mindestens 7 Tage und solange im Training der Deload läuft, höchstens 14 Tage)
 function nutMinicutStage(n) {
@@ -394,19 +414,6 @@ function nutTrend(n) {
   return { perWeek: sxy / sxx * 7, days: Math.round(span) };
 }
 
-// Ø Eiweiß der letzten 7 Tage unter der Untergrenze? (frühestens nach einer Woche in der Phase, mind. 4 eingetragene Tage)
-function nutProteinWeekCard(n, c) {
-  if (!nutHintsOn() || daysSince(n.since) < 7) return '';
-  const days = Array.from({ length: 7 }, (_, i) => intakeOn(addDaysISO(todayISO(), -1 - i))).filter(x => x && x.p != null && x.src !== 'auto');
-  if (days.length < 4) return '';
-  const avg = Math.round(days.reduce((a, x) => a + x.p, 0) / days.length);
-  if (avg >= c.pLo) return '';
-  return `<div class="card nut-check off"><p><b>🥚 Eiweiß: Ø ${avg} g in den letzten 7 Tagen</b></p>
-    <p class="hint nut-small">Empfohlen sind mindestens ${c.pLo} g am Tag. ${n.phase === 'diet' || n.phase === 'minicut'
-      ? 'Gerade im Defizit schützt genug Eiweiß deine Muskeln.' : 'Genug Eiweiß ist die Grundlage für den Muskelaufbau.'}
-      Einfache Quellen: Magerquark, Skyr, Hähnchen- oder Putenbrust, Eier, Hüttenkäse, Thunfisch – oder ein Eiweißshake.</p></div>`;
-}
-
 // Schalter für alle Bewertungen und Vorschläge zur Ernährung (auch in den Optionen)
 function nutHintsCard() {
   const on = nutHintsOn();
@@ -414,8 +421,8 @@ function nutHintsCard() {
       <h2>Hinweise zur Ernährung</h2>
       <div class="seg two"><button class="${on ? 'on' : ''}" data-action="nut-hints" data-v="1">An</button>
         <button class="${on ? '' : 'on'}" data-action="nut-hints" data-v="0">Aus</button></div>
-      <p class="hint nut-small">Die App bewertet, was du isst, und schlägt Änderungen vor: Gewichtsverlauf, gemessener Bedarf,
-        Eiweiß-Hinweis und die grünen und orangen Balken bei „Heute gegessen“. Manche Menschen setzt so etwas unter Druck – etwa,
+      <p class="hint nut-small">Die App bewertet, was du isst, und schlägt Änderungen vor: Gewichtsverlauf, gemessener Bedarf
+        und die grünen und orangen Balken bei „Heute gegessen“. Manche Menschen setzt so etwas unter Druck – etwa,
         wenn man ohnehin sehr auf Zahlen achtet oder schon einmal Schwierigkeiten mit dem Essen hatte. <b>Aus</b> heißt: Die App zeigt
         nur noch dein Tagesziel und was du eingetragen hast – ohne Bewertung, ohne Warnungen und ohne Vorschläge. Phasen,
         Erhaltungswochen und dein Training laufen ganz normal weiter. Du kannst es jederzeit wieder einschalten.</p>
@@ -612,8 +619,7 @@ function renderNutGoal() {
   const weeks = d.phase !== 'minicut' ? '' : `<p class="lbl chips-title">Dauer (höchstens ${NUT_MINICUT_MAX} Wochen am Stück)</p>
       <div class="variants count">${[2, 3, 4].map(w => `<button class="vchip ${Math.min(d.weeks, NUT_MINICUT_MAX) === w ? 'on' : ''}"
         data-action="nut-weeks" data-w="${w}">${w} Wochen</button>`).join('')}</div>
-      <p class="hint nut-small">Danach stellt die App automatisch 1 Woche auf Erhaltungskalorien um – am besten zusammen mit einer
-        Deload-Woche im Training.</p>`;
+      ${nutMinicutNote(Math.min(d.weeks || NUT_MINICUT_MAX, NUT_MINICUT_MAX))}`;
   return `<div class="card wiz-q">
       ${d.flow === 'nutphase' ? nutStep(3, 3) : ''}
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">${ph.icon}</span><h2>${ph.label}: Ziel & Tempo</h2></div>
@@ -1101,10 +1107,15 @@ function nutPhaseHint(n) {
       <button class="btn primary" data-action="nut-to-bulk">Weiter mit Aufbau</button>
       ${again ? '<button class="btn" data-action="nut-minicut-again">Noch ein Minicut-Durchgang (der letzte)</button>' : ''}</div>`;
   }
-  if (n.phase === 'diet' && week > 16) {
-    return `<div class="card nut-check"><p><b>💡 Schon ${week - 1} Wochen Diät</b></p>
-      <p class="hint nut-small">Nach so langer Zeit tut eine Diätpause gut: 1–2 Wochen auf Erhaltung essen (Phase „Body Recomposition“,
-      Tempo „Erhaltung“), danach geht es leichter weiter.</p></div>`;
+  // Diät: einmal pro Woche (ab Woche 2) „Woche X deiner Diät“, bis „Okay“ (n.weekSeen); ab Woche 17 mit Tipp Diätpause
+  // (User-Wunsch 2026-11-09, vorher ab Woche 17 täglich)
+  if (n.phase === 'diet' && week >= 2 && n.weekSeen !== week) {
+    const long = week > 16;
+    return `<div class="card nut-check"><p><b>📅 Woche ${week} deiner Diät</b></p>
+      <p class="hint nut-small">Deine Diät läuft seit ${week - 1} Woche${week === 2 ? '' : 'n'}${long
+        ? '. Nach so langer Zeit tut eine Diätpause gut: 1–2 Wochen auf Erhaltung essen (Phase „Body Recomposition“, Tempo „Erhaltung“), danach geht es leichter weiter.'
+        : '.'}</p>
+      <button class="btn" data-action="nut-week-ok">Okay</button></div>`;
   }
   return '';
 }
@@ -1215,7 +1226,6 @@ function renderNutrition() {
       ${typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanCard() : nutTargetCard(n, c, true)}
       ${nutIntakeCard(n, c)}
       ${feat('nut-history') ? nutHistoryCard(n, nutForDay(c)) : ''}
-      ${nutProteinWeekCard(n, nutForDay(c))}
       ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
       ${nutTrendCard(n, c)}
@@ -1259,7 +1269,7 @@ function nutBeginPhase(n, phase, kg) {
   const history = prev ? [...(prev.history || [])] : [];
   if (prev && prev.since !== todayISO()) history.push({ phase: prev.phase, from: prev.since, to: todayISO() });
   return { ...n, phase, since: todayISO(), startKg: kg, adjust: 0, adjustAt: null, changedAt: null, kcalOwn: null, history,
-    breakOn: null, breakTotal: 0, breakEnd: null, maintFrom: null, noBreak: null, pause: null, pauses: [], pauseTotal: 0, resumeAt: null };
+    breakOn: null, breakTotal: 0, breakEnd: null, maintFrom: null, noBreak: null, pause: null, pauses: [], pauseTotal: 0, resumeAt: null, weekSeen: null };
 }
 
 views.nutrition = { title: 'Ernährung', tab: 'nutrition', render: renderNutrition, after: () => { drawChart(); nutPctUpdate(); } };
@@ -1306,6 +1316,8 @@ Object.assign(actions, {
     toast(`${gaps.length} Tag${gaps.length === 1 ? '' : 'e'} nachgetragen ✔`);
     render();
   },
+  // Wochen-Karte der Diät gesehen: erst in der nächsten Woche wieder
+  'nut-week-ok': () => { data.nutrition.weekSeen = nutWeekNo(data.nutrition); saveData(); render(); },
   // Erhaltungswoche im Deload für diesen Zyklus abwählen
   'nut-nobreak': () => {
     if (!confirm('Diese Deload-Woche trotzdem im Defizit essen?\n\nDas Tagesziel geht sofort wieder auf dein Defizit. Ab dem nächsten Deload gilt wieder die Erhaltungswoche.')) return;

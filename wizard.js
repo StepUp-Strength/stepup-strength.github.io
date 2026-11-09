@@ -84,6 +84,12 @@ const SPLITS = [
     days: [['Ganzkörper Push A', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL], ['Ganzkörper Push B', 'light', G_FB_PUSH]] },
   { id: 'ul3', tag: '2er-Split', label: 'Ober-/Unterkörper', note: 'Oberkörper 2×, Unterkörper 1× pro Woche',
     days: [['Oberkörper A', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER], ['Oberkörper B', 'light', G_UPPER]] },
+  // 2er-Split plus ein Ganzkörper-Tag (User-Wunsch 2026-11-09): fast alle Muskeln 2× pro Woche, Ganzkörper im hohen Wdh.-Bereich.
+  // fit: Wochenvolumen gleichmäßig gesenkt, damit der volle Ganzkörper-Tag in die Zeit passt (siehe fitVolume)
+  { id: 'fbppfb3', tag: '2er-Split', label: 'Ganzkörper Push/Pull + Ganzkörper', fit: true, note: 'Push, Pull und 1× Ganzkörper – fast alle Muskeln 2× pro Woche, dafür pro Training etwas weniger Sätze',
+    days: [['Ganzkörper Push', 'heavy', G_FB_PUSH], ['Ganzkörper Pull', 'heavy', G_FB_PULL], ['Ganzkörper', 'light', G_FULL]] },
+  { id: 'ulfb3', tag: '2er-Split', label: 'Ober-/Unterkörper + Ganzkörper', fit: true, note: 'Oberkörper, Unterkörper und 1× Ganzkörper – fast alle Muskeln 2× pro Woche, dafür pro Training etwas weniger Sätze',
+    days: [['Oberkörper', 'heavy', G_UPPER], ['Unterkörper', 'heavy', G_LOWER], ['Ganzkörper', 'light', G_FULL]] },
   { id: 'arnold', tag: '3er-Split', label: 'Arnold-Split', days: [['Brust/Rücken', 'heavy', G_CHEST_BACK], ['Schultern/Arme', 'heavy', G_SHOULDER_ARMS], ['Beine', 'heavy', G_LOWER]] },
   // 4
   { id: 'ul', tag: '2er-Split', label: 'Ober-/Unterkörper', pairs: true, days: [['Oberkörper – niedrige Wdh.', 'heavy', G_UPPER], ['Unterkörper – niedrige Wdh.', 'heavy', G_LOWER],
@@ -297,7 +303,7 @@ function exercisesNeeded(g) {
 // Automatische Auswahl: je Übung eine Stufe – 1. Grundübung, 2. normale, 3. Assistenzübung.
 // Pro Stufe zuerst eine Übung aus dem aktiven Plan, sonst ein Standard-Vorschlag; fehlt die Art ganz,
 // wird mit der nächstbesten Übung aufgefüllt.
-const HOME_PROP = /sofa|stuhl|tisch|treppe|tur|handtuch|band|bander|monster walk|pull-aparts|am boden/;
+const HOME_PROP = /sofa|stuhl|tisch|treppe|\btur|handtuch|\bband\b|bander|monster walk|pull-aparts|am boden/;
 function wizCandidates(g) {
   const tooHard = x => (needsCoach() && BEGINNER_HARD.test(norm(x))) || (wizHome() && wiz.level === 'neuling' && NEULING_HOME_HARD.test(norm(x)));
   const existing = existingFor(g).filter(x => !tooHard(x));
@@ -418,17 +424,50 @@ function templateVolume(groups) {
   const vol = {};
   const share = wizLevel().vol * wizStyle().vol;  // Startvolumen je nach Erfahrung und Volumen-Variante
   const tpl = SPLITS.find(s => s.id === wiz.split);  // Klassiker bringen eigene Wochenziele mit
+  const raw = {};
   for (const g of groups) {
     const freq = Math.max(1, daysWith(g));
     const adj = focusAdj(g);
-    vol[g] = ((tpl && tpl.weekly && tpl.weekly[g]) || WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, Math.round(Math.max(1, w * share + adj) / freq)));
+    raw[g] = ((tpl && tpl.weekly && tpl.weekly[g]) || WEEKLY_TARGET[g] || [2, 2, 3, 3]).map(w => Math.max(1, w * share + adj) / freq);
   }
+  if (tpl && tpl.fit) fitVolume(raw);
+  for (const g of groups) vol[g] = raw[g].map(v => Math.max(1, Math.round(v)));
   // Lat steigt sonst oft gar nicht (Wochenziel nur 10 → 12, auf mehrere Tage verteilt und gerundet)
   if (vol.lat && vol.lat[3] <= vol.lat[0]) { vol.lat[3] = vol.lat[0] + 1; vol.lat[2] = Math.max(vol.lat[2], vol.lat[0]); }
   capSessions(vol);
   // kappt die Zeitgrenze den Anstieg wieder, beginnt der Lat in Intro und Woche 2 einen Satz niedriger (das Training wird nicht länger)
   if (vol.lat && vol.lat[3] <= vol.lat[0] && vol.lat[3] >= 2) { vol.lat[0] = vol.lat[1] = vol.lat[3] - 1; vol.lat[2] = Math.max(vol.lat[2], vol.lat[1]); }
+  // Brust und Oberschenkel: am Höhepunkt 1 Satz mehr als in der Intro-Woche – aber nur, wenn alle Tage dann noch in die
+  // gewählte Zeit passen (User-Wunsch 2026-11-09), sonst bleibt es flach
+  for (const g of ['brust', 'quadrizeps']) {
+    const v = vol[g];
+    if (!v || v[3] > v[0]) continue;
+    const old = v.slice();
+    v[3] = v[0] + 1; v[2] = Math.max(v[2], v[0]);
+    if (!volFits(vol)) vol[g] = old;
+  }
   return vol;
+}
+
+// Passen alle Trainingstage des Entwurfs in jeder Woche in die gewählte Zeit (Minuten wie capSessions)?
+function volFits(vol) {
+  const mins = g => ASSIST_GROUPS.includes(g) ? SET_MIN_ASSIST : SET_MIN_BIG;
+  return wiz.days.every(d => [0, 1, 2, 3].every(w => d.groups.reduce((a, g) => a + (vol[g] ? vol[g][w] * mins(g) : 0), 0) <= sessionCap()));
+}
+
+// Vorlagen mit fit (2er-Split + Ganzkörper-Tag, User-Wunsch 2026-11-09): das Wochenvolumen aller Muskelgruppen gleichmäßig
+// senken, bis der vollste Tag in der vollsten Woche in die Zeit passt – statt dass capSessions zuerst die kleinen Gruppen kürzt.
+// Ein Faktor für alle Wochen (der Anstieg über den Zyklus bleibt), Schwerpunkt-Gruppen bleiben verschont. raw = Sätze pro
+// Training ungerundet; Rundungsreste kürzt danach capSessions.
+function fitVolume(raw) {
+  const mins = g => ASSIST_GROUPS.includes(g) ? SET_MIN_ASSIST : SET_MIN_BIG;
+  let f = 1;
+  for (const d of wiz.days) for (let w = 0; w < 4; w++) {
+    const load = gs => gs.reduce((a, g) => a + (raw[g] ? raw[g][w] * mins(g) : 0), 0);
+    const fixed = load(d.groups.filter(g => wiz.prio.includes(g))), free = load(d.groups.filter(g => !wiz.prio.includes(g)));
+    if (free > 0 && fixed + free > sessionCap()) f = Math.min(f, Math.max(0, sessionCap() - fixed) / free);
+  }
+  if (f < 1) for (const g of Object.keys(raw)) if (!wiz.prio.includes(g)) raw[g] = raw[g].map(v => v * f);
 }
 
 // Muskelgruppen, die fast nur mit Assistenzübungen trainiert werden – sie werden zuerst gekürzt.
