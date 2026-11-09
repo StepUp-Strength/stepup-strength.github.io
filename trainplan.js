@@ -272,6 +272,11 @@ Object.assign(actions, {
         max10: im.prog === 'app' && e.kg != null && knownMax10(e.name) == null
           ? Math.round(e.kg / repFactor(e.reps + 2) * 2) / 2 : knownMax10(e.name) })),
     }));
+    // eingetragenes Gewicht gilt an seiner Stelle im Tag: geschätztes Max. auf frisch umrechnen (Vorermüdung)
+    if (im.prog === 'app') for (const d of days) {
+      const list = d.exercises.map(e => ({ name: e.name, n: e.sets }));
+      d.exercises.forEach((e, i) => { const f = preFatigue(list, i); if (e.max10 != null && f && knownMax10(e.name) == null) e.max10 = Math.round(e.max10 / (1 - f) * 2) / 2; });
+    }
     const plan = newPlan((im.name || '').trim() || 'Importierter Plan', days);
     if (im.prog === 'app') plan.level = im.level;
     else Object.assign(plan, { own: true, progression: { volume: false, load: false } });

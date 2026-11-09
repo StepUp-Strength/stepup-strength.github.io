@@ -610,11 +610,20 @@ function buildPlanDays() {
     // Limbs (Beine + Arme ohne Rumpf): erst alle Beinübungen, dann die Arme – sonst stünden Dips vor den Kniebeugen
     const limbs = !d.groups.some(g => G_TORSO.includes(g)) && d.groups.some(g => G_LOWER.includes(g));
     const armLast = g => limbs && ['bizeps', 'trizeps', 'unterarme'].includes(g) ? 10 : 0;
-    list.sort((a, b) => armLast(a[1]) - armLast(b[1]) || KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
-    // gleiche Tage: Reihenfolge der Grundübungen rotiert (A: Bankdrücken, Kniebeugen … B: Kniebeugen, …, Bankdrücken)
-    const nc = list.findIndex(([n, g]) => armLast(g) || kindOf({ name: n }) !== 'compound');
-    const comp = nc < 0 ? list.length : nc;
-    if (k && comp > 1) { const r = k % comp; list.splice(0, comp, ...list.slice(r, comp), ...list.slice(0, r)); }
+    // Priorisierte Muskelgruppen zuerst (User-Wunsch 2026-11-09): ihre Übungen stehen am Anfang des Trainings, wenn man
+    // noch frisch ist – auch vor den Grundübungen anderer Muskelgruppen. Innerhalb jedes Blocks wie bisher:
+    // Grundübung vor normaler vor Isolation, an Limbs-Tagen die Arme zuletzt (im Prioritäts-Block nicht).
+    const order = (arr, arms) => {
+      const last = g => arms ? armLast(g) : 0;
+      arr.sort((a, b) => last(a[1]) - last(b[1]) || KIND_ORDER[kindOf({ name: a[0] })] - KIND_ORDER[kindOf({ name: b[0] })]);
+      // gleiche Tage: Reihenfolge der Grundübungen rotiert (A: Bankdrücken, Kniebeugen … B: Kniebeugen, …, Bankdrücken)
+      const nc = arr.findIndex(([n, g]) => last(g) || kindOf({ name: n }) !== 'compound');
+      const comp = nc < 0 ? arr.length : nc;
+      if (k && comp > 1) { const r = k % comp; arr.splice(0, comp, ...arr.slice(r, comp), ...arr.slice(0, r)); }
+      return arr;
+    };
+    const isPrio = ([, g]) => (wiz.prio || []).includes(g);
+    list.splice(0, list.length, ...order(list.filter(isPrio), false), ...order(list.filter(x => !isPrio(x)), true));
     return {
       id: uid(),
       name: names[di],
@@ -876,7 +885,7 @@ function renderWizOwnName() {
       ${prog === 'app' ? `<p class="lbl">Deine Trainingserfahrung</p><div class="variants">${Object.entries(LEVELS).map(([k, l]) =>
         `<button class="vchip ${wiz.level === k ? 'on' : ''}" data-action="wiz-own-level" data-k="${k}">${l.icon} ${l.label}</button>`).join('')}</div>
         <p class="hint">Bestimmt, wie schnell die App steigert (und bei Neulingen und Einsteigern: nie unter 8 Wdh.).
-          Hast du ein Gewicht eingetragen, schätzt die App daraus dein „Max. bei 10 Wdh.“.</p>` : ''}
+          Hast du ein Gewicht eingetragen, schätzt die App daraus dein „Max. bei 10 Wdh.“ – mit dem Abzug für die Vorermüdung, wenn die Übung im Tag weiter hinten steht.</p>` : ''}
       <label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
       <ul class="own-sum">${list}</ul>
@@ -1187,7 +1196,7 @@ function renderWizFocus(kind) {
   return `<div class="card check">
     <div class="check-emoji" aria-hidden="true">${prio ? '⭐' : '😌'}</div>
     <h2 class="question">${prio ? 'Welche Muskelgruppen möchtest du priorisieren?' : 'Welche Muskelgruppen können gerade etwas low machen?'}</h2>
-    <p class="hint">Höchstens ${MAX_FOCUS} auswählen · ${prio ? `+${FOCUS_SETS}` : `−${FOCUS_SETS}`} Sätze pro Woche${sel.length ? ` · gewählt: ${sel.length}` : ''}</p>
+    <p class="hint">Höchstens ${MAX_FOCUS} auswählen · ${prio ? `+${FOCUS_SETS}` : `−${FOCUS_SETS}`} Sätze pro Woche${prio ? ' · ihre Übungen kommen an den Anfang des Trainings' : ''}${sel.length ? ` · gewählt: ${sel.length}` : ''}</p>
     <div class="area-grid">${wizGroups().map(g => `<button class="vchip ${sel.includes(g) ? 'on' : ''}"
       data-action="wiz-focus" data-kind="${kind}" data-g="${g}" ${other.includes(g) ? 'disabled' : ''}>${MUSCLES[g]}</button>`).join('')}</div>
     <div class="row">
@@ -1323,7 +1332,16 @@ function renderWizard() {
     h += `<p class="hint">${wiz.prio.length ? `⭐ Priorität: ${wiz.prio.map(g => MUSCLES[g]).join(', ')}` : ''}
       ${wiz.prio.length && wiz.low.length ? ' · ' : ''}${wiz.low.length ? `😌 Low: ${wiz.low.map(g => MUSCLES[g]).join(', ')}` : ''}</p>`;
   }
-  for (const [di, day] of buildPlanDays().entries()) {
+  // Tag für Tag statt alle untereinander: oben ein Knopf je Tag zum Springen, unten „Nächster Tag“
+  const all = buildPlanDays();
+  const pdi = wiz.pdi = Math.min(Math.max(0, wiz.pdi || 0), Math.max(0, all.length - 1));
+  const lastDay = pdi >= all.length - 1;
+  if (all.length > 1) {
+    h += `<div class="variants wiz-pdays">${all.map((d, i) => `<button class="vchip ${i === pdi ? 'on' : ''}" data-action="wiz-pday" data-i="${i}">${i + 1}. ${esc(d.name)}</button>`).join('')}</div>
+      <p class="sub wiz-pday-pos">Trainingstag ${pdi + 1} von ${all.length}</p>`;
+  }
+  for (const [di, day] of all.entries()) {
+    if (di !== pdi) continue;
     const weeks = [1, 2, 3, 4].map(w => autoSetsForDay(day, w, false, wiz.volume));
     const dl = autoSetsForDay(day, 0, true, wiz.volume);
     const open = e => wiz.swapOpen && wiz.swapOpen.d === di && nameKey(wiz.swapOpen.n) === nameKey(e.name);
@@ -1346,10 +1364,12 @@ function renderWizard() {
     h += `<p class="complaint-note">Zu wenige Übungen für höchstens ${MAX_SETS_PER_EX} Sätze pro Übung: ${tight.map(g =>
       `${MUSCLES[g]} (${Math.max(...wiz.volume[g])} Sätze → mind. ${Math.ceil(Math.max(...wiz.volume[g]) / MAX_SETS_PER_EX)} Übungen)`).join(', ')}. Überzählige Sätze fallen weg.</p>`;
   }
-  return h + (needsCoach() ? coachNote() : '') + `<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>
-    <div class="row"><button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>
-    <button class="btn primary" data-action="wiz-step" data-to="intq">Weiter</button></div>
-    <p class="hint">Zum Schluss noch drei kurze Fragen: Wiederholungsbereich, Deload und Steigerung.</p>`;
+  return h + `<div class="row">${pdi > 0 ? `<button class="btn" data-action="wiz-pday" data-i="${pdi - 1}">‹ Voriger Tag</button>`
+      : '<button class="btn" data-action="wiz-step" data-to="rir">Zurück</button>'}
+    ${lastDay ? '<button class="btn primary" data-action="wiz-step" data-to="intq">Weiter</button>'
+      : `<button class="btn primary" data-action="wiz-pday" data-i="${pdi + 1}">Nächster Tag ›</button>`}</div>
+    ${lastDay ? '<p class="hint">Zum Schluss noch drei kurze Fragen: Wiederholungsbereich, Deload und Steigerung.</p>' : ''}
+    ${needsCoach() ? coachNote() : ''}<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>`;
 }
 
 /* --- Aktionen & Felder --- */
@@ -1465,9 +1485,10 @@ function wizBack() {
     if (wiz.gi > 0) wiz.gi--;
     else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
   } else if (wiz.step === 'preview') {
-    wiz.step = 'rir';
+    if (wiz.pdi > 0) wiz.pdi--; else wiz.step = 'rir';  // Tag für Tag zurück
   } else if (wiz.step === 'intq') {
     wiz.step = 'preview';
+    wiz.pdi = 1e9;  // letzter Tag
   } else if (wiz.step === 'deloadq') {
     wiz.step = 'intq';
   } else if (wiz.step === 'progq') {
@@ -1644,6 +1665,11 @@ Object.assign(actions, {
         return withDefaults({ id: uid(), name, sets, setsEnd: sets, reps, startWeight: kg, max10 });
       }),
     }));
+    // eingetragenes Gewicht gilt an seiner Stelle im Tag: geschätztes Max. auf frisch umrechnen (Vorermüdung)
+    if (app) for (const d of days) {
+      const list = d.exercises.map(e => ({ name: e.name, n: e.sets }));
+      d.exercises.forEach((e, i) => { const f = preFatigue(list, i); if (e.max10 != null && f && knownMax10(e.name) == null) e.max10 = Math.round(e.max10 / (1 - f) * 2) / 2; });
+    }
     const plan = newPlan(wiz.name.trim() || 'Mein Plan', days);
     if (app) plan.level = wiz.level;
     else Object.assign(plan, { own: true, progression: { volume: false, load: false } });
@@ -1705,6 +1731,7 @@ Object.assign(actions, {
   },
   'wiz-step': el => {
     const to = el.dataset.to;
+    if (to === 'preview' && wiz.step !== 'preview') wiz.pdi = wiz.step === 'intq' ? 1e9 : 0;
     const leavingDays = wiz.step === 'days' && wizFlow().indexOf(to) > wizFlow().indexOf('days');
     if (leavingDays) {
       if (!wiz.days.length) { alert('Bitte mindestens einen Trainingstag hinzufügen.'); return; }
@@ -1741,6 +1768,7 @@ Object.assign(actions, {
     go('wizard');
   },
   // Übungen aus der Vorschau heraus anpassen: „Zurück“ bei der ersten Muskelgruppe führt wieder zur Vorschau
+  'wiz-pday': el => { wiz.pdi = Number(el.dataset.i); wiz.swapOpen = null; render(); window.scrollTo(0, 0); },
   'wiz-adjust': () => { wiz.gi = 0; wiz.step = 'manual'; wiz.fromPreview = true; go('wizard'); },
   'wiz-gprev': () => {
     if (wiz.gi > 0) wiz.gi--;

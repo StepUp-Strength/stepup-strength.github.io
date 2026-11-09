@@ -366,6 +366,7 @@ function chartPoints() {
     if (s.deload && !chartState.withDeload) continue;
     const e = s.entries.find(en => nameKey(en.name) === k);
     if (!e) continue;
+    const fat = typeof sessionFat === 'function' ? sessionFat(s, s.entries.indexOf(e)) : 0;  // Max.: auf frisch umgerechnet
     const sets = ofVariant(e.sets, chartState.variant);  // nur die gewählte Ausführung
     if (!sets.length) continue;
     const weighted = sets.filter(x => x.weight != null);
@@ -374,7 +375,7 @@ function chartPoints() {
       v = Math.max(...sets.map(x => x.reps || 0));  // Übung ohne Gewicht -> Wiederholungen
       unit = 'Wdh.';
     } else if (chartState.metric === 'max10') {
-      const est = weighted.filter(x => x.reps != null).map(x => x.weight / repFactor(x.reps + (x.rir || 0)));
+      const est = weighted.filter(x => x.reps != null).map(x => x.weight / repFactor(x.reps + (x.rir || 0)) / (1 - fat));
       if (!est.length) continue;
       v = round1(Math.max(...est));
     } else {

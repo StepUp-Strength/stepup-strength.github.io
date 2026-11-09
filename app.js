@@ -363,7 +363,7 @@ const FEATURE_MODE = {
   'check-detail': 's', 'first-max': 's', 'cycle-choice': 's',
   // Training
   'tr-rir-input': 's', 'tr-tank-target': 's', 'tr-max': 's', 'tr-step': 's', 'tr-variants': 'x', 'tr-compare': 's', 'tr-sets': 's',
-  'tr-add': 's', 'tr-comment': 's', 'tr-prog': 's', 'tr-next': 's',
+  'tr-add': 's', 'tr-comment': 's', 'tr-prog': 's', 'tr-next': 's', 'tr-prefat': 's',
   // Startseite & Verlauf
   'stall-hints': 's', 'week-view': 's', 'session-edit': 's', 'ex-history': 's', 'chart-detail': 'x', 'steps': 's',
   // Plan-Reiter
@@ -513,9 +513,131 @@ function withAwards(fn) {
 // repFactor(n) = Anteil vom „Max. bei 10 Wdh.“, mit dem man n Wdh. bis zum Versagen schafft.
 const repFactor = n => Math.max(0.5, 1 - 0.025 * (n - 10));
 
+// Vorermüdung (User-Regel 2026-11-09): Je Arbeitssatz, der vorher im Training dieselbe Muskelgruppe getroffen hat, ist man
+// 5 % schwächer, je Satz für einen Hilfsmuskel halb so viel (Hilfsmuskeln: Drücken – Trizeps, vordere Schulter; Ziehen – Bizeps,
+// hintere Schulter, Lat ↔ Trapez; Beine – Gesäß …; Isolationsübungen haben keine). Höchstens 20 % (User-Regel 2026-11-09).
+// Die 5 % sind der Startwert: Die App lernt den persönlichen Wert aus den eigenen Trainings (prefatLearn).
+// „Max. bei 10 Wdh.“ ist der Frisch-Wert: Vorschläge = Frisch-Wert × (1 − Vorermüdung), Ergebnisse werden vor dem
+// Verrechnen auf frisch umgerechnet, Vergleichstrainings von ihrer damaligen auf die heutige Vorermüdung.
+const PREFAT_SET = 0.05, PREFAT_MAX = 0.2;
+const PREFAT_SHOW = 0.025;  // ab hier gilt eine Übung als vorermüdet (Hinweis, Vorermüdungs-PB)
+const PREFAT_HELPERS = {
+  brust: ['trizeps', 'schulter_vorne'], schulter_vorne: ['trizeps'], trizeps: ['brust', 'schulter_vorne'],
+  lat: ['bizeps', 'schulter_hinten', 'trapez'], trapez: ['lat', 'bizeps', 'schulter_hinten'], quadrizeps: ['gesaess'], beinbeuger: ['gesaess'], gesaess: ['beinbeuger', 'quadrizeps'],
+};
+const prefatEx = name => planExercise(name) || { name };
+const prefatHelpers = ex => kindOf(ex) === 'assist' ? [] : PREFAT_HELPERS[groupOf(ex)] || [];
+// list: [{ name, n: Arbeitssätze }] in der Reihenfolge des Trainings -> { f: Vorermüdung von Übung i, same, help, g, u }
+// u = Satz-Einheiten (Hilfsmuskel halb), f = persönlicher Wert je Satz × u, höchstens PREFAT_MAX
+function preFatigueUnits(list, i) {
+  const x = prefatEx(list[i].name), g = groupOf(x), hx = prefatHelpers(x);
+  let same = 0, help = 0;
+  if (g) {
+    for (let j = 0; j < i; j++) {
+      const y = prefatEx(list[j].name), gy = groupOf(y), n = list[j].n || 0;
+      if (!gy || !n) continue;
+      if (gy === g) same += n;
+      else if (hx.includes(gy) || prefatHelpers(y).includes(g)) help += n;
+    }
+  }
+  return { same, help, g, u: same + help / 2 };
+}
+function preFatigueInfo(list, i) {
+  const r = preFatigueUnits(list, i);
+  return { ...r, f: prefatOf(r.u) };
+}
+const prefatOf = u => Math.min(PREFAT_MAX, Math.round(prefatRate() * u * 1000) / 1000);
+const preFatigue = (list, i) => preFatigueInfo(list, i).f;
+// gespeichertes Training: Satz-Einheiten je Übung aus der gespeicherten Reihenfolge (zwischengespeichert)
+const prefatCache = new WeakMap();
+function sessionUnits(s, i) {
+  if (!s || i == null || i < 0) return 0;
+  const sig = s.entries.map(e => `${e.name}:${(e.sets || []).length}`).join('|');
+  let c = prefatCache.get(s);
+  if (!c || c.sig !== sig) {
+    const list = s.entries.map(e => ({ name: e.name, n: (e.sets || []).length }));
+    c = { sig, u: list.map((_, j) => preFatigueUnits(list, j).u) };
+    prefatCache.set(s, c);
+  }
+  return c.u[i] || 0;
+}
+const sessionFat = (s, i) => prefatOf(sessionUnits(s, i));
+
+// Persönlicher Wert je Satz (User-Wunsch 2026-11-09): Dieselbe Übung an verschiedenen Stellen im Training zeigt, wie viel
+// Kraft die Vorermüdung wirklich kostet. Je Übung werden Trainings verglichen, die höchstens PREFAT_GAP Tage auseinander
+// liegen und sich um mindestens PREFAT_MIN_DU Satz-Einheiten unterscheiden: Leistung S = Gewicht ÷ repFactor(Wdh. + Tank)
+// des ersten Satzes. Gesucht wird der Wert r (1–10 %), der alle Verhältnisse S2/S1 am besten erklärt – mit demselben Modell
+// wie die Vorschläge, also mit der Obergrenze: S2/S1 = (1 − min(20 %, r·u2)) / (1 − min(20 %, r·u1)). Kleinste Quadrate
+// (Streuung je Vergleich PREFAT_SD), dazu der Startwert 5 % mit Unsicherheit PREFAT_PRIOR_SD – mit wenigen Vergleichen bleibt
+// es nahe 5 %. Ohne Deload, nur Sätze mit Gewicht und eingetragenem Tank.
+const PREFAT_SD = 0.035, PREFAT_PRIOR_SD = 0.012, PREFAT_GAP = 21, PREFAT_MIN_DU = 2, PREFAT_RATE_MIN = 0.01, PREFAT_RATE_MAX = 0.1;
+let prefatLearnCache = null;
+function prefatLearn() {
+  const ss = (typeof data !== 'undefined' && data && data.sessions) || [];
+  const key = `${ss.length}|${ss.length ? ss[0].id + ss[ss.length - 1].id : ''}`;
+  if (prefatLearnCache && prefatLearnCache.key === key) return prefatLearnCache;
+  const obs = {};
+  for (const s of ss) {
+    if (s.deload) continue;
+    s.entries.forEach((e, i) => {
+      const x = (e.sets || []).find(z => !z.variant);
+      if (!x || !(x.weight > 0) || x.reps == null || x.rir == null) return;
+      const cap = x.reps + x.rir;
+      if (cap < 3 || cap > 20) return;
+      (obs[nameKey(e.name)] = obs[nameKey(e.name)] || []).push({ t: Date.parse(s.date), u: sessionUnits(s, i), S: x.weight / repFactor(cap) });
+    });
+  }
+  const pairs = [];
+  for (const L of Object.values(obs)) {
+    L.sort((p, q) => p.t - q.t);
+    for (let j = 1; j < L.length; j++) {
+      for (let i = j - 1; i >= 0 && L[j].t - L[i].t <= PREFAT_GAP * 864e5; i--) {
+        if (Math.abs(L[j].u - L[i].u) < PREFAT_MIN_DU) continue;
+        pairs.push({ u1: L[i].u, u2: L[j].u, lq: Math.log(L[j].S / L[i].S) });
+        break;  // je Training nur der nächstgelegene passende Vergleich
+      }
+    }
+  }
+  const capF = (r, u) => Math.min(PREFAT_MAX, r * u);
+  const loss = r => pairs.reduce((a, p) => {
+    const d = p.lq - Math.log((1 - capF(r, p.u2)) / (1 - capF(r, p.u1)));
+    return a + Math.min(9, (d / PREFAT_SD) ** 2);  // Ausreißer zählen höchstens wie 3 Streuungen
+  }, ((r - PREFAT_SET) / PREFAT_PRIOR_SD) ** 2);
+  let rate = PREFAT_SET, best = Infinity;
+  for (let r = PREFAT_RATE_MIN; r <= PREFAT_RATE_MAX + 1e-9; r += 0.0005) { const l = loss(r); if (l < best) { best = l; rate = r; } }
+  // Sicherheit: wie viele Vergleiche den Wert wirklich bestimmen (welche mit Unterschied unterhalb der Obergrenze)
+  const w = pairs.filter(p => Math.min(p.u1, p.u2) * rate < PREFAT_MAX - 1e-9).length;
+  prefatLearnCache = { key, rate: Math.round(rate * 1000) / 1000, n: pairs.length, w };
+  return prefatLearnCache;
+}
+const prefatRate = () => prefatLearn().rate;
+const draftPrefatList = () => draft.entries.map(en => ({ name: en.name, n: en.sets.length }));
+// Frisch-Wert auf die heutige Vorermüdung
+const effMax = t => t.max10 == null ? null : t.max10 * (1 - (t.fat || 0));
+// Satz von Vorermüdung a auf b umrechnen: mit Gewicht über das Gewicht (abgerundet auf die Stufen, Wdh. passend),
+// ohne Gewicht über die Wdh. (anteilig)
+function condSet(s, a, b, t) {
+  if (!s || s.reps == null || Math.abs((a || 0) - (b || 0)) < 1e-9) return s;
+  const ratio = (1 - (b || 0)) / (1 - (a || 0));
+  const rir = s.rir != null ? s.rir : t.rir != null ? t.rir : 2;
+  const cap = s.reps + rir;
+  if (s.weight == null || !(s.weight > 0)) return { ...s, reps: Math.max(1, Math.round(cap * ratio - rir)) };
+  const exact = s.weight * ratio;
+  let w = wSnap(exact, t, Math.floor);
+  if (!(w > 0)) w = wSnap(exact, t, Math.ceil);
+  return { ...s, weight: w, reps: Math.max(1, Math.round(capacityAt(cap, exact, w) - rir)) };
+}
+// Bezugstraining (Vergleichswoche, Vorwoche …) auf die Vorermüdung des Ziels t umrechnen; rawSets = wie damals geschafft
+function condRef(ref, t) {
+  if (!ref || !t || Math.abs((ref.fat || 0) - (t.fat || 0)) < 1e-9) return ref;
+  return { ...ref, sets: (ref.sets || []).map(s => condSet(s, ref.fat || 0, t.fat || 0, t)), rawSets: ref.sets };
+}
+
 const DUMBBELL = /kurzhantel|konzentrationscurls|arnold press|goblet/;
 const stepFor = ex => ex.step != null ? ex.step : (DUMBBELL.test(norm(ex.name)) ? 2 : 2.5);
 const STEP_OPTIONS = [1.25, 2, 2.5, 5, 10];
+// „Max. bei 10 Wdh.“ ist ohne Vorermüdung gemeint (User-Wunsch 2026-11-09)
+const MAX_FRESH_NOTE = 'Gemeint ist frisch: so viel, wie du schaffst, wenn die Übung die erste für diese Muskelgruppe im Training ist – nicht nach anderen Übungen für denselben Muskel. Steht sie weiter hinten, zieht die App die Vorermüdung selbst ab.';
 const MAX_UNKNOWN_HINT = 'Du weißt dein Max. bei 10 Wdh. nicht? Kein Problem – lass das Feld leer und taste dich mit den ersten Sätzen an ein Gewicht heran, das sich passend anfühlt. Trag ein, was du geschafft hast (Gewicht, Wdh. und Tank): Die App errechnet daraus den Wert und die weitere Steigerung.';  // wählbare Gewichtssprünge pro Übung
 const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben) – gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen, 10 kg zu Maschinen mit großen Steckgewichten (z. B. Beinpresse).';
 
@@ -546,8 +668,9 @@ const weightsFor = name => homePlan() ? homeWeights(name, data.home) : null;
 
 // Startgewicht aus „Max. bei 10 Wdh.“ und den Zielvorgaben
 function targetWeight(t) {
-  if (t.max10 == null) return null;
-  return wSnap(t.max10 * repFactor(t.reps + t.rir), t);
+  const m = effMax(t);
+  if (m == null) return null;
+  return wSnap(m * repFactor(t.reps + t.rir), t);
 }
 
 // Nach einem Satz: Abweichung vom Ziel (in Wdh.) und passendes Gewicht für den nächsten Satz
@@ -1498,7 +1621,7 @@ function findWeekEntry(name, dayId, match, occ = 1) {
   for (const { s, c } of cands) {
     const e = s.entries.find(en => nameKey(en.name) === k);
     if (e) return { date: s.date, cycleStart: c.cycleStart, week: c.week, occ: s.dayId === dayId ? sessionOccurrence(s) : null,
-      sets: e.sets, planned: e.planned, target: e.target };
+      sets: e.sets, planned: e.planned, target: e.target, fat: sessionFat(s, s.entries.indexOf(e)) };
   }
   return null;
 }
@@ -1568,7 +1691,7 @@ function weekFirstEntry(name, dayId, ci) {
   if (!first) return null;
   const e = first.entries.find(en => nameKey(en.name) === k);
   const planned = (e.planned || []).filter(p => p && (p.weight != null || p.reps != null));
-  return { date: first.date, sets: planned.length ? planned : e.sets };
+  return { date: first.date, sets: planned.length ? planned : e.sets, fat: sessionFat(first, first.entries.indexOf(e)) };
 }
 
 // Durchgang des nächsten Trainings eines Tages in der laufenden Zykluswoche
@@ -1594,7 +1717,7 @@ function missed(prev, v, k) {
   const t = prev.target || {};
   const p = ofVariant(prev.planned, v)[k];
   if (!p && v) return false;  // ohne gespeicherten Vorschlag gibt es für Varianten keinen Maßstab
-  const d = setDeficit(ofVariant(prev.sets, v)[k], p || (k === 0 ? { reps: t.reps } : null), t.rir != null ? t.rir : 2);
+  const d = setDeficit(ofVariant(prev.rawSets || prev.sets, v)[k], p || (k === 0 ? { reps: t.reps } : null), t.rir != null ? t.rir : 2);
   return d != null && d <= -MISS_REPS;
 }
 
@@ -1707,7 +1830,7 @@ function nextPreview(en) {
   const hold = !weekProgression(roundKey(draft.cycleStart, nw)).load;
   // derselbe Durchgang nächste Woche (beim 2. Training kann dort noch das 1. Training der Woche begrenzen)
   const occ = draft.occurrence || 1;
-  const cmp = hold ? null : comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart, occurrence: occ });
+  const cmp = hold ? null : condRef(comparisonEntry(en.name, draft.dayId, { week: nw, cycleStart: draft.cycleStart, occurrence: occ }), { step: 2.5, ...en.target });
   const fmt = p => (p.weight != null ? `${fmtNum(p.weight)} kg × ` : '') + `${p.reps} Wdh.`;
   const when = occ > 1 ? `Nächste Woche, ${occ}. Training` : 'Nächste Woche';
   const lastW = {};  // zuletzt vorgeschlagenes Gewicht je Ausführung (kein Satz schwerer als der davor)
@@ -1746,8 +1869,13 @@ function updateNextHints(ei) {
     const el = $view.querySelector(`[data-next="${ei}-${si}"]`);
     if (el) el.innerHTML = html;
   });
-  draftPbFlags(en).forEach((pb, si) => {
+  const abs = draftPbFlags(en);
+  abs.forEach((pb, si) => {
     const el = $view.querySelector(`[data-pb="${ei}-${si}"]`);
+    if (el) el.hidden = !pb;
+  });
+  draftFatPbFlags(en, abs).forEach((pb, si) => {
+    const el = $view.querySelector(`[data-fpb="${ei}-${si}"]`);
     if (el) el.hidden = !pb;
   });
 }
@@ -1768,19 +1896,35 @@ function pbBest(name, before = null, skipId = null) {
   const k = nameKey(name), best = {};
   for (const ses of data.sessions) {
     if (ses.id === skipId || (before && ses.date >= before)) continue;
-    for (const e of ses.entries) {
-      if (nameKey(e.name) !== k) continue;
+    ses.entries.forEach((e, ei) => {
+      if (nameKey(e.name) !== k) return;
       const band = e.target && e.target.band;
+      const fat = sessionFat(ses, ei);
       for (const x of e.sets) {
         const sc = pbScore(x, band);
         if (sc == null) continue;
-        const b = best[pbKey(x)] || (best[pbKey(x)] = { sc: -Infinity, w: -Infinity });
+        const b = best[pbKey(x)] || (best[pbKey(x)] = { sc: -Infinity, w: -Infinity, fa: -Infinity });
         b.sc = Math.max(b.sc, sc);
+        b.fa = Math.max(b.fa, sc / (1 - fat));  // auf frisch umgerechnet (Vorermüdungs-PB)
         if (x.weight != null) b.w = Math.max(b.w, x.weight);
       }
-    }
+    });
   }
   return best;
+}
+// Vorermüdungs-PB (User-Wunsch 2026-11-09): vorermüdeter Satz, der auf frisch umgerechnet alles Bisherige übertrifft –
+// zusätzlich zum echten PB (abs = dessen Sterne; ein Satz bekommt nur eins von beiden)
+function pbFatFlags(sets, best, band, fat, abs) {
+  if (!(fat >= PREFAT_SHOW - 1e-9)) return sets.map(() => false);
+  const b = Object.fromEntries(Object.entries(best).map(([k, v]) => [k, { ...v }]));
+  return sets.map((x, i) => {
+    const sc = pbScore(x, band), key = x && pbKey(x);
+    if (sc == null || !(key in best)) return false;
+    const r = b[key], adj = sc / (1 - fat);
+    const pb = adj > r.fa + 1e-9 && !abs[i];
+    r.fa = Math.max(r.fa, adj);
+    return pb;
+  });
 }
 // Stern je Satz: schlägt die beste frühere Leistung – und auch die stärkeren Sätze davor im selben Training
 function pbFlags(sets, best, band) {
@@ -1799,8 +1943,18 @@ function pbFlags(sets, best, band) {
 const draftPbFlags = en => pbFlags(en.sets.map(x => isDone(x)
   ? { weight: parseNum(x.weight), reps: parseNum(x.reps), variant: x.variant } : null),
   pbBest(en.name), en.target && en.target.band);
+const draftFatPbFlags = (en, abs) => pbFatFlags(en.sets.map(x => isDone(x)
+  ? { weight: parseNum(x.weight), reps: parseNum(x.reps), variant: x.variant } : null),
+  pbBest(en.name), en.target && en.target.band, en.target ? en.target.fat || 0 : 0, abs);
 const PB_TAG = ' <span class="pb-tag" title="Neue persönliche Bestleistung">★ PB</span>';
-const setsWithPb = (sets, flags) => sets.map((x, i) => fmtSet(x) + (flags[i] ? PB_TAG : '')).join('<br>');
+const FPB_TAG = ' <span class="pb-tag fpb" title="Vorermüdet und auf frisch umgerechnet deine beste Leistung bisher">💪 Vorermüdungs-PB</span>';
+const setsWithPb = (sets, flags, fflags = []) => sets.map((x, i) => fmtSet(x) + (flags[i] ? PB_TAG : fflags[i] ? FPB_TAG : '')).join('<br>');
+// Sterne für ein gespeichertes Training (Verlauf, Training ansehen)
+function sessionPbHtml(s, e) {
+  const best = pbBest(e.name, s.date, s.id), band = e.target && e.target.band;
+  const abs = pbFlags(e.sets, best, band);
+  return setsWithPb(e.sets, abs, pbFatFlags(e.sets, best, band, sessionFat(s, s.entries.indexOf(e)), abs));
+}
 
 // Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
 // onlyPlan: nur Trainings der Tage des aktiven Plans (eigener Plan: Werte aus anderen Plänen zählen nicht)
@@ -1893,7 +2047,7 @@ function adjustProposal(p, rule, t, prevV, cmpV, i, k) {
       const earned = stepUp(p.reps + t.rir, p.weight, { step: 2.5, ...t }, k, goalReps(t, i), true);
       if (earned) p = earned;
     } else if (up != null && t.max10 != null) {
-      const reps = Math.floor(10 + (1 - up / t.max10) / 0.025 - t.rir - FATIGUE * k + 1e-9);
+      const reps = Math.floor(10 + (1 - up / effMax(t)) / 0.025 - t.rir - FATIGUE * k + 1e-9);
       // Wdh. höchstens so viele, wie die Leistung auf der alten Stufe hergibt („Max.“ kann zu hoch sein)
       const byCap = Math.floor(capacityAt(p.reps + t.rir, p.weight, up) - t.rir + 1e-9);
       if (reps >= minReps()) p = { weight: up, reps: Math.max(minReps(), Math.min(reps, byCap)) };
@@ -2079,14 +2233,15 @@ function stagnationHints() {
     if (s.deload) continue;
     const cs = sessionCycle(s).cycleStart;
     if (cs >= ci.cycleStart) continue;  // nur abgeschlossene Zyklen
-    for (const e of s.entries) {
+    s.entries.forEach((e, ei) => {
+      const fat = sessionFat(s, ei);  // auf frisch umgerechnet (Vorermüdung)
       const est = e.sets.filter(x => !x.variant && x.weight != null && x.reps != null)
-        .map(x => x.weight / repFactor(x.reps + (x.rir != null ? x.rir : 0)));
-      if (!est.length) continue;
+        .map(x => x.weight / repFactor(x.reps + (x.rir != null ? x.rir : 0)) / (1 - fat));
+      if (!est.length) return;
       const k = nameKey(e.name);
       const o = byEx[k] = byEx[k] || { name: e.name, cycles: {} };
       o.cycles[cs] = Math.max(o.cycles[cs] || 0, ...est);
-    }
+    });
   }
   const inPlan = new Set(data.days.flatMap(d => d.exercises.map(e => nameKey(e.name))));
   const hints = [];
@@ -2670,10 +2825,8 @@ function renderTraining() {
       <p class="hint">Gilt nur für dieses Training. Eingetragene Werte bleiben erhalten. Dauerhaft änderst du die Reihenfolge im Plan beim Trainingstag.</p></div>`;
   }
   h += '<button class="btn outline" data-action="reorder-toggle">⇅ Reihenfolge ändern</button>';
-  // Ansicht: alle Übungen untereinander (scrollen) oder eine Übung je Bildschirm (wischen) – profile.swipe
+  // Ansicht: alle Übungen untereinander (scrollen) oder eine Übung je Bildschirm (wischen) – profile.swipe, einstellbar in den Optionen
   const swipe = trSwipeOn();
-  h += `<div class="seg two tr-viewmode"><button class="${swipe ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
-    <button class="${swipe ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>`;
   const cur = swipe ? trCur() : -1;
   if (swipe) h += swipeNavHtml(cur);
 
@@ -2730,12 +2883,19 @@ function renderTraining() {
       h += feat('tr-tank-target')
         ? `<p class="target">Heute: ${t.sets} × ${today} Wdh. · Ø ${targetRirText(t)} im Tank</p>`
         : `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${feelTargetText(t)}</p>`;
+      if (feat('tr-prefat') && (t.fat || 0) >= PREFAT_SHOW - 1e-9) {
+        const pi = preFatigueInfo(draftPrefatList(), ei);
+        const parts = [pi.same ? `${pi.same} ${pi.same === 1 ? 'Satz' : 'Sätze'} ${MUSCLES[pi.g] || ''}` : '', pi.help ? `${pi.help} ${pi.help === 1 ? 'Satz' : 'Sätze'} für Hilfsmuskeln` : ''].filter(Boolean);
+        h += `<p class="prefat-note">💤 Vorermüdet: ${parts.join(' und ')} vorher – die App rechnet mit etwa ${Math.round(t.fat * 100)} % weniger Kraft als frisch.</p>`;
+      }
     }
     // Max. bei 10 Wdh., Steigerung und Ausführung kompakt nebeneinander; die Auswahl klappt darunter auf
     const t = en.target;
     const withMax = t && !t.own && !body && feat('tr-max');
     const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
-    if (withMax || feat('tr-variants')) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.</span>
+    const maxToday = !withMax ? '' : t.max10 != null && (t.fat || 0) >= PREFAT_SHOW - 1e-9
+      ? `<small class="max-today">frisch · heute ≈ ${fmtNum(Math.round(effMax(t) * 2) / 2)}</small>` : '<small class="max-today">frisch</small>';
+    if (withMax || feat('tr-variants')) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.${maxToday}</span>
           <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
             data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>` : ''}
         <div class="ex-chips">${withMax && feat('tr-step') && !t.weights ? stepChip(en, ei) : ''}
@@ -2775,9 +2935,10 @@ function renderTraining() {
             ? 'Diät: Gewicht wie zuletzt – höchstens 1 Wdh. mehr, dafür näher am Muskelversagen'
             : `Heute: je Satz +${en.compare.plus || 1} Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt`;
       const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
-      const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.sets }];
-      if (en.prevWeek) cols.push({ label: `Vorwoche<small>${weekLabel(en.prevWeek.week)} · ${fmtDate(en.prevWeek.date)}</small>`, sets: en.prevWeek.sets });
-      h += `<div class="compare">${setRows(cols, true)}<b>${rule}</b></div>`;
+      const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.rawSets || en.compare.sets }];
+      if (en.prevWeek) cols.push({ label: `Vorwoche<small>${weekLabel(en.prevWeek.week)} · ${fmtDate(en.prevWeek.date)}</small>`, sets: en.prevWeek.rawSets || en.prevWeek.sets });
+      const conv = [en.compare, en.prevWeek].some(x => x && x.rawSets);
+      h += `<div class="compare">${setRows(cols, true)}<b>${rule}</b>${conv && feat('tr-prefat') ? '<br><small>Damals stand die Übung an anderer Stelle im Training – die App hat die Werte auf die heutige Vorermüdung umgerechnet.</small>' : ''}</div>`;
     } else {
       h += last
         ? `<div class="last">Letztes Mal (${fmtDate(last.date)}):${setRows([{ sets: last.sets }])}</div>`
@@ -2792,10 +2953,11 @@ function renderTraining() {
     const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
     const next = feat('tr-next') ? nextPreview(en) : [];
     const bodyKg = body ? currentBodyweight() : null;
-    const pb = draftPbFlags(en);
+    const pb = draftPbFlags(en), fpb = draftFatPbFlags(en, pb);
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
-      const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`;
+      const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`
+        + `<span class="pb-star fpb" data-fpb="${ei}-${si}" title="Vorermüdungs-PB"${fpb[si] ? '' : ' hidden'}>💪 PB</span>`;
       h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
           aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
           : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
@@ -2916,7 +3078,7 @@ function renderReplace(en, ei) {
       autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
     <div class="suggest" hidden></div>
     <label class="row" ${feat('tr-max') ? '' : 'style="display:none"'}>
-      <span>Max. kg bei 10 Wdh.</span>
+      <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
         data-field="rep-max" data-ei="${ei}" placeholder="kg">
     </label>
@@ -2937,7 +3099,7 @@ function renderAddExercise() {
       autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
     <div class="suggest" hidden></div>
     <label class="row">
-      <span>Max. kg bei 10 Wdh.</span>
+      <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="rep-max" placeholder="kg">
     </label>
     <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
@@ -3465,7 +3627,7 @@ function renderDay({ id }) {
       </div>` : ''}
       ${bodyweightRow(ex, i)}
       ${isBodyweight(ex) || !feat('tr-max') ? '' : `<label class="row">
-        <span>Max. kg bei 10 Wdh.</span>
+        <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
         <input class="inp kg ${ex.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal"
           autocomplete="off" data-field="ex-max" data-i="${i}" placeholder="kg"
           value="${ex.max10 == null ? '' : fmtNum(ex.max10)}">
@@ -3480,7 +3642,7 @@ function renderDay({ id }) {
   });
   h += `${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
+    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
       : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
@@ -3585,7 +3747,7 @@ function renderExercise({ name }) {
   const rows = [];
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) rows.push({ session: s, sets: e.sets, comment: e.comment, band: e.target && e.target.band });
+    if (e) rows.push({ session: s, entry: e, sets: e.sets, comment: e.comment, band: e.target && e.target.band });
   }
   if (!rows.length) return '<p class="hint">Keine Einträge.</p>';
 
@@ -3599,7 +3761,7 @@ function renderExercise({ name }) {
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
-      <div class="sets">${setsWithPb(r.sets, pbFlags(r.sets, pbBest(name, r.session.date, r.session.id), r.band))}</div>
+      <div class="sets">${sessionPbHtml(r.session, r.entry)}</div>
       ${r.comment ? `<div class="comment-text">💬 ${esc(r.comment)}</div>` : ''}</li>`;
   }
   return h + '</ul>';
@@ -3926,6 +4088,7 @@ function recalcResults(s) {
   const list = sessionsNewestFirst();
   const idx = list.indexOf(s);
   const has = (x, k) => x.entries.find(e => nameKey(e.name) === k);
+  s.entries.forEach((en, i) => { const f = sessionFat(s, i); if (f) en.fat = f; else delete en.fat; });
   for (const en of s.entries) {
     const k = nameKey(en.name);
     const result = entryResult(en);
@@ -3961,7 +4124,7 @@ function renderSession({ id, fresh, edit, week }) {
     const warm = e.warmup && e.warmup.length
       ? `<div class="warm-line">🔥 Aufwärmen: ${e.warmup.map(fmtSet).join(' · ')}</div>` : '';
     h += `<li><div class="date">${esc(e.name)}${instead}</div>${warm}
-      <div class="sets">${setsWithPb(e.sets, pbFlags(e.sets, pbBest(e.name, s.date, s.id), e.target && e.target.band))}</div>${comment}${res}</li>`;
+      <div class="sets">${sessionPbHtml(s, e)}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
 }
@@ -4022,6 +4185,7 @@ function renderFirstMax({ id, exIds }) {
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Wie viel schaffst du bei 10 Wiederholungen?</h2></div>
       <p class="hint wiz-q-explain"><b>Max. bei 10 Wdh.</b> (auch „10 RM“) ist das Gewicht, mit dem du eine Übung gerade so
         <b>10-mal sauber</b> schaffst – eine 11. Wiederholung ginge nicht mehr. Daraus berechnet die App deine Gewichte für jedes Training.</p>
+      <p class="hint wiz-q-explain">${MAX_FRESH_NOTE}</p>
       ${list.map(ex => `<div class="fm-row">
         <span class="fm-name">${esc(ex.name)}${libInfoBtn(ex.name)}</span>
         <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="first-max" data-id="${ex.id}"
@@ -4112,8 +4276,22 @@ function hintOffCard() {
       <button class="btn outline" data-action="hint-on">Wieder anzeigen</button></div>`;
 }
 
+// Optionen: persönlicher Wert der Vorermüdung (ab Standard)
+function prefatCard() {
+  if (!feat('tr-prefat')) return '';
+  const L = prefatLearn(), pct = fmtNum(Math.round(L.rate * 1000) / 10);
+  const sure = L.w < 5 ? 'noch wenig Daten' : L.w < 15 ? 'mittlere Sicherheit' : 'gut abgesichert';
+  return `<div class="card"><h2>💤 Vorermüdung</h2>
+      <p>Die App rechnet je Satz, den dieselbe Muskelgruppe vorher im Training gemacht hat, mit <b>${pct} % weniger Kraft</b>
+        (je Satz für einen Hilfsmuskel halb so viel, insgesamt höchstens ${Math.round(PREFAT_MAX * 100)} %).</p>
+      <p class="hint">${L.n ? `Dein persönlicher Wert, gelernt aus ${L.n} ${L.n === 1 ? 'Vergleich' : 'Vergleichen'} deiner Trainings (${sure}): dieselbe Übung an
+        verschiedenen Stellen im Training. Gestartet wird mit 5 %.`
+        : 'Startwert. Sobald eine Übung an verschiedenen Stellen im Training stand (z. B. an Tag A vorn, an Tag B weiter hinten), lernt die App deinen eigenen Wert.'}
+        „Max. bei 10 Wdh.“ ist immer der Frisch-Wert – steht eine Übung weiter hinten, zieht die App die Vorermüdung selbst ab.</p></div>`;
+}
+
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + prefatCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -4311,6 +4489,7 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   if (tl && tl.min) {
     draft.timeLimit = tl.min;
     draft.timeCut = trimToTime(draft.entries, tl.min);
+    refreshPrefat();
     if (tl.once) { delete data.timeLimit; saveData(); }
   }
   saveDraft();
@@ -4332,7 +4511,9 @@ function draftEntries(day) {
   const adapt = !draft.deload && !draft.own && nutTrainAdapt();
   draft.nutAdapt = adapt;
   const auto = autoSetsForDay(day, setsWeek, draft.deload, data.volume, adapt);
-  return day.exercises.filter(e => e.name.trim()).map(ex => {
+  const exs = day.exercises.filter(e => e.name.trim());
+  const nList = exs.map(x => ({ name: x.name.trim(), n: auto.has(x.id) ? auto.get(x.id) : setsForWeek(x, draft.deload ? bw : setsWeek, bw, adapt) }));
+  return exs.map((ex, xi) => {
     const en = { name: ex.name.trim() };
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
     const week = draft.deload ? bw : draft.week;
@@ -4343,7 +4524,8 @@ function draftEntries(day) {
     // (Deload: Sätze der letzten Woche, werden dort halbiert)
     const fixedSets = auto.has(ex.id);
     const sets = fixedSets ? auto.get(ex.id) : setsForWeek(ex, draft.deload ? bw : setsWeek, bw, adapt);
-    const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex), weights: weightsFor(ex.name) };
+    const target = { sets, fixedSets, reps: repsFor(day, ex), rir, rirText, max10: ex.max10, step: stepFor(ex), weights: weightsFor(ex.name),
+      fat: draft.own ? 0 : preFatigue(nList, xi) };
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
     if (adapt) target.noLoadUp = true;  // Diät/Minicut angepasst: Gewicht nicht steigern, höchstens 1 Wdh. mehr
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
@@ -4363,18 +4545,18 @@ function setupEntry(en, target, variantFor = () => '') {
   if (body) target = { ...target, bodyweight: true, max10: null, ...(band ? { band } : {}) };
   const strip = e => body ? bandShift(withoutWeight(e), band) : e;
   en.plan = target;
-  if (draft.deload) target = deloadTarget(target, body ? null : lastWorkSet(en.name, draft.dayId));
+  if (draft.deload) target = deloadTarget(target, body ? null : lastWorkSet(en.name, draft.dayId, target));
   else if (draft.intro) target = { ...target, intro: true };
   // ohne Gewichtsprogression (hold) keine Bezugswochen – es gelten die Werte vom letzten Mal
-  const cmp = draft.deload || target.hold ? null : strip(comparisonEntry(en.name, draft.dayId, draft));
-  const prev = draft.deload || draft.intro || target.hold ? null : strip(previousWeekEntry(en.name, draft.dayId, draft));
+  const cmp = draft.deload || target.hold ? null : condRef(strip(comparisonEntry(en.name, draft.dayId, draft)), { step: 2.5, ...target });
+  const prev = draft.deload || draft.intro || target.hold ? null : condRef(strip(previousWeekEntry(en.name, draft.dayId, draft)), { step: 2.5, ...target });
   // Satzzahl laut Wochenplan der Übung (Deload: halbiert)
   const n = target.sets;
   en.target = { ...target, sets: n };
   en.compare = cmp;
   en.prevWeek = prev;
   // 2. Training dieses Tages in der Woche: nie mehr als im 1. Training dieser Woche geschafft
-  en.weekFirst = draft.occurrence > 1 && !draft.deload ? strip(weekFirstEntry(en.name, draft.dayId, draft)) : null;
+  en.weekFirst = draft.occurrence > 1 && !draft.deload ? condRef(strip(weekFirstEntry(en.name, draft.dayId, draft)), { step: 2.5, ...target }) : null;
   en.rule = null;
   en.base = buildSets(en.name, en.target);  // Vorschlag ohne Bezugswoche
   en.sets = [];
@@ -4401,9 +4583,10 @@ function bandShift(e, band) {
 
 // Deload mit Gewicht: erster normaler Satz (mit Gewicht) im letzten Training ohne Deload – bevorzugt neuester Zyklus
 // und derselbe Trainingstag (null ohne Training)
-function lastWorkSet(name, dayId) {
+function lastWorkSet(name, dayId, t = null) {
   const e = findWeekEntry(name, dayId, () => true);
-  return (e && ofVariant(e.sets, '').find(s => s.weight != null && s.reps != null)) || null;
+  const s = (e && ofVariant(e.sets, '').find(x => x.weight != null && x.reps != null)) || null;
+  return s && t ? condSet(s, e.fat || 0, t.fat || 0, { step: 2.5, ...t }) : s;
 }
 
 // Eigengewicht im Deload: Wdh. + Tank des ersten Satzes im letzten Training ohne Deload (null ohne Training)
@@ -4603,7 +4786,7 @@ function buildSets(name, target) {
   // Zu Hause: liegt das passende Gewicht zwischen zwei vorhandenen, gilt das leichtere – dafür mehr Wdh.
   let reps0 = target.reps;
   if (target.weights && tw != null && target.max10 != null && !target.deload) {
-    const ideal = target.max10 * repFactor(target.reps + target.rir);
+    const ideal = effMax(target) * repFactor(target.reps + target.rir);
     const need = repsAtWeight(target.reps, target.rir, ideal, tw);
     const up = wUp(tw, target), upReps = up != null ? repsAtWeight(target.reps, target.rir, ideal, up) : null;
     // große Lücke: das leichtere Gewicht nur, solange damit höchstens MAXED_REPS Wdh. nötig sind (User-Regel 2026-11-06)
@@ -4674,6 +4857,21 @@ function stepPick(en, ei) {
     </div>`;
 }
 
+// Vorermüdung im laufenden Training neu bestimmen (Reihenfolge, Ersetzen, Sätze): Übungen ohne angefassten Satz bekommen
+// einen neuen Vorschlag, bei begonnenen bleibt der Vorschlag (gespeichert wird ohnehin die tatsächliche Vorermüdung)
+function refreshPrefat() {
+  if (!draft || draft.own) return;
+  const list = draftPrefatList();
+  draft.entries.forEach((en, i) => {
+    if (!en.target) return;
+    const f = preFatigue(list, i);
+    if (Math.abs((en.target.fat || 0) - f) < 1e-9) return;
+    if (en.sets.some(s => s.touched || isDone(s))) { en.target.fat = f; return; }
+    const variants = en.sets.map(variantOf);
+    setupEntry(en, { ...(en.plan || en.target), fat: f }, j => variants[Math.min(j, variants.length - 1)] || '');
+  });
+}
+
 // Übung im laufenden Training gegen eine andere tauschen (Plan bleibt unverändert)
 function replaceExercise(en, name, max10) {
   const original = en.replacedFrom || en.name;
@@ -4693,7 +4891,8 @@ function entryResult(en) {
   if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) return null;
   const t = { step: 2.5, ...en.target };
   const result = progression(first, t);
-  result.max10 = Math.round(result.next / repFactor(t.reps + t.rir) * 10) / 10;
+  const fat = en.fat != null ? en.fat : t.fat || 0;  // Max. bei 10 Wdh. = Frisch-Wert
+  result.max10 = Math.round(result.next / repFactor(t.reps + t.rir) / (1 - fat) * 10) / 10;
   return result;
 }
 
@@ -4703,7 +4902,8 @@ function estimateMax10(en) {
   const first = en.sets.find(s => !s.variant);
   if (!first || !first.weight || first.reps == null) return null;
   const rir = first.rir != null ? first.rir : en.target ? en.target.rir : 0;
-  return roundTo(first.weight / repFactor(first.reps + rir), 0.5);
+  const fat = en.fat != null ? en.fat : (en.target && en.target.fat) || 0;
+  return roundTo(first.weight / repFactor(first.reps + rir) / (1 - fat), 0.5);
 }
 
 const setPlanMax10 = (name, max10) => {
@@ -4733,6 +4933,11 @@ function saveTraining() {
         .filter(s => s.weight != null || s.reps != null),
     }))
     .filter(en => en.sets.length);
+  // tatsächliche Vorermüdung je Übung (Reihenfolge und Sätze, wie sie gespeichert werden)
+  if (!draft.own) entries.forEach((e, i, all) => {
+    const f = preFatigue(all.map(x => ({ name: x.name, n: x.sets.length })), i);
+    if (f) e.fat = f;
+  });
 
   if (!entries.length) {
     alert('Es ist noch nichts eingetragen.');
@@ -4844,9 +5049,10 @@ function importData(file) {
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
       cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
-      customExercises: d.customExercises, profile: d.profile,
+      customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV,
     });
     registerCustomExercises();
+    prefatMigrate();  // ältere Sicherung: Max.-Werte auf frisch umrechnen
     applyTheme();
     saveData();
     toast('Sicherung importiert ✔');
@@ -5173,6 +5379,7 @@ const actions = {
     const i = +el.dataset.ei, j = i + Number(el.dataset.dir);
     if (j < 0 || j >= draft.entries.length) return;
     [draft.entries[i], draft.entries[j]] = [draft.entries[j], draft.entries[i]];
+    refreshPrefat();
     saveDraft(); render();
   },
   // Hinweis im Training ausblenden: je Übung, für alle (zu viele Wdh.) oder bis zum nächsten Zyklus (zu schwer)
@@ -5259,11 +5466,13 @@ const actions = {
       variant: variantOf(prev),
     });
     recalcSets(+el.dataset.ei);
+    refreshPrefat();
     saveDraft(); render();
   },
   'tr-del-set': el => {
     const sets = draft.entries[el.dataset.ei].sets;
     if (sets.length) sets.pop();
+    refreshPrefat();
     saveDraft(); render();
   },
   'typo-ok': el => {
@@ -5410,6 +5619,7 @@ const actions = {
     if (en.sets.some(s => s.touched) && !confirm('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem ersetzen?')) return;
     replaceExercise(en, name, parseNum(panel.querySelector('[data-field="rep-max"]').value));
     en.replacing = false;
+    refreshPrefat();
     saveDraft(); render();
     toast(`Ersetzt durch ${name}`);
   },
@@ -5979,7 +6189,7 @@ function swipeNavHtml(cur) {
     <button class="icon-btn" data-action="tr-go" data-d="-1" ${cur === 0 ? 'disabled' : ''} aria-label="Vorige Übung">‹</button>
     <div><b>Übung ${cur + 1} von ${n}</b><div class="swipe-dots">${dots}</div></div>
     <button class="icon-btn" data-action="tr-go" data-d="1" ${cur >= n - 1 ? 'disabled' : ''} aria-label="Nächste Übung">›</button>
-  </div><p class="hint swipe-hint">Wischen: nach links = nächste Übung, nach rechts = vorige</p>`;
+  </div>${data.profile && data.profile.swipeKnown ? '' : '<p class="hint swipe-hint">Wischen: nach links = nächste Übung, nach rechts = vorige</p>'}`;
 }
 function swipeNextHtml(ei) {
   const n = draft.entries.length;
@@ -6019,7 +6229,14 @@ document.addEventListener('touchend', e => {
 // Wischen je Fenster: nach links = weiter (nächste Übung, nächster Tag …), nach rechts = zurück
 function swipeView(dir, click) {
   const v = current.view, p = current.params;
-  if (v === 'training') { if (draft && !draft.reorder && trSwipeOn()) trGo(dir); return; }
+  if (v === 'training') {
+    if (draft && !draft.reorder && trSwipeOn()) {
+      // einmal gewischt = verstanden: der Hinweis „Wischen: nach links …“ verschwindet (User-Wunsch 2026-11-09)
+      if (data.profile && !data.profile.swipeKnown) { data.profile.swipeKnown = true; saveData(); }
+      trGo(dir);
+    }
+    return;
+  }
   if (v === 'food') { click(`[data-action="food-day"][data-d="${dir}"]`); return; }
   if (v === 'week') { click(`[data-action="week-shift"][data-dir="${dir}"]`); return; }
   if (v === 'session' && !p.edit && !p.week) {
@@ -6042,7 +6259,7 @@ function swipeView(dir, click) {
   }
   if (v === 'wizard') {
     if (dir < 0) { if (!$back.hidden) $back.click(); return; }
-    const next = [...$view.querySelectorAll('.row .btn.primary[data-action="wiz-step"]')].pop();
+    const next = [...$view.querySelectorAll('.row .btn.primary[data-action="wiz-step"], .row .btn.primary[data-action="wiz-pday"]')].pop();  // Vorschau: nächster Tag
     if (next && !next.disabled) next.click();
   }
 }
@@ -6166,6 +6383,11 @@ function appearanceCard() {
       <p class="hint">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
         „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
         „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
+      <p class="lbl">Übungen im Training</p>
+      <div class="seg two tr-viewmode"><button class="${trSwipeOn() ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
+        <button class="${trSwipeOn() ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>
+      <p class="hint">„Untereinander“: alle Übungen auf einer Seite zum Scrollen. „Wischen“: eine Übung je Bildschirm – nach links wischen
+        für die nächste Übung, nach rechts für die vorige.</p>
     </div>`;
 }
 
@@ -6367,12 +6589,40 @@ fields['profile-name'] = el => {
 
 /* ---------- Start ---------- */
 
+// Einmalig beim Umstieg auf die Vorermüdung (v179): „Max. bei 10 Wdh.“ war bisher so gemessen, wie die Übung im Training
+// stand – jetzt ist es der Frisch-Wert. Daher mit der Vorermüdung des Trainings hochrechnen, aus dem der Wert stammt
+// (neuestes Training dieser Übung mit Ergebnis). data.prefatV = schon umgerechnet (auch in Sicherungen).
+function prefatMigrate() {
+  if (data.prefatV) return;
+  const done = new Map();
+  for (const p of data.plans || []) {
+    if (p.own) continue;
+    for (const d of p.days || []) for (const ex of d.exercises || []) {
+      if (ex.max10 == null || !ex.name.trim()) continue;
+      const k = nameKey(ex.name);
+      if (!done.has(k)) {
+        let f = 0;
+        for (const ses of sessionsNewestFirst()) {
+          const i = ses.entries.findIndex(e => nameKey(e.name) === k && e.result);
+          if (i >= 0) { f = sessionFat(ses, i); break; }
+        }
+        done.set(k, f);
+      }
+      const f = done.get(k);
+      if (f > 0) ex.max10 = Math.round(ex.max10 / (1 - f) * 10) / 10;
+    }
+  }
+  data.prefatV = 1;
+  saveData();
+}
+
 // Erst zeichnen, wenn alle Skripte geladen sind (die Startseite nutzt z. B. nutrition.js) –
 // sonst bleibt die Seite beim Öffnen leer, bis man einen Reiter antippt.
 async function boot() {
   await storeInit();  // Daten aus IndexedDB (bzw. Umzug dorthin) – erst danach zeichnen
   applyTheme();
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
+  prefatMigrate();
   render();
   showWelcome();
 }

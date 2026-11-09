@@ -2280,6 +2280,9 @@ body.touring { overflow: hidden; }
 .pb-star { position: absolute; top: -7px; right: -9px; z-index: 1; padding: 1px 5px; border-radius: 8px; font-size: 10px; font-weight: 800;
   line-height: 1.3; white-space: nowrap; color: #6b4a00; background: #ffd23f; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 .pb-star[hidden] { display: none; }
+/* Vorermüdungs-PB (v179): zweites Abzeichen, blau statt gelb; steht ein Satz höher, wenn beide sichtbar wären (nie beide) */
+.pb-star.fpb, .pb-tag.fpb { color: #fff; background: #3b6fd8; }
+.prefat-note { margin: 2px 0 6px; font-size: 13px; color: var(--muted); }
 .pb-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px; font-size: 12px; font-weight: 800;
   color: #6b4a00; background: #ffd23f; vertical-align: 1px; }
 
@@ -2320,6 +2323,7 @@ body.touring { overflow: hidden; }
 .swipe-dot.done { background: var(--ok, #2e9d55); }
 .swipe-dot.now { background: var(--accent); transform: scale(1.35); }
 .swipe-hint { text-align: center; margin: 0 0 8px; font-size: 13px; }
+.swipe-nav b { font-size: 14px; font-weight: 600; color: var(--muted, inherit); }  /* „Übung 5 von 11“ dezenter (v177) */
 .swipe-next { margin-top: 12px; }
 .ex-card.slide-l { animation: slideL .22s ease-out; }
 .ex-card.slide-r { animation: slideR .22s ease-out; }
@@ -2382,3 +2386,9 @@ body.touring { overflow: hidden; }
 /* Übung im Plan: Ersetzen und Umbenennen nebeneinander, Umbenennen-Feld (v174) */
 .plan-ex-btns { gap: 8px; margin-top: 0; }
 .plan-ex-btns .btn, .ex-rename .row .btn { flex: 1 1 0; min-width: 0; white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+
+/* Assistent, Vorschau Tag für Tag (v178) */
+.wiz-pdays { margin: 4px 0 2px; }
+.wiz-pday-pos { margin: 6px 0 4px; }
+
+.max-mini .max-today { display: block; font-weight: 500; color: var(--muted); }
