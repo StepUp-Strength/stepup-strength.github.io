@@ -682,7 +682,7 @@ const OWN_PILL = { mode: 0, sessions: 0, ownday: 1, ownname: 2 };
 
 function wizSteps() {
   const own = wiz.mode === 'own';
-  if (!own && !feat('wiz-name')) return '';  // Einfach: endet nach der Aufteilung, keine Schrittleiste
+  if (wiz.resume || (!own && !feat('wiz-name'))) return '';  // Einfach: endet nach der Aufteilung, keine Schrittleiste
   const labels = own ? ['Tage', 'Übungen', 'Name'] : ['Tage', 'Name', 'Fokus', 'Volumen', 'RIR', 'Übungen', 'Ende'];
   const cur = (own ? OWN_PILL : STEP_PILL)[wiz.step];
   return `<div class="pills wiz-steps">${labels.map((l, i) => l === 'RIR' && !feat('wiz-rir') ? ''
@@ -885,7 +885,13 @@ function renderWizOwnDay() {
   const d = wiz.own[wiz.oi];
   const num = (field, e, v, mode, ph = '') => `<input class="inp own-num" type="text" inputmode="${mode}" autocomplete="off"
     data-field="${field}" data-e="${e}" value="${esc(v)}" placeholder="${ph}">`;
+  // Reihenfolge schon beim Eintragen ändern (User-Wunsch 2026-11-10): ↑/↓ je Übung, ✕ daneben
+  const n = d.exercises.length;
   const rows = d.exercises.map((x, e) => `<div class="own-ex">
+      <div class="own-ex-head"><span class="own-ex-no">Übung ${e + 1}</span>
+        ${n > 1 ? `<button class="icon-btn" data-action="own-ex-move" data-e="${e}" data-d="-1" aria-label="Nach oben" ${e === 0 ? 'disabled' : ''}>↑</button>
+        <button class="icon-btn" data-action="own-ex-move" data-e="${e}" data-d="1" aria-label="Nach unten" ${e === n - 1 ? 'disabled' : ''}>↓</button>` : ''}
+        <button class="icon-btn danger" data-action="own-del-ex" data-e="${e}" aria-label="Übung entfernen">✕</button></div>
       <div class="ex-name-row">
         <input class="inp" type="text" data-field="own-name" data-e="${e}" autocomplete="off" autocorrect="off" spellcheck="false"
           value="${esc(x.name)}" placeholder="Übung eintippen, z. B. Bank…">${libInfoBtn(x.name)}
@@ -895,9 +901,14 @@ function renderWizOwnDay() {
         <label>Sätze${num('own-sets', e, x.sets, 'numeric')}</label><span class="own-x">×</span>
         <label>Wdh.${num('own-reps', e, x.reps, 'numeric')}</label>
         <label>kg${num('own-kg', e, x.kg, 'decimal', '–')}</label>
-        <button class="icon-btn danger" data-action="own-del-ex" data-e="${e}" aria-label="Übung entfernen">✕</button>
       </div>
     </div>`).join('');
+  // Nicht alle Tage auf einmal (User-Wunsch 2026-11-10): Plan schon mit den fertigen Tagen speichern, Rest später
+  const more = wiz.oi < wiz.own.length - 1;
+  const last = !more;
+  const later = !more ? '' : `<button class="btn outline" data-action="own-later">⏳ Weitere Tage später erstellen</button>
+    <p class="hint">${wiz.resume ? 'Speichert die fertigen Tage im Plan.' : 'Speichert den Plan schon mit den fertigen Tagen – du kannst sofort damit trainieren.'}
+      Die übrigen Tage erstellst du, wann du magst: im Reiter Plan über „Jetzt weiter erstellen“.</p>`;
   return `<div class="card wiz-q">
       <p class="sub">Trainingstag ${wiz.oi + 1} von ${wiz.own.length}</p>
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📝</span><h2>Deine Übungen</h2></div>
@@ -908,13 +919,79 @@ function renderWizOwnDay() {
       <button class="btn outline" data-action="own-add-ex">+ Übung hinzufügen</button>
     </div>
     <div class="row"><button class="btn" data-action="own-prev">Zurück</button>
-      <button class="btn primary" data-action="own-next">Weiter</button></div>`;
+      <button class="btn primary" data-action="own-next">${wiz.resume && last ? 'Speichern' : 'Weiter'}</button></div>
+    ${later}`;
+}
+
+// Eingetragene Übungen eines Tages (Text) -> Plan-Übungen. app = mit Steigerung der App: „Max. bei 10 Wdh.“ aus Gewicht × Wdh.
+// geschätzt (etwa 2 Wdh. im Tank), sofern noch nichts bekannt ist – und auf frisch umgerechnet (Vorermüdung an seiner Stelle im Tag)
+function ownExercises(d, app) {
+  const int = (s, def, max) => Math.min(max, Math.max(1, Math.round(parseNum(s) || def)));
+  const list = d.exercises.filter(e => e.name.trim()).map(e => {
+    const sets = int(e.sets, 3, 20), reps = int(e.reps, 10, 50), kg = parseNum(e.kg), name = e.name.trim();
+    const max10 = !app ? null : kg != null && knownMax10(name) == null ? Math.round(kg / repFactor(reps + 2) * 2) / 2 : knownMax10(name);
+    return withDefaults({ id: uid(), name, sets, setsEnd: sets, reps, startWeight: kg, max10 });
+  });
+  if (app) {
+    const fl = list.map(e => ({ name: e.name, n: e.sets }));
+    list.forEach((e, i) => { const f = preFatigue(fl, i); if (e.max10 != null && f && knownMax10(e.name) == null) e.max10 = Math.round(e.max10 / (1 - f) * 2) / 2; });
+  }
+  return list;
+}
+
+// Tage ohne Übungen im aktiven Plan („noch zu erstellen“)
+const openDays = (p = activePlan()) => p ? p.days.filter(d => !d.exercises.some(e => e.name.trim())) : [];
+
+// Offene Tage weiter erstellen: selbst eingetragene Pläne mit demselben Formular wie beim Erstellen, sonst der Trainingstag-Editor
+function ownResume(id) {
+  const plan = activePlan();
+  const open = openDays(plan);
+  if (!open.length) return;
+  if (!plan.byHand) { go('day', { id: id || open[0].id }); return; }
+  wiz = {
+    step: 'ownday', mode: 'own', resume: plan.id, name: plan.name, level: plan.level || null, ownProg: plan.own ? 'own' : 'app',
+    equip: plan.equip || 'free', own: open.map(d => ({ id: d.id, name: d.name, exercises: [ownBlank()] })),
+    oi: Math.max(0, open.findIndex(d => d.id === id)),
+  };
+  go('wizard');
+}
+
+// Weiter erstellte Tage in den Plan übernehmen (leere bleiben offen)
+function ownResumeSave() {
+  const plan = data.plans.find(p => p.id === wiz.resume);
+  let n = 0;
+  for (const d of wiz.own) {
+    const day = plan && plan.days.find(x => x.id === d.id);
+    const ex = day ? ownExercises(d, !plan.own) : [];
+    if (!ex.length) continue;
+    day.exercises = ex;
+    day.name = d.name.trim() || day.name;
+    n++;
+  }
+  const left = openDays(plan).length;
+  saveData();
+  wiz = null;
+  toast(n ? `${n} Trainingstag${n === 1 ? '' : 'e'} gespeichert ✔${left ? ` · noch ${left} offen` : ''}` : 'Keine Übungen eingetragen – nichts geändert');
+  go('plan');
+}
+
+// Hinweis im Plan-Reiter: Tage, die noch erstellt werden müssen
+function pendingDaysHtml() {
+  if (!hasActivePlan()) return '';
+  const p = activePlan(), open = openDays(p);
+  if (!open.length) return '';
+  const k = open.length;
+  return `<div class="card pending-days"><p class="per-week-title">⏳ Noch ${k} Trainingstag${k === 1 ? '' : 'e'} zu erstellen</p>
+    <p class="hint">${open.map(d => `„${esc(d.name)}“`).join(', ')} ${k === 1 ? 'hat' : 'haben'} noch keine Übungen. Bis dahin trainierst du
+      mit den fertigen Tagen${p.own ? '' : ' – eine Woche gilt als geschafft, sobald die fertigen Tage dran waren'}.</p>
+    <button class="btn primary" data-action="own-resume">✍️ Jetzt weiter erstellen</button></div>`;
 }
 
 // Eigener Plan: Name und speichern
 function renderWizOwnName() {
   const count = d => d.exercises.filter(e => e.name.trim()).length;
-  const list = wiz.own.map(d => `<li><b>${esc(d.name || 'Trainingstag')}</b> · ${count(d)} Übung${count(d) === 1 ? '' : 'en'}</li>`).join('');
+  const list = wiz.own.map(d => `<li><b>${esc(d.name || 'Trainingstag')}</b> · ${count(d) ? `${count(d)} Übung${count(d) === 1 ? '' : 'en'}` : '⏳ später erstellen'}</li>`).join('');
+  const open = wiz.own.filter(d => !count(d)).length;
   const prog = wiz.ownProg || 'own';
   const opt = (k, icon, title, text) => `<button class="split-opt cat ${prog === k ? 'on' : ''}" data-action="wiz-own-prog" data-k="${k}">
       <span class="cat-icon">${icon}</span><b>${title}</b><small>${text}</small></button>`;
@@ -929,6 +1006,8 @@ function renderWizOwnName() {
       <label class="lbl">Name des Plans
         <input class="inp" type="text" data-field="wiz-name" value="${esc(wiz.name)}"></label>
       <ul class="own-sum">${list}</ul>
+      ${open ? `<p class="hint">⏳ ${open === 1 ? '1 Tag erstellst' : `${open} Tage erstellst`} du später – im Reiter Plan über „Jetzt weiter erstellen“.
+        Bis dahin trainierst du mit den fertigen Tagen.</p>` : ''}
       <button class="btn primary" data-action="wiz-commit-own">Plan speichern</button>`, false);
 }
 
@@ -1516,11 +1595,14 @@ function wizOwnPick(input, name) {
 // erst bei der ersten Frage raus aus dem Assistenten
 function wizBack() {
   if (!wiz || wiz.step === 'mode') return ['plan', {}];
+  if (wiz.resume && wiz.step === 'ownday' && wiz.oi === 0) { wiz = null; return ['plan', {}]; }  // Weiter erstellen: zurück zum Plan
   if (wiz.step === 'ownday' && wiz.oi > 0) {
     wiz.oi--;
   } else if (wiz.step === 'ownname') {
     wiz.step = 'ownday';
-    wiz.oi = wiz.own.length - 1;
+    // zurück zum ersten noch leeren Tag (nach „später erstellen“), sonst zum letzten
+    const e = wiz.own.findIndex(d => !d.exercises.some(x => x.name.trim()));
+    wiz.oi = e >= 0 ? e : wiz.own.length - 1;
   } else if (wiz.step === 'manual') {
     if (wiz.gi > 0) wiz.gi--;
     else { wiz.step = wiz.fromPreview ? 'preview' : 'rir'; wiz.fromPreview = false; }
@@ -1542,8 +1624,9 @@ function wizBack() {
   return ['wizard', {}];
 }
 
-views.wizard = { title: 'Neuer Plan', tab: 'plan', back: wizBack, render: renderWizard,
-  cancel: () => wiz ? { ask: 'Plan-Erstellung abbrechen?\n\nDeine bisherigen Eingaben gehen verloren.', run: () => { wiz = null; go('plan'); } } : null };
+views.wizard = { title: () => wiz && wiz.resume ? 'Plan weiter erstellen' : 'Neuer Plan', tab: 'plan', back: wizBack, render: renderWizard,
+  cancel: () => wiz ? { ask: wiz.resume ? 'Weiter erstellen abbrechen?\n\nDie Eingaben für die offenen Tage gehen verloren, der Plan bleibt wie er ist.'
+    : 'Plan-Erstellung abbrechen?\n\nDeine bisherigen Eingaben gehen verloren.', run: () => { wiz = null; go('plan'); } } : null };
 
 Object.assign(actions, {
   'wiz-start': () => wizStart(),
@@ -1682,9 +1765,27 @@ Object.assign(actions, {
   'own-next': () => {
     const d = wiz.own[wiz.oi];
     if (!d.exercises.some(e => e.name.trim())) { alert('Bitte mindestens eine Übung für diesen Tag eintragen.'); return; }
-    if (wiz.oi < wiz.own.length - 1) wiz.oi++; else wiz.step = 'ownname';
+    if (wiz.oi < wiz.own.length - 1) wiz.oi++;
+    else if (wiz.resume) { ownResumeSave(); return; }
+    else wiz.step = 'ownname';
     go('wizard');
   },
+  // Übung eine Stelle nach oben (-1) bzw. unten (+1)
+  'own-ex-move': el => {
+    const list = wiz.own[wiz.oi].exercises, i = Number(el.dataset.e), j = i + Number(el.dataset.d);
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    render();
+  },
+  // Weitere Tage später erstellen: mit den fertigen Tagen speichern (neuer Plan: erst Name und Steigerung)
+  'own-later': () => {
+    const filled = wiz.own.some(d => d.exercises.some(e => e.name.trim()));
+    if (wiz.resume) { ownResumeSave(); return; }
+    if (!filled) { alert('Bitte erst mindestens einen Trainingstag mit Übungen füllen.'); return; }
+    wiz.step = 'ownname';
+    go('wizard');
+  },
+  'own-resume': el => ownResume(el && el.dataset && el.dataset.id),
   'wiz-own-prog': el => { wiz.ownProg = el.dataset.k; render(); },
   'wiz-own-level': el => { wiz.level = el.dataset.k; render(); },
   // eigenen Plan speichern: Tage „Frei“ (Sätze × Wdh. pro Übung) – ohne Progression, Zyklen und Deload oder
@@ -1693,24 +1794,10 @@ Object.assign(actions, {
     const app = wiz.ownProg === 'app';
     if (app && !wiz.level) { alert('Bitte wähle noch deine Trainingserfahrung – danach richtet sich die Steigerung.'); return; }
     if (draft && !confirm(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den neuen Plan aktiv setzen?`)) return;
-    const int = (s, def, max) => Math.min(max, Math.max(1, Math.round(parseNum(s) || def)));
-    const days = wiz.own.map(d => ({
-      id: uid(),
-      name: d.name.trim() || 'Trainingstag',
-      intensity: '',
-      exercises: d.exercises.filter(e => e.name.trim()).map(e => {
-        const sets = int(e.sets, 3, 20), reps = int(e.reps, 10, 50), kg = parseNum(e.kg), name = e.name.trim();
-        // mit Steigerung: „Max. bei 10 Wdh.“ aus Gewicht × Wdh. geschätzt (etwa 2 Wdh. im Tank), sofern noch nichts bekannt ist
-        const max10 = !app ? null : kg != null && knownMax10(name) == null ? Math.round(kg / repFactor(reps + 2) * 2) / 2 : knownMax10(name);
-        return withDefaults({ id: uid(), name, sets, setsEnd: sets, reps, startWeight: kg, max10 });
-      }),
-    }));
-    // eingetragenes Gewicht gilt an seiner Stelle im Tag: geschätztes Max. auf frisch umrechnen (Vorermüdung)
-    if (app) for (const d of days) {
-      const list = d.exercises.map(e => ({ name: e.name, n: e.sets }));
-      d.exercises.forEach((e, i) => { const f = preFatigue(list, i); if (e.max10 != null && f && knownMax10(e.name) == null) e.max10 = Math.round(e.max10 / (1 - f) * 2) / 2; });
-    }
+    // Tage ohne Übungen bleiben leer = „noch zu erstellen“ (siehe pendingDaysHtml)
+    const days = wiz.own.map(d => ({ id: uid(), name: d.name.trim() || 'Trainingstag', intensity: '', exercises: ownExercises(d, app) }));
     const plan = newPlan(wiz.name.trim() || 'Mein Plan', days);
+    plan.byHand = true;  // selbst eingetragen: offene Tage werden mit demselben Formular weiter erstellt
     if (app) plan.level = wiz.level;
     else Object.assign(plan, { own: true, progression: { volume: false, load: false } });
     if (wizMachines()) plan.equip = 'machine';  // Ersetzen: passende Übungen zuerst
@@ -1720,7 +1807,8 @@ Object.assign(actions, {
     setRound(newCycleId(), 1, 1);
     saveData();
     wiz = null;
-    toast(`„${plan.name}“ erstellt und aktiv ✔`);
+    const open = openDays(plan).length;
+    toast(open ? `„${plan.name}“ erstellt ✔ · noch ${open} Tag${open === 1 ? '' : 'e'} zu erstellen` : `„${plan.name}“ erstellt und aktiv ✔`);
     go('plan');
   },
   'wiz-lib-add': el => { wizAddDay(dayLibrary()[Number(el.dataset.i)]); render(); },

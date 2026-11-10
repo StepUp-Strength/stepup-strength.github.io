@@ -2801,6 +2801,12 @@ function renderStart() {
   const nextDay = !draft ? order.find(d => open.has(d.id)) : null;
   const skippedIds = roundSkipped(ci.cycleStart, ci.week);
   data.days.forEach((day, i) => {
+    // noch nicht erstellter Tag (User-Wunsch 2026-11-10): Hinweis statt Training, antippen = Übungen eintragen
+    if (!day.exercises.some(e => e.name.trim())) {
+      h += `<button class="btn nav day-btn pending" data-action="own-resume" data-id="${day.id}">
+        <span class="day-no">⏳</span><span class="day-txt">${esc(day.name)}<small>Noch nicht erstellt – antippen, um die Übungen einzutragen</small></span></button>`;
+      return;
+    }
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
     const done = day.exercises.some(e => e.name.trim()) && !open.has(day.id);
@@ -3206,9 +3212,11 @@ function renderPlan() {
     // geschätzte Dauer pro Training: kürzester Tag in der Intro-Woche bis längster am Höhepunkt
     const est = p.days.map(d => estRange(d, p)).filter(([, hi]) => hi);
     const estTxt = est.length ? ` · ${estText(Math.min(...est.map(x => x[0])), Math.max(...est.map(x => x[1])))} pro Training` : '';
+    const openN = p.days.filter(d => !d.exercises.some(e => e.name.trim())).length;  // noch zu erstellen
+    const openTxt = openN && p.days.length > openN ? ` (${openN} noch offen)` : '';
     h += `<div class="plan-row ${isActive ? 'active' : ''} ${p.endedAt && !isActive ? 'ended' : ''}">
       <button class="plan-pick" data-action="plan-activate" data-id="${p.id}">
-        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${estTxt}${state}</small>
+        <b>${esc(p.name)}</b><small>${p.days.length} Trainingstag${p.days.length === 1 ? '' : 'e'}${openTxt}${estTxt}${state}</small>
       </button>
       <button class="icon-btn" data-action="plan-rename" data-id="${p.id}" aria-label="Umbenennen">✎</button>
       ${feat('plans-multi') ? `<button class="icon-btn danger" data-action="plan-delete" data-id="${p.id}" aria-label="Plan löschen">🗑</button>` : ''}
@@ -3228,10 +3236,13 @@ function renderPlan() {
   if (!data.days.length) {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
   }
+  if (typeof pendingDaysHtml === 'function') h += pendingDaysHtml();  // Tage, die noch erstellt werden müssen (wizard.js)
   data.days.forEach((day, i) => {
     const [lo, hi] = estRange(day, active);
-    h += `<button class="btn nav day-btn" data-action="open-day" data-id="${day.id}">
-      <span class="day-no">${i + 1}</span><span class="day-txt">${esc(day.name)}${hi ? `<small>${estText(lo, hi)}${lo !== hi ? ' (Intro bis Höhepunkt)' : ''}</small>` : ''}</span></button>`;
+    const open = !day.exercises.some(e => e.name.trim());
+    h += `<button class="btn nav day-btn ${open ? 'pending' : ''}" data-action="${open && active.byHand ? 'own-resume' : 'open-day'}" data-id="${day.id}">
+      <span class="day-no">${open ? '⏳' : i + 1}</span><span class="day-txt">${esc(day.name)}${open ? '<small>noch zu erstellen</small>'
+        : hi ? `<small>${estText(lo, hi)}${lo !== hi ? ' (Intro bis Höhepunkt)' : ''}</small>` : ''}</span></button>`;
   });
   if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
