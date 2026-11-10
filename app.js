@@ -365,6 +365,11 @@ const $view = document.getElementById('view');
 const $title = document.getElementById('title');
 const $back = document.getElementById('back');
 const $cancel = document.getElementById('cancel');
+// Training (v200): Fortschritt, Uhr und Menü „⋯“ als zweite Zeile der Kopfleiste
+const $trHead = document.createElement('div');
+$trHead.id = 'tr-head';
+$trHead.hidden = true;
+document.querySelector('header').appendChild($trHead);
 const $toast = document.getElementById('toast');
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -845,6 +850,7 @@ function avgTankText(en) {
 function recalcSets(ei) {
   const en = draft.entries[ei];
   const t = en.target;
+  markSets(ei);  // v200: Satz-Farben und Fortschritt oben sofort mitziehen
   if (!t) return;
   const avgEl = $view.querySelector(`[data-avg="${ei}"]`);
   if (avgEl) avgEl.innerHTML = avgTankText(en);
@@ -2303,6 +2309,66 @@ function startTrainingTimer() {
   trTimer = setInterval(tick, 1000);
 }
 
+// Kopfleiste im Training (v200, User-Wunsch 2026-11-10): „Übung x von y · a von b Sätzen“, Balken, Uhr und Menü „⋯“.
+// Aktuelle Übung = erste mit noch offenen Sätzen; antippen springt dorthin.
+let trMenuOpen = false;
+function trProgress() {
+  let all = 0, done = 0;
+  for (const en of draft.entries) { all += en.sets.length; done += en.sets.filter(isDone).length; }
+  return { all, done, cur: draft.entries.findIndex(en => en.sets.some(s => !isDone(s))) };
+}
+function trHeadHtml() {
+  const { all, done, cur } = trProgress();
+  const pct = all ? Math.round(done / all * 100) : 0;
+  const where = cur < 0 ? 'Alles erledigt ✓' : `Übung ${cur + 1} von ${draft.entries.length}`;
+  return `<div class="trh-row">
+      <button class="trh-where" data-action="tr-jump">${where}<span> · ${done} von ${all} Sätzen</span></button>
+      <span class="trh-time">⏱ <b id="tr-timer">${fmtClock(Date.now() - Date.parse(draft.date))}</b></span>
+      <button class="trh-menu-btn" data-action="tr-menu" aria-label="Mehr" aria-expanded="${trMenuOpen}">⋯</button>
+    </div>
+    <div class="trh-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
+    ${trMenuOpen ? trMenuHtml() : ''}`;
+}
+function trMenuHtml() {
+  const lastDur = lastDuration(draft.dayId);
+  const items = [];
+  if (!draft.reorder) items.push(['reorder-toggle', '⇅ Reihenfolge ändern']);
+  items.push(['trm-details-all', draft.entries.every(detOpen) ? '▴ Alle Details zuklappen' : '▾ Alle Details aufklappen']);
+  if (!draft.own) items.push(['trm-entry-help', 'ℹ️ So trägst du dein Training ein']);
+  if (prefatToday()) items.push(['trm-prefat', '💤 Vorermüdung – so rechnet die App']);
+  return `<div class="trh-menu" role="menu">${items.map(([a, t]) => `<button role="menuitem" data-action="${a}">${t}</button>`).join('')}
+    <p>${lastDur ? `Letztes Mal hat dieser Tag ${fmtDur(lastDur)} gedauert.` : 'Erstes Mal – die Dauer wird gemessen.'}</p></div>`;
+}
+function syncTrHead() {
+  const on = current.view === 'training' && !!draft;
+  document.querySelector('header').classList.toggle('tr', on);
+  $trHead.hidden = !on;
+  if (!on) { trMenuOpen = false; $trHead.innerHTML = ''; return; }
+  $trHead.innerHTML = trHeadHtml();
+}
+
+// Details je Übung (v200): Kommentar, Ersetzen, Max., Steigerung, Ausführung und Werte vom letzten Mal sind zugeklappt.
+// Die letzte Wahl (auf/zu) gilt als Vorgabe fürs nächste Training (profile.trDetails).
+const detOpen = en => en.detOpen != null ? en.detOpen : !!(data.profile && data.profile.trDetails);
+// Satz-Zustand für die Felder: erledigt (grün) – Vorschlag, noch nicht angefasst (grau) – selbst eingetragen
+const setState = s => isDone(s) ? 'done' : s.touched ? '' : 'prop';
+function markSets(ei) {
+  const en = draft.entries[ei];
+  en.sets.forEach((s, si) => {
+    const st = setState(s);
+    $view.querySelectorAll(`[data-field="tr-weight"][data-ei="${ei}"][data-si="${si}"], [data-field="tr-reps"][data-ei="${ei}"][data-si="${si}"]`)
+      .forEach(x => { x.classList.toggle('prop', st === 'prop'); x.classList.toggle('done', st === 'done'); });
+    const no = $view.querySelector(`[data-setno="${ei}-${si}"]`);
+    if (no) no.classList.toggle('done', st === 'done');
+  });
+  if (!$trHead.hidden) $trHead.innerHTML = trHeadHtml();
+}
+// Übungsname: Zusatz in Klammern kleiner und grau, z. B. „Bankdrücken Flachbank (Langhantel)“
+function exTitleHtml(name) {
+  const m = /^(.*\S)\s*(\([^()]*\))$/.exec(name);
+  return m ? `${esc(m[1])} <span class="ex-paren">${esc(m[2])}</span>` : esc(name);
+}
+
 /* ---------- Beschwerden (einmal pro Zyklus abgefragt) ---------- */
 
 const BODY_AREAS = {
@@ -2578,6 +2644,7 @@ function render() {
   $title.textContent = typeof v.title === 'function' ? v.title(current.params) : v.title;
   $back.hidden = !v.back;
   $cancel.hidden = !viewCancel();
+  syncTrHead();
   const tab = typeof v.tab === 'function' ? v.tab(current.params) : v.tab;
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
@@ -2987,9 +3054,8 @@ function renderTraining() {
         : `Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
           || (feat('tr-rir-input') ? `Vergleich ist die Intro-Woche des letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.` : '')}`}</p>`
       : '';
-  const lastDur = lastDuration(draft.dayId);
-  h = `<div class="timer-bar"><span>⏱ <b id="tr-timer">0:00</b></span>
-    <span>${lastDur ? `Letztes Mal: ${fmtDur(lastDur)}` : 'Erstes Mal – Zeit wird gemessen'}</span></div>` + timeCutNote() + h;
+  // Uhr und „Letztes Mal“ stehen seit v200 in der Kopfleiste bzw. im Menü „⋯“
+  h = timeCutNote() + h;
   h += draft.own
     ? `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, was du geschafft hast${feat('tr-rir-input')
       ? ' und wie viele Wdh. noch im Tank waren' : ' und tippe an, wie er sich angefühlt hat'} – damit gilt der Satz als erledigt.</p>`
@@ -3007,7 +3073,7 @@ function renderTraining() {
       `</ul><button class="btn primary" data-action="reorder-toggle">✔ Fertig</button>
       <p class="hint">Gilt nur für dieses Training. Eingetragene Werte bleiben erhalten. Dauerhaft änderst du die Reihenfolge im Plan beim Trainingstag.</p></div>`;
   }
-  h += '<button class="btn outline" data-action="reorder-toggle">⇅ Reihenfolge ändern</button>';
+  // „Reihenfolge ändern“ steht seit v200 im Menü „⋯“ der Kopfleiste
   // Ansicht: alle Übungen untereinander (scrollen) oder eine Übung je Bildschirm (wischen) – profile.swipe, einstellbar in den Optionen
   const swipe = trSwipeOn();
   const cur = swipe ? trCur() : -1;
@@ -3016,21 +3082,25 @@ function renderTraining() {
   const stalls = stagnationHints();
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
+    const det = detOpen(en);
+    const hasComment = feat('tr-comment') && !!(en.comment || '').trim();
     h += `<section class="card ex-card tint-${ei % 4}${swipe && ei === cur && draft.slide ? ` slide-${draft.slide}` : ''}" data-ei="${ei}"${swipe && ei !== cur ? ' hidden' : ''}>
       <div class="ex-head">
         <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
-          aria-label="Ausführung ansehen">${esc(en.name)} <span class="info-dot">i</span></button>` : esc(en.name)}</h2>
-        <div class="ex-tools">
-          ${feat('tr-comment') ? `<button class="icon-btn bubble ${(en.comment || '').trim() ? 'has' : ''}" data-action="comment-toggle"
+          aria-label="Ausführung ansehen">${exTitleHtml(en.name)} <span class="info-dot">i</span></button>` : exTitleHtml(en.name)}</h2>
+        <button class="det-btn" data-action="ex-details" data-ei="${ei}" aria-expanded="${det}">Details${hasComment && !det ? ' · 💬' : ''}
+          <span class="chev" aria-hidden="true">▾</span></button>
+        ${det ? `<div class="ex-tools">
+          ${feat('tr-comment') ? `<button class="icon-btn bubble ${hasComment ? 'has' : ''}" data-action="comment-toggle"
             data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>` : ''}
           <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
-        </div>
+        </div>` : ''}
       </div>`;
     if (en.added) {
       h += `<div class="added-row"><span>Heute zusätzlich</span>
         <button class="icon-btn" data-action="added-remove" data-ei="${ei}">Entfernen</button></div>`;
     }
-    if (en.commentOpen) {
+    if (en.commentOpen && det) {
       h += `<textarea class="inp comment" rows="3" data-field="tr-comment" data-ei="${ei}"
         placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
     }
@@ -3078,7 +3148,8 @@ function renderTraining() {
     const vAll = en.sets.length && en.sets.every(s => variantOf(s) === variantOf(en.sets[0])) ? variantOf(en.sets[0]) : null;
     const maxToday = !withMax ? '' : t.max10 != null && (t.fat || 0) >= PREFAT_SHOW - 1e-9
       ? `<small class="max-today">frisch · heute ≈ ${fmtNum(Math.round(effMax(t) * 2) / 2)}</small>` : '<small class="max-today">frisch</small>';
-    if (withMax || feat('tr-variants')) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.${maxToday}</span>
+    // Zugeklappt: nur zeigen, wenn das Max. fehlt (dann muss es eingetragen bzw. bewusst leer gelassen werden)
+    if ((det || (withMax && t.max10 == null)) && (withMax || feat('tr-variants'))) h += `<div class="ex-meta ${withMax ? '' : 'wide'}">${withMax ? `<label class="max-mini"><span>Max. kg bei 10 Wdh.${maxToday}</span>
           <input class="inp kg ${t.max10 == null ? 'missing' : ''}" type="text" inputmode="decimal" autocomplete="off"
             data-field="tr-max" data-ei="${ei}" placeholder="kg" value="${t.max10 == null ? '' : fmtNum(t.max10)}"></label>` : ''}
         <div class="ex-chips">${withMax && feat('tr-step') && !t.weights ? stepChip(en, ei) : ''}
@@ -3091,17 +3162,19 @@ function renderTraining() {
       h += `<p class="first-max-hint">🆕 Kennenlernen: Nimm ein Gewicht, mit dem du die Wiederholungen sicher schaffst, und sag nach jedem
         Satz, wie er sich angefühlt hat – die App passt das Gewicht danach an.</p>`;
     }
-    if (withMax && en.stepOpen) h += stepPick(en, ei);
-    if (en.variantOpen) {
+    if (withMax && en.stepOpen && det) h += stepPick(en, ei);
+    if (en.variantOpen && det) {
       h += `<div class="variants ex-var-pick">${Object.entries(VARIANTS).map(([v, label]) =>
         `<button class="vchip ${vAll === v ? 'on' : ''}" data-action="ex-variant" data-ei="${ei}" data-v="${v}">${label}</button>`).join('')}
         <p class="hint">Gilt für alle noch offenen Sätze. Einzelne Sätze: Satznummer antippen.</p></div>`;
     }
-    if (en.weekFirst && feat('tr-compare')) {
+    if (en.weekFirst && feat('tr-compare') && det) {
       h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
         ${setRows([{ sets: en.weekFirst.sets }])}<b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></div>`;
     }
-    if (!feat('tr-compare')) {
+    if (!det) {
+      // Werte vom letzten Mal stehen in den Details (v200)
+    } else if (!feat('tr-compare')) {
       // Einfach: eine Zeile mit den Werten vom letzten Mal
       h += last ? `<p class="last">Letztes Mal: ${last.sets.map(x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps}` : `${x.reps} Wdh.`).join(' · ')}</p>`
         : '<p class="last">Erstes Mal – noch keine Werte.</p>';
@@ -3140,16 +3213,17 @@ function renderTraining() {
     const pb = draftPbFlags(en), fpb = draftFatPbFlags(en, pb);
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
+      const st = setState(s);  // v200: erledigt = grün, unberührter Vorschlag = grau
       const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`
         + `<span class="pb-star fpb" data-fpb="${ei}-${si}" title="Vorermüdungs-PB"${fpb[si] ? '' : ' hidden'}>💪 PB</span>`;
-      h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''}" data-action="set-variant" data-ei="${ei}" data-si="${si}"
+      h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''} ${st}" data-action="set-variant" data-ei="${ei}" data-si="${si}" data-setno="${ei}-${si}"
           aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
-          : `<span class="setno">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
+          : `<span class="setno ${st}" data-setno="${ei}-${si}">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
         ${body ? (en.target && en.target.band ? `<span class="bw-cell">Band<small>${BAND_LEVELS[en.target.band]}</small></span>`
           : `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`)
-        : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–"
+        : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–" class="${st}"
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
-        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
+        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–" class="${st}"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
         ${rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint(si)}"
           class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`
@@ -3179,9 +3253,7 @@ function renderTraining() {
 let entryHelpOpen = false;
 function entryHelpHtml() {
   const known = data.profile && data.profile.entryHelpKnown;
-  if (known && !entryHelpOpen) {
-    return '<button class="help-link" data-action="entry-help-toggle">ℹ️ So trägst du dein Training ein</button>';
-  }
+  if (known && !entryHelpOpen) return '';  // v200: aufrufbar über das Menü „⋯“ in der Kopfleiste
   const simple = !feat('tr-rir-input');
   const last = simple
     ? `<li>Tippe im letzten Feld an, <b>wie schwer dir der Satz gefallen ist</b>:
@@ -4501,9 +4573,9 @@ function hintOffCard() {
 // Erklärung der Vorermüdung (User-Wunsch 2026-11-10: nicht mehr in den Optionen, sondern einmal oben im Training hinter
 // einem Knopf) – nur, wenn heute mindestens eine Übung vorermüdet ist
 let prefatHelpOpen = false;
+const prefatToday = () => feat('tr-prefat') && !!draft && draft.entries.some(en => en.target && (en.target.fat || 0) >= PREFAT_SHOW - 1e-9);
 function prefatHelpHtml() {
-  if (!feat('tr-prefat') || !draft || !draft.entries.some(en => en.target && (en.target.fat || 0) >= PREFAT_SHOW - 1e-9)) return '';
-  if (!prefatHelpOpen) return '<button class="help-link" data-action="prefat-help-toggle">💤 Vorermüdung – so rechnet die App</button>';
+  if (!prefatToday() || !prefatHelpOpen) return '';  // v200: aufrufbar über das Menü „⋯“ in der Kopfleiste
   const L = prefatLearn(), pct = fmtNum(Math.round(L.rate * 1000) / 10);
   const sure = L.w < 5 ? 'noch wenig Daten' : L.w < 15 ? 'mittlere Sicherheit' : 'gut abgesichert';
   return `<div class="entry-help">
@@ -5725,6 +5797,33 @@ const actions = {
   'reorder-toggle': () => {
     draft.reorder = !draft.reorder;
     saveDraft(); render();
+    if (draft.reorder) window.scrollTo(0, 0);
+  },
+  // Kopfleiste im Training (v200)
+  'tr-menu': () => { trMenuOpen = !trMenuOpen; syncTrHead(); },
+  'tr-jump': () => {
+    const { cur } = trProgress();
+    if (cur < 0) { actions['tr-to-save'](); return; }
+    if (draft.reorder) return;
+    if (trSwipeOn()) { trGo(cur - trCur()); return; }
+    const card = $view.querySelector(`section.ex-card[data-ei="${cur}"]`);
+    if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - document.querySelector('header').offsetHeight - 8, behavior: 'smooth' });
+  },
+  'trm-entry-help': () => { entryHelpOpen = true; render(); window.scrollTo(0, 0); },
+  'trm-prefat': () => { prefatHelpOpen = true; render(); window.scrollTo(0, 0); },
+  'trm-details-all': () => {
+    const open = !draft.entries.every(detOpen);
+    draft.entries.forEach(en => { en.detOpen = open; });
+    data.profile = data.profile || {}; data.profile.trDetails = open;
+    saveData(); saveDraft(); render();
+  },
+  // Details einer Übung auf/zu; die Wahl gilt als Vorgabe fürs nächste Training, die übrigen Übungen bleiben, wie sie sind
+  'ex-details': el => {
+    const ei = +el.dataset.ei, open = !detOpen(draft.entries[ei]);
+    draft.entries.forEach(en => { if (en.detOpen == null) en.detOpen = detOpen(en); });
+    draft.entries[ei].detOpen = open;
+    data.profile = data.profile || {}; data.profile.trDetails = open;
+    saveData(); saveDraft(); render();
   },
   'tr-move': el => {
     const i = +el.dataset.ei, j = i + Number(el.dataset.dir);
@@ -6514,6 +6613,8 @@ const fields = {
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
+  // Menü „⋯“ im Training schließt bei jedem Tipp außer auf „⋯“ selbst (v200)
+  if (trMenuOpen && !(el && el.dataset.action === 'tr-menu')) { trMenuOpen = false; syncTrHead(); }
   if (el && actions[el.dataset.action]) actions[el.dataset.action](el);
 });
 

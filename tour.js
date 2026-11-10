@@ -27,14 +27,23 @@ const TOURS = {
       text: 'Unten wechselst du zwischen Training, Plan, Verlauf, Diagrammen, Ernährung und Optionen (z. B. Sicherung, Aussehen und Modus).' },
   ],
   training: [
-    { id: 'tr-timer', sel: '.timer-bar', title: 'Trainingszeit',
+    { id: 'tr-where', sel: '#tr-head .trh-where', title: 'Dein Fortschritt',
+      text: 'Hier siehst du, bei welcher Übung du bist und wie viele Sätze schon erledigt sind. Antippen springt zur aktuellen Übung.' },
+    { id: 'tr-timer', sel: '#tr-head .trh-time', title: 'Trainingszeit',
       text: 'Die Zeit läuft mit. Beim Speichern wird sie festgehalten – beim nächsten Mal siehst du sie am Trainingstag.' },
+    { id: 'tr-menu', sel: '#tr-head .trh-menu-btn', title: 'Mehr',
+      text: () => 'Hier änderst du die Reihenfolge der Übungen für heute, z. B. wenn ein Gerät besetzt ist. Außerdem findest du hier die Erklärung zum Eintragen'
+        + (feat('tr-prefat') ? ', zur Vorermüdung' : '') + ' und wie lange das Training letztes Mal gedauert hat.' },
     { id: 'tr-prog', sel: '.prog-card', feat: 'tr-prog', title: 'Progression heute',
       text: 'Fühlst du dich heute nicht fit, kannst du die Steigerung nur für dieses Training ausschalten – dann gelten die Werte vom letzten Mal.' },
-    { id: 'tr-reorder', sel: '[data-action="reorder-toggle"]', title: 'Reihenfolge ändern',
-      text: 'Ist ein Gerät besetzt? Hier änderst du die Reihenfolge der Übungen für heute.' },
     { id: 'tr-info', sel: 'section.card h2 .info-dot|section.card .info-btn', title: 'Übung ansehen',
       text: 'Tipp auf den Namen mit dem „i“: Dann siehst du die Übung als Animation mit Anleitung.' },
+    { id: 'tr-details', sel: 'section.card .det-btn', title: 'Details',
+      text: () => {
+        const a = [feat('tr-comment') ? 'Kommentar' : '', 'Ersetzen', feat('tr-max') ? 'Max. bei 10 Wdh.' : '',
+          feat('tr-step') ? 'Steigerung' : '', feat('tr-variants') ? 'Ausführung' : '', 'die Werte vom letzten Mal'].filter(Boolean);
+        return `Hier klappst du mehr zur Übung auf: ${a.slice(0, -1).join(', ')} und ${a[a.length - 1]}. Die App merkt sich, ob du die Details lieber offen oder zu hast.`;
+      } },
     { id: 'tr-tools', sel: 'section.card .ex-tools', title: 'Kommentar und Ersetzen',
       text: () => (feat('tr-comment') ? '„Kommentar“: eine Notiz zur Übung, z. B. die Sitzhöhe – sie erscheint beim nächsten Mal wieder. ' : '')
         + '„Ersetzen“: die Übung heute gegen eine ähnliche tauschen, z. B. wenn das Gerät besetzt ist. Der Plan bleibt, wie er ist.' },
