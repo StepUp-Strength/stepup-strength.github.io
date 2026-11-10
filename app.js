@@ -6476,6 +6476,7 @@ function applyTheme() {
   root.dataset.accent = profileColor();
   const mode = (data.profile && data.profile.theme) || '';
   if (mode) root.dataset.theme = mode; else delete root.dataset.theme;
+  plainSync();
   // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
   const [light, dark] = PROFILE_COLORS[profileColor()].bg;
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
@@ -6483,6 +6484,68 @@ function applyTheme() {
     m.setAttribute('content', mode === 'dark' ? dark : mode === 'light' ? light : isDark ? dark : light);
   });
 }
+
+/* ---------- Stil „Schlicht“ (User-Wunsch 2026-11-10): keine Emojis, ruhiges, flaches Design ---------- */
+// Die Texte im Code bleiben, wie sie sind: Ein Beobachter entfernt beim Anzeigen alle bunten Emojis aus Seiten,
+// Mitteilungen und Rückfragen. Einfache Zeichen (✔ ✕ ✎ ↑ ↓ ★ …) bleiben – mit U+FE0E immer einfarbig.
+// Behälter, die danach leer sind (z. B. das große Symbol über einer Frage), werden ausgeblendet (.plain-empty).
+const plainOn = () => !!(data.profile && data.profile.look === 'plain');
+const PLAIN_KEEP = new Set([...'✔✓✕✎★☆↑↓⇅⇄↔↕⬆⬇▶◀‹›→←−+']);
+const PLAIN_MAP = { '🗑': '✕', '⏳': '–', '⏭': '–' };  // Symbole, die allein in Knöpfen/Kästchen stehen
+const PLAIN_RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2})[︎️]?\p{Emoji_Modifier}?(?:‍\p{Extended_Pictographic}[︎️]?\p{Emoji_Modifier}?)*( ?)|️|⃣/gu;
+function plainStrip(s) {
+  if (!s) return s;
+  return s.replace(PLAIN_RE, (m, sp = '') => {
+    const base = String.fromCodePoint(m.codePointAt(0));
+    if (PLAIN_MAP[base]) return PLAIN_MAP[base] + sp;
+    if (PLAIN_KEEP.has(base)) return base + '︎' + sp;
+    return '';
+  });
+}
+function plainNode(root) {
+  const fix = t => {
+    const v = plainStrip(t.nodeValue);
+    if (v === t.nodeValue) return;
+    t.nodeValue = v;
+    const p = t.parentElement;
+    if (p && !p.matches('button, input, textarea, select, option') && !p.textContent.trim() && !p.querySelector('svg, img, canvas, input, select, textarea')) {
+      p.classList.add('plain-empty');
+    }
+  };
+  if (root.nodeType === 3) { fix(root); return; }
+  if (root.nodeType !== 1) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) fix(t);
+  root.querySelectorAll && root.querySelectorAll('[placeholder]').forEach(el => {
+    const v = plainStrip(el.getAttribute('placeholder'));
+    if (v !== el.getAttribute('placeholder')) el.setAttribute('placeholder', v);
+  });
+}
+let plainObs = null;
+function plainSync() {
+  const on = plainOn();
+  if (on) document.documentElement.dataset.look = 'plain'; else delete document.documentElement.dataset.look;
+  if (on && !plainObs && typeof MutationObserver === 'function') {
+    plainObs = new MutationObserver(list => {
+      for (const m of list) {
+        if (m.type === 'characterData') plainNode(m.target);
+        else m.addedNodes.forEach(plainNode);
+      }
+    });
+    plainObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+    plainNode(document.body);
+  } else if (!on && plainObs) {
+    plainObs.disconnect();
+    plainObs = null;
+    document.querySelectorAll('.plain-empty').forEach(el => el.classList.remove('plain-empty'));
+  }
+}
+// Rückfragen und Hinweise des Browsers ebenfalls ohne Emojis
+for (const k of ['alert', 'confirm', 'prompt']) {
+  const orig = window[k];
+  if (typeof orig === 'function') window[k] = function (msg, ...rest) { return orig.call(window, plainOn() ? plainStrip(String(msg)) : msg, ...rest); };
+}
+const LOOKS = { '': 'Standard', plain: 'Schlicht' };
 
 // Diskopumper und Booty-Plan schließen sich aus: angezeigt wird nur der passende (ohne Angabe beide)
 function classicHidden(id) {
@@ -6518,6 +6581,11 @@ function appearanceCard() {
       <p class="hint">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
         „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
         „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
+      <p class="lbl">Stil</p>
+      <div class="seg two">${Object.entries(LOOKS).map(([k, l]) =>
+        `<button class="${((p.look || '') === k) ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
+      <p class="hint">„Standard“: mit Symbolen und Farbverläufen. „Schlicht“: ohne Emojis, flache Flächen und feine Linien –
+        ruhig und minimalistisch. Die Farbwelt gilt in beiden Stilen.</p>
       <p class="lbl">Übungen im Training</p>
       <div class="seg two tr-viewmode"><button class="${trSwipeOn() ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
         <button class="${trSwipeOn() ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>
@@ -6712,6 +6780,10 @@ actions['profile-sex'] = el => {
 };
 actions['profile-theme'] = el => {
   data.profile = { ...(data.profile || {}), theme: el.dataset.k || null };
+  saveData(); applyTheme(); render();
+};
+actions['profile-look'] = el => {
+  data.profile = { ...(data.profile || {}), look: el.dataset.k || null };
   saveData(); applyTheme(); render();
 };
 actions['profile-color'] = el => {

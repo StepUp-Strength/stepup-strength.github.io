@@ -2479,3 +2479,44 @@ body.touring { overflow: hidden; }
 .day-btn.pending .day-txt { color: var(--muted); }
 .pending-days { box-shadow: inset 0 0 0 2px var(--warn), var(--shadow); }
 .pending-days p { margin: 0 0 8px; }
+
+/* ---------- Stil „Schlicht“ (v193, data-look="plain" am html-Element): keine Emojis, flach, feine Linien ---------- */
+:root[data-look="plain"] {
+  --accent-2: var(--accent) !important;              /* alle Verläufe werden einfarbig */
+  --shadow: 0 0 0 1px var(--line-strong) !important;  /* feine Linie statt Schatten */
+  --shadow-accent: none !important;
+  --radius: 12px !important;
+}
+[data-look="plain"] .plain-empty,
+[data-look="plain"] .check-emoji, [data-look="plain"] .wiz-q-icon, [data-look="plain"] .award-icon,
+[data-look="plain"] .notify-icon, [data-look="plain"] .nut-strip-icon { display: none !important; }
+[data-look="plain"] .wiz-q-head { gap: 0; }
+/* Knöpfe und Karten: weniger rund, kein Glanz, keine Schatten */
+[data-look="plain"] .btn { border-radius: 10px; }
+[data-look="plain"] .btn.primary { box-shadow: none; font-weight: 600; }
+[data-look="plain"] .btn.primary::before, [data-look="plain"] .card.cycle::before { display: none; }
+[data-look="plain"] .btn.outline, [data-look="plain"] .btn.center:not(.primary) { background: transparent; box-shadow: inset 0 0 0 1px var(--accent); }
+[data-look="plain"] .card:not(.cycle) .btn:not(.primary):not(.danger):not(.outline):not(.center) { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+[data-look="plain"] .btn.danger { background: transparent; box-shadow: inset 0 0 0 1px var(--danger); }
+[data-look="plain"] .card.cycle { box-shadow: none; }
+[data-look="plain"] .card.cycle.is-deload { background: #ea7a12; box-shadow: none; }
+[data-look="plain"] .day-btn.next { box-shadow: none; }
+[data-look="plain"] .day-no { border-radius: 8px; background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text); font-weight: 600; }
+[data-look="plain"] .day-btn.done .day-no { background: transparent; box-shadow: inset 0 0 0 1px var(--success); }
+[data-look="plain"] .day-btn.next .day-no { background: #fff; box-shadow: none; }
+[data-look="plain"] .welcome-icon { box-shadow: none; border-radius: 14px; }
+[data-look="plain"] .card.hints, [data-look="plain"] .review-card { background: var(--card); }
+[data-look="plain"] .pending-days { box-shadow: inset 0 0 0 1px var(--warn); }
+/* Schrift: etwas leichter */
+[data-look="plain"] header h1 { font-weight: 700; }
+[data-look="plain"] h2 { font-weight: 650; }
+[data-look="plain"] .badge { font-weight: 600; }
+/* Untere Leiste: aktiver Reiter nur farbig, ohne Pille */
+[data-look="plain"] nav button.active svg { background: none; }
+/* Auswahlkacheln ohne Symbol: Text rückt nach links; Kacheln als Rahmen statt Fläche */
+[data-look="plain"] .split-opt.cat { padding-left: 18px; }
+[data-look="plain"] .cat-icon { display: none; }
+[data-look="plain"] .wiz-q .split-opt.cat, [data-look="plain"] .split-opt { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+[data-look="plain"] .wiz-q .split-opt.cat.on, [data-look="plain"] .split-opt.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+[data-look="plain"] .split-opt { border-radius: 10px; }
+[data-look="plain"] .card.cycle .btn.cyc-adjust-btn:not(.primary):not(.danger) { border-radius: 10px; box-shadow: none; font-weight: 650; }
