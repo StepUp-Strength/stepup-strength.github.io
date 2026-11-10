@@ -2,8 +2,8 @@
 /* ---------- Zykluskalender (nur für Frauen, freiwillig) ----------
    data.mcal = { on, starts: ['JJJJ-MM-TT', …] (erster Tag der Periode), len: übliche Zykluslänge, period: Dauer der Periode }
    Eingetragen wird nur der Beginn der Periode – Zyklustag, Phasen und die nächste Periode rechnet die App aus.
-   Genutzt für: Wassereinlagerungen vor/zu Beginn der Periode im Gewichtsverlauf und gemessenen Bedarf ausblenden (nutrition.js).
-   Trainingsanpassung je Phase folgt später. (Nicht verwechseln mit data.cycle = Trainingszyklus.) */
+   Genutzt für: Wassereinlagerungen vor/zu Beginn der Periode im Gewichtsverlauf und gemessenen Bedarf ausblenden (nutrition.js)
+   und „Zyklus und Training“ (unten, v191). (Nicht verwechseln mit data.cycle = Trainingszyklus.) */
 
 const MC_PHASES = {
   mens: { label: 'Periode', icon: '🩸', text: 'Die Tage der Blutung. Viele fühlen sich am Anfang schlapper, danach steigt die Energie wieder.' },
@@ -90,9 +90,9 @@ function mcOptionsCard() {
         <button class="${on ? '' : 'on'}" data-action="mc-onoff" data-v="0">Aus</button></div>
       <p class="hint nut-small">Freiwillig: Trägst du den Beginn deiner Periode ein, rechnet die App Zyklustag, Phasen und die nächste
         Periode aus. In den Tagen vor und zu Beginn der Periode lagert der Körper oft Wasser ein – diese Gewichtswerte lässt die App dann
-        beim Gewichtsverlauf und beim gemessenen Bedarf weg, damit die Kalorien-Empfehlungen nicht danebenliegen. Später soll sich auch das
-        Training an den Zyklus anpassen. Alles bleibt nur auf diesem Gerät.</p>
-      ${on ? '<button class="btn" data-action="mc-open">📅 Kalender öffnen</button>' : ''}
+        beim Gewichtsverlauf und beim gemessenen Bedarf weg, damit die Kalorien-Empfehlungen nicht danebenliegen. Auf Wunsch passt sie auch
+        dein Training an die Tage an, an denen du dich schwächer fühlst. Alles bleibt nur auf diesem Gerät.</p>
+      ${on ? `<button class="btn" data-action="mc-open">📅 Kalender öffnen</button>${mcTrainEntryHtml()}` : ''}
     </div>`;
 }
 
@@ -147,6 +147,7 @@ function renderMcal() {
         <div class="stepper"><button data-action="mc-set" data-k="period" data-d="-1" aria-label="Kürzer">−</button><b>${mcCal().period}</b>
           <button data-action="mc-set" data-k="period" data-d="1" aria-label="Länger">+</button></div></div>
     </div>
+    ${mcLearnCard()}${mcTrainEntryHtml()}
     ${list ? `<h2>Eingetragene Perioden</h2><ul class="list mc-list">${list}</ul>` : ''}
     ${mcHelp()}`;
 }
@@ -213,8 +214,9 @@ function mcHelp() {
       <p><b>Was sich nicht ändert:</b> Dein Tagesziel, die Makros und die Eiweiß-Empfehlung rechnet die App unabhängig vom Zyklus.
         Etwas mehr Hunger in der Lutealphase ist normal – über die Woche gesehen gleicht sich das meist aus. Das Ernährungstagebuch,
         das Abschließen der Tage und alle anderen Funktionen laufen ganz normal.</p>
-      <p><b>🏋️ Training:</b> Im Moment ändert der Kalender am Training noch <b>nichts</b>. Geplant ist, dass sich das Training später an
-        die Phasen anpasst – zum Beispiel, wann schwer trainiert wird und wann etwas leichter. Bis dahin gilt dein Plan wie gewohnt.</p>
+      <p><b>🏋️ Training:</b> Nur wenn du es unter „Zyklus und Training“ einstellst: An den Tagen, an denen du dich laut deiner Angabe
+        schwächer fühlst, fragt die App vor dem Training kurz nach und macht die Vorgaben etwas leichter. Ein starrer Plan nach Phasen ist
+        das nicht – die App richtet sich nach dir und lernt aus deinen Werten. Ohne Einstellung bleibt dein Training wie geplant.</p>
       <p><b>Ausschalten:</b> Schaltest du den Kalender in den Optionen aus, rechnet die App wieder mit allen Gewichtswerten und die
         Zyklus-Karte verschwindet. Deine eingetragenen Perioden bleiben gespeichert – schaltest du ihn wieder ein, ist alles noch da.</p>
     </details>
@@ -294,5 +296,240 @@ Object.assign(actions, {
     c[k] = Math.max(lo, Math.min(hi, c[k] + Number(el.dataset.d)));
     saveData();
     render();
+  },
+});
+
+/* ---------- Zyklus und Training (v191, Regeln vom User 2026-11-09) ----------
+   Kein starrer Phasenplan: Die Frau gibt einmal an, ob und wann sie sich im Training schwächer fühlt (Zeitfenster und Stufe),
+   die App fragt an diesen Tagen vor dem Training nach und lernt aus den echten Leistungen.
+   data.mcal.train = { asked, answer: 'yes'|'no'|'unknown', win: { pre, mens, ovu } (Stufe 0–3), hormonal, dismissed: { win: Anzahl } }
+   Stufen (User): 1 = −1 Wdh., 2 = −2 Wdh., 3 = −2 Wdh. und 1 Satz weniger bei Übungen mit mind. 3 Sätzen.
+   An diesen Tagen sinkt „Max. bei 10 Wdh.“ nicht, und das Training zählt für die Folgewoche wie ein normaler Tag (app.js).
+   Lernen: Leistung = frisches Max aus dem besten Satz (Gewicht, Wdh., Tank) ÷ Max laut Plan; im Fenster gegen außerhalb,
+   ab 2 Zyklen mit mind. 3 Trainings im Fenster → Vorschlag (nie automatisch). */
+const MC_LEVELS = {
+  0: { label: 'Fit wie immer', short: 'normal', reps: 0, sets: 0, text: 'Normale Vorgaben.' },
+  1: { label: 'Etwas schwächer', short: 'etwas schwächer', reps: 1, sets: 0, text: '1 Wdh. weniger pro Satz.' },
+  2: { label: 'Spürbar schwächer', short: 'spürbar schwächer', reps: 2, sets: 0, text: '2 Wdh. weniger pro Satz.' },
+  3: { label: 'Stark eingeschränkt', short: 'stark eingeschränkt', reps: 2, sets: 1, text: '2 Wdh. weniger und bei Übungen mit 3 oder mehr Sätzen 1 Satz weniger.' },
+};
+const MC_WINDOWS = {
+  pre: { label: 'Tage vor der Periode', icon: '🌙', text: 'die letzten 5 Tage vor der erwarteten Periode (oft PMS)' },
+  mens: { label: 'Erste Periodentage', icon: '🩸', text: 'die ersten 2 Tage der Periode' },
+  ovu: { label: 'Um den Eisprung', icon: '✨', text: 'der errechnete Eisprung und je 1 Tag davor und danach' },
+};
+const MC_LEARN_CYCLES = 2, MC_LEARN_MIN = 3;  // ab 2 Zyklen und 3 Trainings im Zeitfenster
+
+const mcTrain = () => (data.mcal && data.mcal.train) || null;
+const mcTrainEnsure = () => { const c = mcEnsure(); if (!c.train) c.train = { asked: false, answer: null, win: { pre: 0, mens: 0, ovu: 0 }, hormonal: false, dismissed: {} }; return c.train; };
+
+// Zeitfenster eines Tages (nur im laufenden, eingetragenen Zyklus – keine Vorhersage)
+function mcWindow(date = todayISO()) {
+  if (!mcOn()) return null;
+  const i = mcInfo(date);
+  if (!i || i.pred) return null;
+  const t = mcTrain();
+  if (i.phase === 'mens' && i.day <= 2) return 'mens';
+  if (i.day >= i.len - 4) return 'pre';  // auch überfällige Tage
+  if (!(t && t.hormonal) && Math.abs(i.day - (i.len - 14)) <= 1) return 'ovu';
+  return null;
+}
+
+// Vor dem Training fragen? Nur in einem Zeitfenster mit Stufe > 0 – oder wenn sie „weiß ich nicht“ angegeben hat
+function mcCheckNeeded() {
+  const t = mcTrain(), w = mcWindow();
+  if (!w || !t || !t.asked) return null;
+  return (t.win[w] || 0) > 0 || t.answer === 'unknown' ? w : null;
+}
+
+// Zeitfenster für dieses Training ohne Nachfrage (Stufe 0) – damit die App auch ohne Anpassung lernen kann
+function mcAutoTag() {
+  const w = mcWindow(), i = mcInfo();
+  return w && i ? { win: w, lvl: 0, pen: 0, cut: 0, cs: i.start, day: i.day } : null;
+}
+
+// Frage vor dem Training (view mccheck)
+function renderMcCheck({ id, win }) {
+  const t = mcTrain(), lvl = t.win[win] || 0, i = mcInfo();
+  const opt = l => `<button class="split-opt freq-opt ${l === lvl ? 'on' : ''}" data-action="mc-check" data-l="${l}">
+      <b>${MC_LEVELS[l].label}${l === lvl && lvl ? ' (wie angegeben)' : ''}</b><small>${MC_LEVELS[l].text}</small></button>`;
+  return `<div class="card wiz-q">
+      <p class="sub">${esc(findDay(id).name)}</p>
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🌸</span><h2>Zyklustag ${i.day} · ${MC_WINDOWS[win].label}</h2></div>
+      <p class="hint wiz-q-explain">${lvl ? `In diesen Tagen fühlst du dich laut deinen Angaben oft <b>${MC_LEVELS[lvl].short}</b>.`
+        : 'Manche Frauen fühlen sich in diesen Tagen schwächer, andere merken nichts.'} Wie geht's dir heute? Die App passt die Vorgaben nur
+        für dieses Training an – dein „Max“ und die Steigerung der nächsten Woche bleiben davon unberührt.</p>
+      ${[0, 1, 2, 3].map(opt).join('')}
+    </div>`;
+}
+
+// Einstellung (view mctrain): Fragebogen + ausführliche Erklärung
+function renderMcTrain() {
+  const t = mcTrainEnsure();
+  const ans = (k, label) => `<button class="${t.answer === k ? 'on' : ''}" data-action="mct-answer" data-k="${k}">${label}</button>`;
+  const winRow = w => `<div class="mct-win"><p><b>${MC_WINDOWS[w].icon} ${MC_WINDOWS[w].label}</b><small class="hint"> – ${MC_WINDOWS[w].text}</small></p>
+      <div class="seg mct-seg">${[0, 1, 2, 3].map(l => `<button class="${(t.win[w] || 0) === l ? 'on' : ''}" data-action="mct-level" data-w="${w}" data-l="${l}">${['keine', 'etwas', 'spürbar', 'stark'][l]}</button>`).join('')}</div></div>`;
+  return `<div class="card wiz-q">
+      <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Zyklus und Training</h2></div>
+      <p class="hint wiz-q-explain">Freiwillig: Erzähl der App, ob dein Zyklus dein Training spürbar beeinflusst. Dann macht sie die Vorgaben an
+        diesen Tagen etwas leichter – und lernt mit der Zeit aus deinen echten Werten, ob und wie stark du dort wirklich schwächer bist.</p>
+      <p class="lbl">Gibt es Tage in deinem Zyklus, an denen du dich im Training deutlich schwächer fühlst?</p>
+      <div class="seg three">${ans('yes', 'Ja')}${ans('no', 'Nein')}${ans('unknown', 'Weiß nicht')}</div>
+      ${t.answer === 'yes' ? `<p class="lbl">Wann – und wie stark?</p>${['pre', 'mens', 'ovu'].filter(w => w !== 'ovu' || !t.hormonal).map(winRow).join('')}
+        <p class="hint nut-small"><b>Etwas</b> = 1 Wdh. weniger pro Satz · <b>spürbar</b> = 2 Wdh. weniger · <b>stark</b> = 2 Wdh. weniger und
+          bei Übungen mit 3 oder mehr Sätzen 1 Satz weniger.</p>` : ''}
+      ${t.answer === 'unknown' ? '<p class="hint nut-small">Kein Problem: An den typischen Tagen fragt die App kurz vor dem Training, wie es dir geht. So findest du es zusammen mit der App heraus.</p>' : ''}
+      ${t.answer === 'no' ? '<p class="hint nut-small">Dann bleibt dein Training wie geplant. Die App schaut trotzdem im Hintergrund auf deine Werte und sagt dir Bescheid, falls sich doch ein Muster zeigt.</p>' : ''}
+      <p class="lbl">Nimmst du hormonelle Verhütung (Pille, Hormonspirale, Implantat …)?</p>
+      <div class="seg two"><button class="${t.hormonal ? 'on' : ''}" data-action="mct-horm" data-v="1">Ja</button>
+        <button class="${t.hormonal ? '' : 'on'}" data-action="mct-horm" data-v="0">Nein</button></div>
+      ${t.hormonal ? '<p class="hint nut-small">Dann gibt es keinen natürlichen Eisprung – die App fragt nur nach den Tagen vor und zu Beginn der Blutung.</p>' : ''}
+      <button class="btn primary" data-action="mct-save" ${t.answer ? '' : 'disabled'}>Speichern</button>
+    </div>
+    ${mcLearnCard(true)}
+    ${mcTrainHelp()}`;
+}
+
+// Ausführliche Erklärung
+function mcTrainHelp() {
+  return `<details class="card nut-help mc-help" open><summary>So funktioniert „Zyklus und Training“</summary>
+      <p><b>Warum kein fester Phasenplan?</b> Oft liest man, Frauen sollten in der ersten Zyklushälfte schwer und in der zweiten leicht
+        trainieren. Die Forschung stützt das bisher kaum: Im Schnitt sind die Unterschiede zwischen den Phasen klein – und vor allem
+        <b>von Frau zu Frau sehr verschieden</b>. Manche merken gar nichts, manche sind an zwei Tagen deutlich schwächer, bei manchen ist es
+        jeden Monat anders. Ein starrer Plan würde viele Frauen unnötig bremsen. Deshalb richtet sich die App nach <b>dir</b>.</p>
+      <p><b>1. Deine Angabe als Startpunkt.</b> Du sagst, in welchen Tagen du dich schwächer fühlst und wie stark. Die App kennt drei
+        Zeitfenster: die <b>5 Tage vor der Periode</b> (hier haben viele PMS-Beschwerden), die <b>ersten 2 Periodentage</b> und die Tage
+        <b>um den Eisprung</b>. Welche Tage das gerade sind, rechnet sie aus deinem Kalender aus.</p>
+      <p><b>2. An diesen Tagen fragt sie kurz nach.</b> Vor dem Training kommt die Frage „Wie geht's dir heute?“ – vorausgewählt ist deine
+        Angabe, du kannst aber jedes Mal anders antworten. Je nach Antwort werden die Vorgaben leichter:</p>
+      <ul class="about-list"><li><b>Etwas schwächer:</b> 1 Wiederholung weniger pro Satz</li>
+        <li><b>Spürbar schwächer:</b> 2 Wiederholungen weniger pro Satz</li>
+        <li><b>Stark eingeschränkt:</b> 2 Wiederholungen weniger und bei Übungen mit 3 oder mehr Sätzen 1 Satz weniger – leichter, aber nicht
+          so stark gekürzt, dass sich das Training nicht mehr lohnt</li></ul>
+      <p>Wäre ein Satz dadurch zu kurz, nimmt die App stattdessen etwas weniger Gewicht.</p>
+      <p><b>3. Ein schwacher Tag wirft dich nicht zurück.</b> An diesen Tagen kann dein „Max. bei 10 Wdh.“ steigen, aber nicht sinken. Und
+        das Training zählt für die Vorgaben der nächsten Woche so, als wäre es ein normaler Tag gewesen – die Woche nach der Periode wird
+        also nicht unnötig leicht.</p>
+      <p><b>4. Die App lernt mit.</b> Sie vergleicht, was du in jedem Zeitfenster tatsächlich schaffst, mit deiner Leistung an den übrigen
+        Tagen – unabhängig davon, wie leicht die Vorgabe war, denn sie rechnet mit Gewicht, Wiederholungen und dem, was noch im Tank war.
+        Nach <b>${MC_LEARN_CYCLES} Zyklen</b> mit mindestens <b>${MC_LEARN_MIN} Trainings</b> in einem Zeitfenster sagt sie dir, was sie sieht,
+        zum Beispiel: „In den Tagen vor deiner Periode schaffst du im Schnitt 5 % weniger.“ Passt das nicht zu deiner Einstellung, schlägt
+        sie eine andere Stufe vor – geändert wird aber nur, wenn du zustimmst.</p>
+      <p><b>Hormonelle Verhütung:</b> Mit Pille, Hormonspirale oder Implantat gibt es keinen natürlichen Eisprung; die Blutung in der Pause ist
+        eine Abbruchblutung. Viele haben dann weniger Schwankungen – die Tage vor und zu Beginn der Blutung können trotzdem anstrengender sein,
+        deshalb fragt die App nur nach diesen.</p>
+      <p><b>Unregelmäßiger Zyklus:</b> Die Tage vor der Periode schätzt die App aus deiner Ø-Zykluslänge. Kommt die Periode später, gelten auch
+        die überfälligen Tage als „vor der Periode“. Trag den Beginn jedes Mal ein, dann stimmt es im nächsten Zyklus wieder.</p>
+      <p><b>Wichtig:</b> Starke Schmerzen, sehr starke Blutungen oder Beschwerden, die dich jeden Monat ausbremsen, sind nicht „normal“ –
+        lass das ärztlich abklären. Und an Tagen, an denen gar nichts geht, ist eine Pause völlig in Ordnung.</p>
+      <p><b>Datenschutz:</b> Alles bleibt nur auf deinem Gerät.</p>
+    </details>`;
+}
+
+// Leistung eines Trainings: Ø über die Übungen von (frisches Max aus dem besten Satz) ÷ (Max laut Plan)
+function mcSessionPerf(s) {
+  const r = [];
+  s.entries.forEach((e, ei) => {
+    const m = e.target && e.target.max10;
+    if (!(m > 0)) return;
+    const fat = typeof sessionFat === 'function' ? sessionFat(s, ei) : 0;
+    const v = e.sets.filter(x => x.weight > 0 && x.reps > 0 && !x.open && !x.variant)
+      .map(x => x.weight / repFactor(x.reps + (x.rir != null ? x.rir : 0)) / (1 - fat));
+    if (v.length) r.push(Math.max(...v) / m);
+  });
+  return r.length ? r.reduce((a, b) => a + b, 0) / r.length : null;
+}
+
+// Gelerntes je Zeitfenster: { n, cycles, deficit (Anteil), level (vorgeschlagene Stufe) } – nur Trainings seit dem 1. Periodeneintrag
+function mcLearn() {
+  if (!mcOn()) return {};
+  const first = mcStarts()[0];
+  if (!first) return {};
+  const inW = {}, out = [];
+  for (const s of data.sessions) {
+    if (s.deload || !s.cycleStart || s.date.slice(0, 10) < first) continue;
+    const p = mcSessionPerf(s);
+    if (p == null) continue;
+    const w = s.mc ? s.mc.win : null;
+    if (w) (inW[w] = inW[w] || []).push({ p, cs: s.mc.cs });
+    else out.push(p);
+  }
+  if (out.length < MC_LEARN_MIN) return {};
+  const base = out.reduce((a, b) => a + b, 0) / out.length;
+  const res = {};
+  for (const [w, L] of Object.entries(inW)) {
+    const cycles = new Set(L.map(x => x.cs)).size;
+    const mean = L.reduce((a, x) => a + x.p, 0) / L.length;
+    const deficit = 1 - mean / base;
+    const level = deficit < 0.02 ? 0 : deficit < 0.05 ? 1 : deficit < 0.09 ? 2 : 3;
+    res[w] = { n: L.length, cycles, deficit, level, ready: cycles >= MC_LEARN_CYCLES && L.length >= MC_LEARN_MIN };
+  }
+  return res;
+}
+
+// Vorschlag: gelernte Stufe weicht von der eingestellten ab (nicht erneut, solange nicht mind. 3 neue Trainings dazukamen)
+function mcSuggestion() {
+  const t = mcTrain();
+  if (!t || !t.asked) return null;
+  const L = mcLearn();
+  for (const w of ['pre', 'mens', 'ovu']) {
+    const x = L[w];
+    if (!x || !x.ready || x.level === (t.win[w] || 0)) continue;
+    if ((t.dismissed || {})[w] != null && x.n < t.dismissed[w] + MC_LEARN_MIN) continue;
+    return { w, ...x, cur: t.win[w] || 0 };
+  }
+  return null;
+}
+
+// Karte „Was die App gelernt hat“ (Einstellung) bzw. Vorschlag (Startseite, Kalender)
+function mcLearnCard(full = false) {
+  const t = mcTrain();
+  if (!mcOn() || !t || !t.asked) return '';
+  const sg = mcSuggestion();
+  const pct = d => `${fmtNum(Math.round(Math.abs(d) * 1000) / 10)} %`;
+  const sugHtml = sg ? `<div class="card mc-card mct-sugg"><p><b>🌸 Dein Zyklus und dein Training</b></p>
+      <p class="hint nut-small">${MC_WINDOWS[sg.w].icon} <b>${MC_WINDOWS[sg.w].label}:</b> In ${sg.n} Trainings aus ${sg.cycles} Zyklen hast du
+        dort im Schnitt ${sg.deficit >= 0.02 ? `<b>${pct(sg.deficit)} weniger</b> geschafft als an anderen Tagen` : '<b>genauso viel</b> geschafft wie an anderen Tagen'}.
+        ${sg.level > sg.cur ? `Sollen die Vorgaben dort <b>${MC_LEVELS[sg.level].short}</b> angepasst werden?`
+          : sg.level === 0 ? 'Sollen die Vorgaben dort wieder <b>normal</b> sein?' : `Soll die Anpassung dort auf <b>${MC_LEVELS[sg.level].short}</b> sinken?`}
+        (bisher: ${MC_LEVELS[sg.cur].short})</p>
+      <div class="row"><button class="btn primary" data-action="mct-accept" data-w="${sg.w}" data-l="${sg.level}">Ja, anpassen</button>
+        <button class="btn" data-action="mct-dismiss" data-w="${sg.w}" data-n="${sg.n}">So lassen</button></div></div>` : '';
+  if (!full) return sugHtml;
+  const L = mcLearn();
+  const rows = ['pre', 'mens', 'ovu'].filter(w => L[w]).map(w => `<li><span>${MC_WINDOWS[w].icon} ${MC_WINDOWS[w].label}</span>
+      <b>${L[w].deficit >= 0.005 ? '−' : L[w].deficit <= -0.005 ? '+' : '±'}${pct(L[w].deficit)}</b><small class="hint"> ${L[w].n} Trainings, ${L[w].cycles} Zyklus${L[w].cycles === 1 ? '' : 'e'}</small></li>`).join('');
+  return sugHtml + `<div class="card"><h2>Was die App bisher gelernt hat</h2>${rows
+    ? `<ul class="review-list">${rows}</ul><p class="hint nut-small">Leistung in diesem Zeitfenster im Vergleich zu deinen übrigen Trainings
+        (aus Gewicht, Wdh. und Tank, unabhängig von der Vorgabe). Ein Vorschlag kommt ab ${MC_LEARN_CYCLES} Zyklen mit mindestens ${MC_LEARN_MIN} Trainings im Zeitfenster.</p>`
+    : '<p class="hint nut-small">Noch keine Daten – sobald du an den Tagen trainierst, sammelt die App Werte.</p>'}</div>`;
+}
+
+// Kurzer Hinweis im Kalender / in den Optionen
+function mcTrainEntryHtml() {
+  if (!mcOn()) return '';
+  const t = mcTrain();
+  const sum = !t || !t.asked ? 'Noch nicht eingestellt – erzähl der App, ob dein Zyklus dein Training beeinflusst.'
+    : t.answer === 'no' ? 'Keine Anpassung – die App schaut im Hintergrund auf deine Werte.'
+    : t.answer === 'unknown' ? 'Die App fragt an den typischen Tagen nach, wie es dir geht.'
+    : ['pre', 'mens', 'ovu'].filter(w => t.win[w]).map(w => `${MC_WINDOWS[w].label}: ${MC_LEVELS[t.win[w]].short}`).join(' · ') || 'Keine Anpassung eingestellt.';
+  return `<button class="btn nav" data-action="mct-open">🏋️ Zyklus und Training<small>${sum}</small></button>`;
+}
+
+views.mccheck = { title: 'Vor dem Training', tab: 'start', render: p => renderMcCheck(p), cancel: () => CANCEL_START };
+views.mctrain = { title: 'Zyklus und Training', tab: 'nutrition', back: 'mcal', render: renderMcTrain };
+
+Object.assign(actions, {
+  'mct-open': () => go('mctrain'),
+  'mct-answer': el => { const t = mcTrainEnsure(); t.answer = el.dataset.k; if (t.answer !== 'yes') t.win = { pre: 0, mens: 0, ovu: 0 }; render(); },
+  'mct-level': el => { const t = mcTrainEnsure(); t.win[el.dataset.w] = Number(el.dataset.l); render(); },
+  'mct-horm': el => { const t = mcTrainEnsure(); t.hormonal = el.dataset.v === '1'; if (t.hormonal) t.win.ovu = 0; render(); },
+  'mct-save': () => { const t = mcTrainEnsure(); t.asked = true; saveData(); toast('Gespeichert ✔'); go('mcal'); },
+  'mct-accept': el => { const t = mcTrainEnsure(); t.win[el.dataset.w] = Number(el.dataset.l); if (t.answer !== 'yes' && Number(el.dataset.l) > 0) t.answer = 'yes'; delete t.dismissed[el.dataset.w]; saveData(); toast('Angepasst ✔'); render(); },
+  'mct-dismiss': el => { const t = mcTrainEnsure(); t.dismissed[el.dataset.w] = Number(el.dataset.n); saveData(); render(); },
+  'mc-check': el => {
+    const { id, readiness, win } = current.params;
+    const lvl = Number(el.dataset.l), i = mcInfo();
+    startDay(id, { ...readiness, mc: { win, lvl, pen: MC_LEVELS[lvl].reps, cut: MC_LEVELS[lvl].sets, cs: i ? i.start : null, day: i ? i.day : null } });
   },
 });

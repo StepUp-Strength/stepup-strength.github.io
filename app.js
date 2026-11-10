@@ -579,7 +579,7 @@ function prefatLearn() {
   if (prefatLearnCache && prefatLearnCache.key === key) return prefatLearnCache;
   const obs = {};
   for (const s of ss) {
-    if (s.deload) continue;
+    if (s.deload || (s.mc && s.mc.lvl > 0)) continue;  // Zyklustage mit Beschwerden verfälschen den Vergleich
     s.entries.forEach((e, i) => {
       const x = (e.sets || []).find(z => !z.variant);
       if (!x || !(x.weight > 0) || x.reps == null || x.rir == null) return;
@@ -1607,6 +1607,11 @@ function sessionOccurrence(s) {
     && sameCycleWeek(sessionCycle(x), c)).length;
 }
 
+// Zyklustag mit Beschwerden (session.mc.pen): als Bezug so rechnen, als wäre es ein normaler Tag gewesen – die abgezogenen
+// Wdh. kommen wieder dazu, damit die Folgewoche nicht unnötig leicht wird (User-Regel 2026-11-09)
+const mcBack = (sets, s) => !(s && s.mc && s.mc.pen) || !sets ? sets
+  : sets.map(x => x && x.reps != null ? { ...x, reps: (typeof x.reps === 'string' ? parseNum(x.reps) : x.reps) + s.mc.pen } : x);
+
 // Passendes Training einer Übung in einer bestimmten Zykluswoche: bevorzugt neuester Zyklus, derselbe
 // Trainingstag, derselbe Durchgang (occ) in der Woche, sonst das neueste
 function findWeekEntry(name, dayId, match, occ = 1) {
@@ -1628,7 +1633,7 @@ function findWeekEntry(name, dayId, match, occ = 1) {
   for (const { s, c } of cands) {
     const e = s.entries.find(en => nameKey(en.name) === k);
     if (e) return { date: s.date, cycleStart: c.cycleStart, week: c.week, occ: s.dayId === dayId ? sessionOccurrence(s) : null,
-      sets: e.sets, planned: e.planned, target: e.target, fat: sessionFat(s, s.entries.indexOf(e)) };
+      sets: mcBack(e.sets, s), planned: mcBack(e.planned, s), target: e.target, fat: sessionFat(s, s.entries.indexOf(e)) };
   }
   return null;
 }
@@ -1698,7 +1703,7 @@ function weekFirstEntry(name, dayId, ci) {
   if (!first) return null;
   const e = first.entries.find(en => nameKey(en.name) === k);
   const planned = (e.planned || []).filter(p => p && (p.weight != null || p.reps != null));
-  return { date: first.date, sets: planned.length ? planned : e.sets, fat: sessionFat(first, first.entries.indexOf(e)) };
+  return { date: first.date, sets: mcBack(planned.length ? planned : e.sets, first), fat: sessionFat(first, first.entries.indexOf(e)) };
 }
 
 // Durchgang des nächsten Trainings eines Tages in der laufenden Zykluswoche
@@ -4326,6 +4331,7 @@ const readinessText = r => {
   const parts = [];
   if (!r.sleptWell) parts.push('schlecht geschlafen');
   if (r.stress) parts.push('viel Stress');
+  if (r.mc && r.mc.lvl && typeof MC_LEVELS !== 'undefined') parts.push(`Zyklus: ${MC_LEVELS[r.mc.lvl].short}`);
   return parts.join(', ');
 };
 
@@ -4538,6 +4544,13 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   if (typeof nutSync === 'function') nutSync();  // z. B. Minicut vorbei -> Deload beginnt (nutrition.js)
   const ci = trainingRound(id);
   const own = ownPlan();
+  // Zyklus und Training (menstrual.js, v191): in einem Zeitfenster mit Beschwerden erst nachfragen, sonst nur markieren (zum Lernen)
+  if (!ci.deload && !own && readiness.mc === undefined && typeof mcCheckNeeded === 'function') {
+    const win = mcCheckNeeded();
+    if (win) { go('mccheck', { id, readiness, win }); return; }
+    readiness = { ...readiness, mc: mcAutoTag() };
+  }
+  const mc = !ci.deload && !own && readiness.mc ? readiness.mc : null;
   skipRoundFor = null;
   draft = {
     dayId: day.id,
@@ -4550,7 +4563,8 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
     week: ci.week,
     cycleNo: ci.cycle,
     readiness,
-    penalty: ci.deload || own ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0),
+    penalty: ci.deload || own ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0) + (mc ? mc.pen : 0),
+    ...(mc ? { mc } : {}),
     // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
     progression: own ? { volume: false, load: false }
       : ci.deload ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
@@ -4559,6 +4573,18 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   };
   // erst nach dem Anlegen von draft, weil setupEntry die Zykluswoche aus draft liest
   draft.entries = draftEntries(day);
+  // Zyklus „stark eingeschränkt“: 1 Satz weniger bei Übungen mit mindestens 3 Sätzen (User-Regel 2026-11-09)
+  if (mc && mc.cut) {
+    for (const en of draft.entries) {
+      if (en.sets.length < 3) continue;
+      const n = en.sets.length - 1;
+      en.sets.length = n;
+      en.planned.length = Math.min(en.planned.length, n);
+      en.target = { ...en.target, sets: n };
+    }
+    // Vorermüdung bewusst NICHT neu berechnen: weniger Sätze davor hieße sonst teils schwereres Gewicht – an einem schwachen
+    // Tag das falsche Signal; so bleiben die Gewichte, nur Wdh. und Sätze sinken (leicht vorsichtig)
+  }
   // Zeitlimit („⏱ Wenig Zeit?“ auf der Startseite): Training kürzen; „nur nächstes Training“ ist damit verbraucht
   const tl = data.timeLimit;
   if (tl && tl.min) {
@@ -5054,6 +5080,9 @@ function saveTraining() {
     const result = entryResult(en);
     if (!result) continue;
     en.result = result;
+    // Zyklustag mit Beschwerden: „Max“ darf steigen, aber nicht sinken (User-Regel 2026-11-09)
+    const known = knownMax10(en.name);
+    if (draft.mc && draft.mc.lvl > 0 && known != null && result.max10 < known) continue;
     setPlanMax10(en.name, result.max10);
   }
   // Noch gar kein „Max. bei 10 Wdh.“ (neue Übung, z. B. im Deload): aus dem ersten Satz schätzen
@@ -5067,6 +5096,7 @@ function saveTraining() {
   if (draft.deload) session.deload = true;
   else if (!prog.volume || !prog.load) session.progression = { volume: prog.volume, load: prog.load };
   if (draft.penalty) session.readiness = draft.readiness;
+  if (draft.mc) session.mc = draft.mc;  // Zyklus-Zeitfenster und gewählte Stufe (Lernen, Folgewoche)
   if (draft.timeCut) session.timeLimit = draft.timeLimit;  // auf Zeit gekürzt (Anzeige im Verlauf)
   if (draft.cycleStart) {
     // doch trainiert: ein „ausgelassen“ dieses Tages in dieser Woche entfällt

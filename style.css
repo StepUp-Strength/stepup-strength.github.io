@@ -2462,3 +2462,9 @@ body.touring { overflow: hidden; }
 .review-hist > summary { cursor: pointer; }
 
 .about-copy { text-align: center; margin: 14px 0 4px; }
+
+/* Zyklus und Training (v191) */
+.mct-win { margin: 10px 0 4px; }
+.mct-win p { margin: 0 0 6px; }
+.mct-seg button { font-size: 14px; padding-left: 2px; padding-right: 2px; white-space: nowrap; }
+.mct-sugg { border: 2px solid var(--accent); }
