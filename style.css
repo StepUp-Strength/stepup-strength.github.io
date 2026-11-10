@@ -2572,3 +2572,11 @@ body.touring { overflow: hidden; }
 [data-look="plain"] .help-link { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 [data-look="plain"] .icon-btn { color: var(--text); }
 :root[data-look="plain"] .ex-card.tint-0, :root[data-look="plain"] .ex-card.tint-1, :root[data-look="plain"] .ex-card.tint-2, :root[data-look="plain"] .ex-card.tint-3, :root[data-look="plain"] .seg button.on { background: var(--card); }
+
+/* Zum Home-Bildschirm (v198) */
+.install-steps { margin: 6px 0 12px; padding-left: 22px; font-size: 17px; line-height: 1.45; }
+.install-steps li { margin: 0 0 8px; }
+.install-steps .btn { margin: 8px 0 0; min-height: 48px; font-size: 17px; }
+.ios-share { width: 22px; height: 22px; vertical-align: -4px; fill: none; stroke: var(--accent-text); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.install-card .row .btn { min-height: 48px; font-size: 17px; }
+.install-opt > p, .install-opt > ol { margin-top: 10px; }

@@ -831,12 +831,14 @@ function setInput(field, ei, j, value) {
 // Wdh. nächster Satz = (Wdh. + Tank) − Ziel-Tank − Ermüdung; jeder weitere Satz noch 1 weniger.
 // Durchschnitt Tank aller erledigten Sätze im Vergleich zum Wochenziel
 function avgTankText(en) {
-  const done = en.sets.filter(isDone).map(s => parseNum(s.rir));
+  const idx = en.sets.map((s, i) => isDone(s) ? i : -1).filter(i => i >= 0);
+  const done = idx.map(i => parseNum(en.sets[i].rir));
   if (!done.length || !en.target) return '';
   const avg = Math.round(done.reduce((a, b) => a + b, 0) / done.length * 10) / 10;
-  const t = en.target.rir;
+  const t = idx.reduce((a, i) => a + rirAt(en.target, i), 0) / idx.length;  // Ziel dieser Sätze (v199: je Satz)
   const verdict = Math.abs(avg - t) <= 0.5 ? '✔ im Ziel' : avg > t ? 'leichter als geplant' : 'schwerer als geplant';
-  return `Ø Tank bisher: <b>${fmtNum(avg)}</b> (Ziel ${targetRirText(en.target)}) – ${verdict}`;
+  const goal = en.target.rirSplit && !en.target.deload ? fmtNum(Math.round(t * 10) / 10) : targetRirText(en.target);
+  return `Ø Tank bisher: <b>${fmtNum(avg)}</b> (Ziel ${goal}) – ${verdict}`;
 }
 
 // Bezug ist immer der letzte erledigte Satz derselben Ausführungsvariante.
@@ -851,7 +853,7 @@ function recalcSets(ei) {
   updateNextHints(ei);
   if (t.own) return;  // eigener Plan: folgende Sätze nicht anpassen
   const tt = { step: 2.5, ...t };
-  let first = null, firstLast = -1, firstCap = null, firstReduced = false;
+  let first = null, firstJ = -1, firstLast = -1, firstCap = null, firstReduced = false;
   for (let j = 0; j < en.sets.length; j++) {
     const s = en.sets[j];
     if (!s.auto || isDone(s)) continue;  // Wdh. selbst geändert oder schon erledigt -> nicht anfassen
@@ -860,6 +862,7 @@ function recalcSets(ei) {
       if (isDone(en.sets[i]) && variantOf(en.sets[i]) === variantOf(s)) { last = i; break; }
     }
     if (last < 0) continue;
+    const ttj = tAt(tt, j);  // Tank dieses Satzes (v199)
     const done = en.sets[last];
     const cap = parseNum(done.reps) + parseNum(done.rir);
     const w = parseNum(done.weight);
@@ -868,14 +871,14 @@ function recalcSets(ei) {
     const raised = w != null && pl && pl.weight != null && w > pl.weight;
     const start = raised && s.baseWeight != null ? Math.max(s.baseWeight, w) : s.baseWeight;
     // Abstand des letzten erledigten Satzes zu seinem Vorschlag: erst ab MISS_REPS darunter geht das Gewicht runter
-    const d = setDeficit({ weight: w, reps: parseNum(done.reps), rir: parseNum(done.rir) }, en.planned[last], t.rir);
+    const d = setDeficit({ weight: w, reps: parseNum(done.reps), rir: parseNum(done.rir) }, en.planned[last], rirAt(t, last));
     const missedBig = d != null && d <= -MISS_REPS;
-    let p = planSet(cap, w, tt, j - last, s.manualWeight ? parseNum(s.weight) : null, start, !missedBig && !t.deload);
+    let p = planSet(cap, w, ttj, j - last, s.manualWeight ? parseNum(s.weight) : null, start, !missedBig && !t.deload);
     // ohne Gewichtsprogression bzw. im 2. Training der Woche nie über den Vorschlag hinaus
     const capToPlan = t.hold || !!en.weekFirst;
     if (!t.deload && !capToPlan && !s.manualWeight) {
       // Genug Wdh. über dem Ziel -> nächste Gewichtsstufe für die folgenden Sätze
-      const up = stepUp(cap, w, tt, j - last, goalReps(tt, j));
+      const up = stepUp(cap, w, ttj, j - last, goalReps(tt, j));
       if (up && (p.weight == null || up.weight > p.weight)) p = up;
     }
     // Letzter erledigter Satz deutlich verfehlt -> Gewicht runter, damit die geplanten Wdh. wieder klappen
@@ -883,7 +886,7 @@ function recalcSets(ei) {
     if (!t.deload && !s.manualWeight && w != null) {
       const goal = en.planned[j] && en.planned[j].reps;
       if (missedBig && goal != null) {
-        p = weightForGoal(cap, w, tt, j - last, goal);
+        p = weightForGoal(cap, w, ttj, j - last, goal);
         reduced = true;
       }
     }
@@ -891,12 +894,12 @@ function recalcSets(ei) {
     if (!s.manualWeight && p.weight != null) {
       let pw = null;
       for (let i = j - 1; i >= 0; i--) if (variantOf(en.sets[i]) === variantOf(s)) { pw = parseNum(en.sets[i].weight); break; }
-      if (pw != null && p.weight > pw) p = planSet(cap, w, tt, j - last, pw);
+      if (pw != null && p.weight > pw) p = planSet(cap, w, ttj, j - last, pw);
     }
     if (capToPlan && !s.manualWeight) {
       // nie über den Vorschlag hinaus, nur nach unten anpassen
       const pl = en.planned[j] || {};
-      if (pl.weight != null && p.weight != null && p.weight > pl.weight) p = planSet(cap, w, tt, j - last, pl.weight);
+      if (pl.weight != null && p.weight != null && p.weight > pl.weight) p = planSet(cap, w, ttj, j - last, pl.weight);
       if (pl.reps != null) p = { ...p, reps: Math.min(p.reps, pl.reps) };
     }
     if (t.deload) {
@@ -908,7 +911,7 @@ function recalcSets(ei) {
         reps: Math.min(p.reps, t.bodyweight && pl && pl.reps != null ? pl.reps : t.reps),
       };
     }
-    if (!first) { first = p; firstLast = last; firstCap = cap; firstReduced = reduced; }
+    if (!first) { first = p; firstJ = j; firstLast = last; firstCap = cap; firstReduced = reduced; }
     const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
     if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
     if (String(p.reps) !== s.reps) { s.reps = String(p.reps); setInput('tr-reps', ei, j, s.reps); }
@@ -919,7 +922,7 @@ function recalcSets(ei) {
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
     (firstReduced
       ? `(Ziel um mind. ${MISS_REPS} Wdh. verfehlt → weniger Gewicht statt weniger Wdh.)`
-      : `(${fmtNum(t.rir)} im Tank, −${FATIGUE} Ermüdung, mind. ${minReps()} Wdh.)`);
+      : `(${fmtNum(rirAt(t, firstJ))} im Tank, −${FATIGUE} Ermüdung, mind. ${minReps()} Wdh.)`);
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
@@ -1120,7 +1123,8 @@ const progChip = (key, on, attrs) =>
 
 // Ziel im Tank pro Trainingswoche (normale Übungen, als Durchschnitt über die Sätze).
 // [min, max] = Bereich; gerechnet wird mit der Mitte.
-const RIR_PLAN = { 4: [2, 1.5, 1, 0.5] };  // Eckwerte Start … Höhepunkt (siehe curveAt)
+// v199 (User-Wunsch 2026-11-10): generell 0,5 weniger im Tank – vorher [2, 1.5, 1, 0.5]
+const RIR_PLAN = { 4: [1.5, 1, 0.5, 0] };  // Eckwerte Start … Höhepunkt (siehe curveAt)
 
 // Sätze und Tank sind als 4 Eckwerte gespeichert (Start, 2, 3, Höhepunkt). Bei einer anderen Zykluslänge verteilt die App
 // den Anstieg gleichmäßig auf die Aufbauwochen der Standardlänge (data.cycle.defWeeks); Wochen darüber hinaus
@@ -1209,6 +1213,44 @@ const rirLabel = (kind, week, buildWeeks, group) => {
 
 // Ziel im Tank, wie es angezeigt wird (Bereich statt Mittelwert, im Deload „mind. 3“)
 const targetRirText = t => t.deload ? `mind. ${fmtNum(t.rir)}` : (t.rirText || fmtNum(t.rir));
+
+// Tank je Satz (v199, User-Regel 2026-11-10): immer ganze Zahlen, absteigend – der erste Satz hat nie weniger im Tank als
+// der zweite. Ist das Ziel ein halber Wert (z. B. 1,5), bekommen die vorderen Sätze die höhere, die hinteren die niedrigere
+// Zahl, so dass der Schnitt das Ziel ergibt; bei ungerader Satzzahl aufgerundet (3 Sätze bei 1,5 → 2 · 2 · 1).
+// Ganzzahlige Ziele: alle Sätze gleich. Nur für Ziele mit t.rirSplit (ab v199) – ältere gespeicherte Trainings wurden mit
+// dem Schnitt in jedem Satz geplant und werden auch so weitergerechnet. Zusätzliche Sätze über t.sets: niedrigere Zahl.
+function rirAt(t, i) {
+  if (!t || t.rir == null) return 2;
+  const r = t.rir;
+  if (!t.rirSplit) return r;
+  const lo = Math.floor(r + 1e-9), hi = Math.ceil(r - 1e-9);
+  if (lo === hi) return lo;
+  const n = Math.max(1, t.sets || 1);
+  const extra = Math.ceil((r - lo) * n - 1e-9);  // so viele Sätze bekommen die höhere Zahl
+  return i < extra ? hi : lo;
+}
+// Ziel für Satz i: wie t, aber mit dem Tank dieses Satzes (für alle Berechnungen eines einzelnen Satzes)
+const tAt = (t, i) => t && t.rirSplit ? { ...t, rir: rirAt(t, i) } : t;
+// Tank je Satz als Text, z. B. „2 · 2 · 1“ (gleiche Zahl in allen Sätzen: nur die Zahl)
+function rirSeqText(t, n = t.sets) {
+  const seq = Array.from({ length: Math.max(1, n || 1) }, (_, i) => rirAt(t, i));
+  return seq.every(x => x === seq[0]) ? fmtNum(seq[0]) : seq.map(fmtNum).join(' · ');
+}
+
+// Bestehende Pläne einmalig an die um 0,5 gesenkte Grundkurve anpassen (v199): eigene Tank-Werte aus dem Plan-Assistenten
+// (plan.rirPlan) ebenfalls −0,5, nie unter 0. data.rirV merkt sich, dass das passiert ist (auch in Sicherungen).
+function rirMigrate() {
+  if ((data.rirV || 0) >= 1) return;
+  const dn = v => Math.max(0, Math.round((v - 0.5) * 2) / 2);
+  for (const p of data.plans || []) {
+    for (const g of Object.keys(p.rirPlan || {})) {
+      const arr = p.rirPlan[g];
+      if (Array.isArray(arr)) p.rirPlan[g] = arr.map(b => Array.isArray(b) ? b.map(dn) : dn(b));
+    }
+  }
+  data.rirV = 1;
+  saveData();
+}
 
 function weekRirText(kind, group) {
   const ci = cycleInfo();
@@ -1751,7 +1793,7 @@ function missed(prev, v, k) {
   const t = prev.target || {};
   const p = ofVariant(prev.planned, v)[k];
   if (!p && v) return false;  // ohne gespeicherten Vorschlag gibt es für Varianten keinen Maßstab
-  const d = setDeficit(ofVariant(prev.rawSets || prev.sets, v)[k], p || (k === 0 ? { reps: t.reps } : null), t.rir != null ? t.rir : 2);
+  const d = setDeficit(ofVariant(prev.rawSets || prev.sets, v)[k], p || (k === 0 ? { reps: t.reps } : null), rirAt(t, k));
   return d != null && d <= -MISS_REPS;
 }
 
@@ -1859,7 +1901,7 @@ function nextPreview(en) {
   const num = s => ({ weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir), variant: variantOf(s) });
   const doneSets = en.sets.filter(isDone).map(num);
   const ex = planExercise(en.name) || { name: en.name };
-  const t = { ...en.plan, rir: rirFor(kindOf(ex), nw, bw, groupOf(ex)) };
+  const t = { ...en.plan, rir: rirFor(kindOf(ex), nw, bw, groupOf(ex)), rirSplit: true, sets: en.sets.length };
   delete t.hold; delete t.intro;
   const hold = !weekProgression(roundKey(draft.cycleStart, nw)).load;
   // derselbe Durchgang nächste Woche (beim 2. Training kann dort noch das 1. Training der Woche begrenzen)
@@ -1882,13 +1924,15 @@ function nextPreview(en) {
       p = { weight: src.weight, reps: src.reps };
       why = 'Progression aus';
     } else {
-      const r = refProposal(t, { sets: doneSets, planned: en.planned, target: en.target }, cmp, iNext, k, v);
-      p = adjustProposal(r.p, r.rule, t, ofVariant(doneSets, v), ofVariant(cmp && cmp.sets, v), iNext, k).p;
+      const ti = tAt(t, iNext);  // Tank dieses Satzes nächste Woche (v199)
+      const r = refProposal(ti, { sets: doneSets, planned: en.planned, target: en.target }, cmp, iNext, k, v);
+      p = adjustProposal(r.p, r.rule, ti, ofVariant(doneSets, v), ofVariant(cmp && cmp.sets, v), iNext, k).p;
       why = r.rule === 'brake' ? 'Ziel verfehlt → leichter' : r.hold ? 'halten' : r.fromCmp ? 'Vergleich letzter Zyklus' : '';
     }
-    p = atLeastMinReps(p, t);
+    const tI = tAt(t, iNext);
+    p = atLeastMinReps(p, tI);
     if (p.weight != null && lastW[v] != null && p.weight > lastW[v]) {
-      p = { weight: lastW[v], reps: Math.max(minReps(), repsAtWeight(p.reps, t.rir, p.weight, lastW[v])) };
+      p = { weight: lastW[v], reps: Math.max(minReps(), repsAtWeight(p.reps, tI.rir, p.weight, lastW[v])) };
     }
     if (p.weight != null) lastW[v] = p.weight;
     const dir = p.weight == null || src.weight == null || p.weight === src.weight ? ''
@@ -2033,7 +2077,7 @@ function refProposal(t, prev, cmp, i, k, v) {
     const cap = src.reps + (src.rir != null ? src.rir : t.rir);
     return { p: weightForGoal(cap, src.weight, { step: 2.5, ...t }, 0, goal), rule: 'brake' };
   }
-  const rirOf = e => e && e.target && e.target.rir != null ? e.target.rir : null;  // damaliges Tank-Ziel
+  const rirOf = e => e && e.target && e.target.rir != null ? rirAt(e.target, i) : null;  // damaliges Tank-Ziel dieses Satzes
   const a = !cmpV.length ? null
     : cmp.shifted ? shiftedRef(refAt(cmpV, k), t, i, rirOf(cmp), cmp.plus || 1)
     : fromRef(refAt(cmpV, k), t, cmp.plus || 1, i, rirOf(cmp));
@@ -2135,7 +2179,7 @@ function openFloor(en, t, i, k) {
 }
 
 function proposeSet(en, i, v) {
-  const t = en.target;
+  const t = tAt(en.target, i);  // Tank dieses Satzes (ganze Zahl, absteigend)
   const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
   let p = null, rule = null;
   if (t.hold) {
@@ -2212,7 +2256,7 @@ function notHeavierThanBefore(en, i, v, set) {
   for (let j = i - 1; j >= 0; j--) if (en.sets[j] && variantOf(en.sets[j]) === v) { before = en.sets[j]; break; }
   const pw = before && parseNum(before.weight);
   if (pw == null || w <= pw) return set;
-  const rir = en.target.rir != null ? en.target.rir : 2;
+  const rir = rirAt(en.target, i);
   const reps = Math.max(minReps(), repsAtWeight(parseNum(set.reps), rir, w, pw));
   return { ...set, weight: fmtNum(pw), reps: String(reps), baseWeight: pw };
 }
@@ -2220,7 +2264,7 @@ function notHeavierThanBefore(en, i, v, set) {
 // Satz i (neu) vorschlagen und den ursprünglichen Vorschlag für die Bremse merken
 function applyProposal(en, i, v) {
   const { set: proposed, rule } = proposeSet(en, i, v);
-  const set = notHeavierThanBefore(en, i, v, applyPenalty(proposed, en.target, draft.penalty || 0));
+  const set = notHeavierThanBefore(en, i, v, applyPenalty(proposed, tAt(en.target, i), draft.penalty || 0));
   en.sets[i] = set;
   en.planned[i] = { weight: parseNum(set.weight), reps: parseNum(set.reps), variant: v };
   if (i === 0) en.rule = rule;
@@ -2726,6 +2770,69 @@ function backupCard() {
         <button class="btn" data-action="backup-later">Später</button></div></div>`;
 }
 
+/* ---------- Zum Home-Bildschirm (v198, User-Wunsch 2026-11-10) ---------- */
+// Als App auf dem Home-Bildschirm löscht das iPhone die Daten nicht nach 7 Tagen ohne Besuch (Safari-Regel für Websites),
+// und Android sagt eher „dauerhafter Speicher“ zu. Wichtig: Auf dem iPhone hat die Home-Bildschirm-App einen EIGENEN Speicher,
+// getrennt von Safari – wer schon Daten hat, muss sie per Sicherung mitnehmen. Android teilt den Speicher, dort kein Umzug.
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /Android/.test(navigator.userAgent);
+const hasOwnData = () => data.sessions.length > 0 || data.plans.length > 0;
+let installEvt = null;  // Android/Chrome: gemerktes „beforeinstallprompt“ -> eigener Knopf „Jetzt installieren“
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvt = e;
+  if (current && (current.view === 'start' || current.view === 'data')) render();
+});
+window.addEventListener('appinstalled', () => { installEvt = null; toast('App installiert ✔'); if (current) render(); });
+const INSTALL_SNOOZE = 7;
+const SHARE_ICON = '<svg class="ios-share" viewBox="0 0 24 24" aria-label="Teilen-Symbol"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H5.5A1.5 1.5 0 0 0 4 11.5v8A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-8a1.5 1.5 0 0 0-1.5-1.5H17"/></svg>';
+
+// Anleitung je nach Gerät (Startkarte und Optionen)
+function installStepsHtml() {
+  if (isAndroid()) {
+    if (installEvt) return '<button class="btn primary" data-action="install-now">📲 Jetzt installieren</button>';
+    return `<ol class="install-steps"><li>Oben rechts auf das Menü <b>⋮</b> tippen.</li>
+      <li><b>„App installieren“</b> oder <b>„Zum Startbildschirm hinzufügen“</b> wählen.</li><li>Bestätigen – fertig.</li></ol>`;
+  }
+  const move = hasOwnData() ? `<li><b>Zuerst sichern:</b> Auf dem iPhone hat die App auf dem Home-Bildschirm einen eigenen Speicher und
+      startet dort leer. Exportiere deshalb jetzt eine Sicherung und importiere sie danach dort unter Optionen → „Sicherung importieren“.
+      <button class="btn outline" data-action="export">Sicherung exportieren</button></li>` : '';
+  return `<ol class="install-steps">${move}
+    <li>Unten in Safari auf das Teilen-Symbol ${SHARE_ICON} tippen (iPad: oben rechts).</li>
+    <li>Etwas nach unten scrollen und <b>„Zum Home-Bildschirm“</b> wählen.</li>
+    <li>Oben rechts auf <b>„Hinzufügen“</b> tippen. Ab jetzt die App über das Symbol auf dem Home-Bildschirm öffnen.</li></ol>`;
+}
+const installWhy = () => isIOS()
+  ? 'Dann öffnet sie im Vollbild wie eine normale App – und das iPhone löscht deine Daten nicht, wenn du die App mal länger als 7 Tage nicht öffnest. Bei Websites in Safari tut es das.'
+  : 'Dann öffnet sie im Vollbild wie eine normale App, hat ein eigenes Symbol, und dein Handy behandelt deine Daten als dauerhaft.';
+
+// Startbildschirm: nur auf dem Handy im Browser, mit „Später“ und „Nicht mehr zeigen“
+function installCard() {
+  if (isStandalone() || !(isIOS() || isAndroid()) || data.installHide || daysSinceISO(data.installSnooze) < INSTALL_SNOOZE) return '';
+  return `<div class="card hints install-card"><p><b>📲 Hol dir die App auf den Home-Bildschirm</b></p>
+      <p class="hint">${installWhy()}</p>
+      ${installStepsHtml()}
+      <div class="row"><button class="btn" data-action="install-later">Später</button>
+        <button class="btn" data-action="install-hide">Nicht mehr zeigen</button></div></div>`;
+}
+// Optionen: immer da, solange die App nicht vom Home-Bildschirm läuft (auch nach „Nicht mehr zeigen“)
+function installOptionsCard() {
+  if (isStandalone() || !(isIOS() || isAndroid())) return '';
+  return `<details class="card about-sec install-opt"><summary><b>📲 Zum Home-Bildschirm hinzufügen</b></summary>
+      <p class="hint">${installWhy()}</p>${installStepsHtml()}</details>`;
+}
+// iPhone, App vom Home-Bildschirm, noch leer: vielleicht vorher in Safari benutzt -> Sicherung importieren anbieten
+function iosMoveCard() {
+  if (!isIOS() || !isStandalone() || hasOwnData() || data.moveHintSeen) return '';
+  return `<div class="card hints"><p><b>📂 Hast du die App vorher in Safari benutzt?</b></p>
+      <p class="hint">Auf dem iPhone hat die App auf dem Home-Bildschirm einen eigenen Speicher. Deine bisherigen Daten holst du mit
+        der Sicherung, die du in Safari exportiert hast.</p>
+      <div class="row"><button class="btn primary" data-action="import">Sicherung importieren</button>
+        <button class="btn" data-action="move-hint-no">Nein, ich fange neu an</button></div>
+      <input type="file" id="import-file" accept="application/json,.json" hidden></div>`;
+}
+
 // Nach dem Speichern eines Trainings: Sicherung anbieten, wenn sie fällig ist (ab dem 2. Training)
 function backupAfterTrainingCard() {
   if (data.sessions.length < 2 || !backupDue()) return '';
@@ -2787,7 +2894,7 @@ function skipHtml(ci) {
 }
 
 function renderStart() {
-  let h = greeting() + storageWarnCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
+  let h = greeting() + storageWarnCard() + iosMoveCard() + installCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -2957,7 +3064,7 @@ function renderTraining() {
       const pr = (en.planned || []).map(x => x && x.reps).filter(x => x != null);
       const today = pr.length ? (Math.min(...pr) === Math.max(...pr) ? pr[0] : `${Math.max(...pr)}–${Math.min(...pr)}`) : t.reps;
       h += feat('tr-tank-target')
-        ? `<p class="target">Heute: ${t.sets} × ${today} Wdh. · Ø ${targetRirText(t)} im Tank</p>`
+        ? `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${t.deload || !t.rirSplit ? `Ø ${targetRirText(t)} im Tank` : `Tank ${rirSeqText(t)}`}</p>`
         : `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${feelTargetText(t)}</p>`;
       if (feat('tr-prefat') && (t.fat || 0) >= PREFAT_SHOW - 1e-9) {
         const pi = preFatigueInfo(draftPrefatList(), ei);
@@ -3026,7 +3133,8 @@ function renderTraining() {
     h += `<p class="adjust ${feat('tr-rir-input') ? '' : 'simple-off'}" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     const rirInput = feat('tr-rir-input');
     h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">${rirInput ? 'Tank' : 'Gefühl'}</span>`;
-    const tankHint = en.target && !en.target.own ? targetRirText(en.target).replace('mind. ', '≥') : '–';
+    const tankHint = si => !en.target || en.target.own ? '–' : en.target.deload || !en.target.rirSplit
+      ? targetRirText(en.target).replace('mind. ', '≥') : fmtNum(rirAt(en.target, si));  // Tank je Satz (v199)
     const next = feat('tr-next') ? nextPreview(en) : [];
     const bodyKg = body ? currentBodyweight() : null;
     const pb = draftPbFlags(en), fpb = draftFatPbFlags(en, pb);
@@ -3043,10 +3151,10 @@ function renderTraining() {
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
-        ${rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint}"
+        ${rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint(si)}"
           class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`
           : `<button class="feel-btn ${s.rir !== '' && s.rir != null ? 'set' : ''}" data-action="tr-feel-open" data-ei="${ei}" data-si="${si}"
-            aria-label="Wie hat sich Satz ${si + 1} angefühlt?">${feelIcon(en, s)}</button>`}
+            aria-label="Wie hat sich Satz ${si + 1} angefühlt?">${feelIcon(en, s, si)}</button>`}
         <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>
         <div class="typo-hint" data-typo="${ei}-${si}">${typoHtml(en, ei, si)}</div>
         ${!rirInput && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
@@ -3104,20 +3212,21 @@ const FEELS = [
   { k: 'hard', icon: '😤', label: 'hart' },
   { k: 'max', icon: '🔥', label: 'ging nichts mehr' },
 ];
-function feelRir(t, k) {
-  const r = Math.round((t && t.rir != null ? t.rir : 2));
+function feelRir(t, k, si = 0) {
+  const r = Math.round(rirAt(t, si));
   // locker = noch mind. 4 · gut = genau das Ziel · hart = noch 1 · ging nichts mehr = 0
   return { easy: Math.max(4, r + 2), good: r, hard: Math.max(0, Math.min(1, r - 1)), max: 0 }[k];
 }
-function feelIcon(en, s) {
+function feelIcon(en, s, si = 0) {
   if (s.rir === '' || s.rir == null) return '<span class="feel-q">Wie?</span>';
-  const v = parseNum(s.rir), r = Math.round(en.target && en.target.rir != null ? en.target.rir : 2);
+  const v = parseNum(s.rir), r = Math.round(rirAt(en.target, si));
   return v <= 0 ? '🔥' : v < r ? '😤' : v > r + 1 ? '😊' : '💪';
 }
 const feelTargetText = t => {
-  const r = Math.round(t.rir != null ? t.rir : 2);
-  return r <= 0 ? 'jeder Satz bis „ging nichts mehr“ 🔥'
-    : `hör auf, wenn noch etwa ${r} Wdh. gegangen wären (= 💪 gut)`;
+  const r = Math.round(rirAt(t, 0)), last = Math.round(rirAt(t, Math.max(0, (t.sets || 1) - 1)));
+  if (r <= 0) return 'jeder Satz bis „ging nichts mehr“ 🔥';
+  const tail = last < r ? (last <= 0 ? ' – in den letzten Sätzen bis „ging nichts mehr“ 🔥' : ` – in den letzten Sätzen noch etwa ${last}`) : '';
+  return `hör auf, wenn noch etwa ${r} Wdh. gegangen wären (= 💪 gut)${tail}`;
 };
 
 // Aufklappbare Erklärung der Knöpfe „Volumen“ und „Gewicht & Wdh.“ (where: 'today' = nur dieses Training, 'plan' = Zyklus/Wochen)
@@ -4416,7 +4525,15 @@ function renderData() {
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
       ${storageInfoHtml()}
+      <p class="lbl">Sicherungen mit Passwort schützen</p>
+      <div class="seg two"><button class="${backupPwOn() ? '' : 'on'}" data-action="backup-pw-mode" data-v="0">Ohne Passwort</button>
+        <button class="${backupPwOn() ? 'on' : ''}" data-action="backup-pw-mode" data-v="1">Mit Passwort</button></div>
+      ${backupPwOn() ? `<input class="inp" type="password" data-field="backup-pw" autocomplete="new-password" placeholder="Passwort (mind. 4 Zeichen)" value="${esc(backupPw)}">` : ''}
+      <p class="hint">Freiwillig. Mit Passwort wird die Sicherungsdatei verschlüsselt – wer sie in die Hände bekommt, kann sie ohne Passwort
+        nicht lesen. Das Passwort wird nirgends gespeichert: Vergisst du es, lässt sich die Sicherung nicht mehr öffnen.
+        ${backupPwOn() ? 'Leer gelassen fragt die App beim Exportieren nach dem Passwort.' : ''}</p>
     </div>
+    ${installOptionsCard()}
     <button class="btn primary" data-action="export">Sicherung exportieren</button>
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
@@ -4691,9 +4808,9 @@ function setupEntry(en, target, variantFor = () => '') {
   // ohne Gewichtsprogression (hold) keine Bezugswochen – es gelten die Werte vom letzten Mal
   const cmp = draft.deload || target.hold ? null : condRef(strip(comparisonEntry(en.name, draft.dayId, draft)), { step: 2.5, ...target });
   const prev = draft.deload || draft.intro || target.hold ? null : condRef(strip(previousWeekEntry(en.name, draft.dayId, draft)), { step: 2.5, ...target });
-  // Satzzahl laut Wochenplan der Übung (Deload: halbiert)
+  // Satzzahl laut Wochenplan der Übung (Deload: halbiert); rirSplit = Tank je Satz in ganzen Zahlen (rirAt, v199)
   const n = target.sets;
-  en.target = { ...target, sets: n };
+  en.target = { ...target, sets: n, rirSplit: true };
   en.compare = cmp;
   en.prevWeek = prev;
   // 2. Training dieses Tages in der Woche: nie mehr als im 1. Training dieser Woche geschafft
@@ -4921,15 +5038,16 @@ function buildSets(name, target) {
   // Gewicht aus der Progression; ohne Max.-Wert das Gewicht vom letzten Mal
   // (Eigengewichtsübung: kein Gewicht, nur Wdh.)
   const last = lastEntry(name);
-  let tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(target);
+  const t0 = tAt(target, 0);  // Satz 1 mit seinem Tank (v199: ganze Zahlen je Satz)
+  let tw = target.bodyweight ? null : target.deload ? target.weight : targetWeight(t0);
   const sets = [];
   const lastSets = last && !target.bodyweight ? ofVariant(last.sets, '') : [];  // nur normale Sätze als Bezug
   // Zu Hause: liegt das passende Gewicht zwischen zwei vorhandenen, gilt das leichtere – dafür mehr Wdh.
   let reps0 = target.reps;
   if (target.weights && tw != null && target.max10 != null && !target.deload) {
-    const ideal = effMax(target) * repFactor(target.reps + target.rir);
-    const need = repsAtWeight(target.reps, target.rir, ideal, tw);
-    const up = wUp(tw, target), upReps = up != null ? repsAtWeight(target.reps, target.rir, ideal, up) : null;
+    const ideal = effMax(target) * repFactor(target.reps + t0.rir);
+    const need = repsAtWeight(target.reps, t0.rir, ideal, tw);
+    const up = wUp(tw, target), upReps = up != null ? repsAtWeight(target.reps, t0.rir, ideal, up) : null;
     // große Lücke: das leichtere Gewicht nur, solange damit höchstens MAXED_REPS Wdh. nötig sind (User-Regel 2026-11-06)
     if (need > MAXED_REPS && up != null && upReps >= minReps()) { tw = up; reps0 = upReps; }
     else reps0 = Math.min(MAXED_REPS, Math.max(target.reps, need));
@@ -4963,7 +5081,7 @@ function buildSets(name, target) {
       continue;
     }
     // Ziel-Wdh. gelten für Satz 1, danach je Satz 1 Wdh. weniger (Ermüdung), mind. minReps()
-    const p = i === 0 ? { weight: w, reps: reps0 } : planSet(reps0 + target.rir, w, target, i);
+    const p = i === 0 ? { weight: w, reps: reps0 } : planSet(reps0 + t0.rir, w, tAt(target, i), i);
     sets.push({ weight: p.weight != null ? fmtNum(p.weight) : '', reps: String(p.reps), rir: '', auto: true });
   }
   return sets;
@@ -5175,9 +5293,61 @@ function backupFileName(now = new Date()) {
   return `StepUp-Sicherung ${who ? who + ' ' : ''}${now.toLocaleDateString('sv-SE')} ${hm}.json`;
 }
 
+/* ---------- Sicherung mit Passwort (v197, freiwillig): AES-GCM 256, Schlüssel aus dem Passwort per PBKDF2-SHA256 ---------- */
+// Die Datei bleibt JSON: { app, enc: 1, kdf, iter, salt, iv, data (alles Base64), exportedAt }. Das Passwort wird nie gespeichert.
+const BACKUP_ITER = 300000;
+const b64enc = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const b64dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function backupKey(pw, salt, iter) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encryptBackup(json, pw, exportedAt) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await backupKey(pw, salt, BACKUP_ITER);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(json)));
+  return JSON.stringify({ app: 'trainingsapp', enc: 1, kdf: 'PBKDF2-SHA256', iter: BACKUP_ITER, salt: b64enc(salt), iv: b64enc(iv), data: b64enc(ct), exportedAt });
+}
+async function decryptBackup(d, pw) {
+  const key = await backupKey(pw, b64dec(d.salt), d.iter || BACKUP_ITER);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64dec(d.iv) }, key, b64dec(d.data));
+  return new TextDecoder().decode(pt);
+}
+// Verschlüsselte Sicherung öffnen: nach dem Passwort fragen (bis zu 3 Versuche); null = abgebrochen
+async function openEncryptedBackup(raw) {
+  for (let i = 0; i < 3; i++) {
+    const pw = prompt(`Diese Sicherung ist mit einem Passwort geschützt.${i ? '\n\nFalsches Passwort – bitte noch einmal.' : ''}\n\nPasswort:`);
+    if (pw === null) return null;
+    try { return JSON.parse(await decryptBackup(raw, pw)); } catch (e) { /* falsches Passwort */ }
+  }
+  alert('Dreimal ein falsches Passwort – die Sicherung wurde nicht geladen.');
+  return null;
+}
+const backupPwOn = () => !!data.backupPw;  // Einstellung „Sicherungen mit Passwort“ (das Passwort selbst wird nicht gespeichert)
+let backupPw = '';                         // nur im Arbeitsspeicher, solange die App offen ist
+// Passwort für den Export holen: Feld in den Optionen, sonst nachfragen; null = abgebrochen
+function askBackupPw() {
+  let pw = backupPw;
+  if (pw.length < 4) {
+    pw = prompt('Passwort für diese Sicherung (wird nicht gespeichert – ohne Passwort lässt sich die Datei nicht mehr öffnen):');
+    if (pw === null) return null;
+    pw = pw.trim();
+  }
+  if (pw.length < 4) { alert('Bitte ein Passwort mit mindestens 4 Zeichen wählen.'); return null; }
+  backupPw = pw;
+  return pw;
+}
+
 async function exportData() {
-  const json = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
-  const filename = backupFileName();
+  const exportedAt = new Date().toISOString();
+  let json = JSON.stringify({ ...data, exportedAt }, null, 2);
+  let filename = backupFileName();
+  if (backupPwOn()) {
+    const pw = askBackupPw();
+    if (pw === null) return;
+    json = await encryptBackup(json, pw, exportedAt);
+    filename = filename.replace(/\.json$/, ' (Passwort).json');
+  }
   const file = new File([json], filename, { type: 'application/json' });
 
   // iPhone: Teilen-Menü -> „In Dateien sichern“
@@ -5204,9 +5374,13 @@ async function exportData() {
 
 function importData(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     let d;
-    try { d = cleanImport(JSON.parse(reader.result)); } catch (e) { d = null; }
+    try {
+      let raw = JSON.parse(reader.result);
+      if (raw && raw.enc === 1) { raw = await openEncryptedBackup(raw); if (raw === null) return; }
+      d = cleanImport(raw);
+    } catch (e) { d = null; }
     if (!isValidData(d)) {
       alert('Diese Datei ist keine gültige Trainings-Sicherung.');
       return;
@@ -5222,10 +5396,11 @@ function importData(file) {
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
       cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
-      customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV,
+      customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV, rirV: d.rirV,
     });
     registerCustomExercises();
     prefatMigrate();  // ältere Sicherung: Max.-Werte auf frisch umrechnen
+    rirMigrate();     // ältere Sicherung: Tank-Ziele −0,5 (v199)
     applyTheme();
     saveData();
     toast('Sicherung importiert ✔');
@@ -5492,7 +5667,7 @@ const actions = {
   'tr-feel': el => {
     const ei = Number(el.dataset.ei), si = Number(el.dataset.si);
     const en = draft.entries[ei];
-    fields['tr-rir']({ value: String(feelRir(en.target, el.dataset.f)), dataset: { ei: String(ei), si: String(si) } });
+    fields['tr-rir']({ value: String(feelRir(en.target, el.dataset.f, si)), dataset: { ei: String(ei), si: String(si) } });
     if (el.dataset.f === 'easy') en.sets[si].open = 1;  // „locker“ = mindestens so viel im Tank, nach oben offen (openFloor)
     en.feelOpen = null;
     render();
@@ -6159,6 +6334,17 @@ const actions = {
   },
   'mode-up-no': () => { data.profile = { ...(data.profile || {}), modeUpSeen: appMode() }; saveData(); render(); },
   'backup-later': () => { data.backupSnooze = new Date().toLocaleDateString('sv-SE'); saveData(); render(); },
+  'install-later': () => { data.installSnooze = todayISO(); saveData(); render(); },
+  'install-hide': () => { data.installHide = true; saveData(); render(); toast('Die Anleitung findest du weiter in den Optionen'); },
+  'install-now': async () => {
+    if (!installEvt) return;
+    const e = installEvt;
+    installEvt = null;
+    try { e.prompt(); await e.userChoice; } catch (err) { /* abgebrochen */ }
+    render();
+  },
+  'move-hint-no': () => { data.moveHintSeen = true; saveData(); render(); },
+  'backup-pw-mode': el => { data.backupPw = el.dataset.v === '1'; if (!data.backupPw) backupPw = ''; saveData(); render(); },
   import: () => document.getElementById('import-file').click(),
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
@@ -6188,6 +6374,7 @@ const actions = {
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)
 const fields = {
   'day-name': el => { findDay(current.params.id).name = el.value; saveData(); },
+  'backup-pw': el => { backupPw = el.value.trim(); },  // nur im Arbeitsspeicher
   // Suche in der Bibliothek: nur die Trefferliste neu zeichnen, damit das Feld den Fokus behält
   'lib-search': el => {
     libQuery = el.value;
@@ -6866,6 +7053,7 @@ async function boot() {
   applyTheme();
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
   prefatMigrate();
+  rirMigrate();  // v199: Tank-Ziele bestehender Pläne −0,5
   render();
   showWelcome();
 }

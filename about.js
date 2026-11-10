@@ -47,7 +47,8 @@ function aboutDatenschutz() {
       sonst nichts. Mehr dazu: <a href="https://world.openfoodfacts.org/privacy" target="_blank" rel="noopener">Datenschutz bei Open Food Facts</a>.
       Die Kamera nutzt die App nur zum Scannen; das Bild wird auf deinem Gerät ausgewertet und weder gespeichert noch übertragen.</p>
     <h3>Sicherungen</h3>
-    <p>Eine Sicherung ist eine Datei, die du selbst speicherst oder teilst. Wohin sie geht, bestimmst du – wir haben keinen Zugriff darauf.</p>
+    <p>Eine Sicherung ist eine Datei, die du selbst speicherst oder teilst. Wohin sie geht, bestimmst du – wir haben keinen Zugriff darauf.
+      Auf Wunsch verschlüsselt die App die Sicherung mit einem Passwort (Einstellung unter „Deine Daten“); das Passwort wird nirgends gespeichert.</p>
     <h3>Löschen</h3>
     <p>Unter „Optionen“ → „Alles zurücksetzen“ löschst du alle Daten der App. Auch das Löschen der Website-Daten im Browser oder das
       Entfernen der App vom Home-Bildschirm löscht sie.</p>
