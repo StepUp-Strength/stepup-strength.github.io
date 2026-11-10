@@ -4,6 +4,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Content Security Policy (v196): nur eigene Skripte und Dateien, Verbindungen nur zu Open Food Facts. Eingeschleuster
+       Code (z. B. aus einer präparierten Sicherung) wird vom Browser blockiert. Inline-Styles sind nötig (Balkenbreiten). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://de.openfoodfacts.org https://world.openfoodfacts.org; worker-src 'self'; object-src 'none'; base-uri 'self'">
   <title>Training</title>
 
   <!-- PWA / iPhone-Home-Bildschirm -->

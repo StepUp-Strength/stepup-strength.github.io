@@ -25,6 +25,28 @@ function isValidData(d) {
   return d && Array.isArray(d.sessions) && (Array.isArray(d.plans) || Array.isArray(d.days));
 }
 
+// Sicherung bereinigen (v196): Kennungen, Datumsangaben und Schlüssel landen an vielen Stellen ohne Entschärfung in
+// data-Attributen. Eine präparierte Datei könnte darüber Code einschleusen. Deshalb werden in solchen Feldern (und in
+// allen Objektschlüsseln) die Zeichen < > " sowie Steuerzeichen entfernt – gleich bleibende Ersetzung, Verweise
+// (z. B. session.dayId -> day.id) passen danach noch zusammen. Namen und Texte bleiben unverändert (esc() beim Anzeigen).
+const IMPORT_ID_KEYS = /^(id|dayId|sessionId|planId|activePlanId|exId|key|code|date|start|cycleStart|exportedAt|leadDl|from|to|win|cs|src|variant|kind|group|phase|mode|theme|look|color|sex|level|equip|intensity|meal|unit|type)$/;
+const importClean = s => s.replace(/[<>"\u0000-\u001f\u007f]/g, '').slice(0, 200);
+function cleanImport(v, key = '', depth = 0) {
+  if (depth > 12) return null;
+  if (typeof v === 'string') return key && IMPORT_ID_KEYS.test(key) ? importClean(v) : v;
+  if (Array.isArray(v)) return v.map(x => cleanImport(x, key === 'starts' || key === 'skips' ? 'date' : '', depth + 1));
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      const ck = importClean(k);
+      if (ck) o[ck] = cleanImport(v[k], k, depth + 1);
+    }
+    return o;
+  }
+  return v;
+}
+
 // Fehlende Felder ergänzen (z. B. bei Daten aus einer älteren App-Version)
 function withDefaults(ex) {
   if (ex.sets == null) ex.sets = 3;          // Sätze in der Intro-Woche
@@ -5184,7 +5206,7 @@ function importData(file) {
   const reader = new FileReader();
   reader.onload = () => {
     let d;
-    try { d = JSON.parse(reader.result); } catch (e) { d = null; }
+    try { d = cleanImport(JSON.parse(reader.result)); } catch (e) { d = null; }
     if (!isValidData(d)) {
       alert('Diese Datei ist keine gültige Trainings-Sicherung.');
       return;
