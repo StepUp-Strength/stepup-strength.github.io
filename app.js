@@ -2864,7 +2864,7 @@ function renderTraining() {
   h += draft.own
     ? `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, was du geschafft hast${feat('tr-rir-input')
       ? ' und wie viele Wdh. noch im Tank waren' : ' und tippe an, wie er sich angefühlt hat'} – damit gilt der Satz als erledigt.</p>`
-    : `<p class="sub">${fmtDate(draft.date, true)}</p>` + entryHelpHtml();
+    : `<p class="sub">${fmtDate(draft.date, true)}</p>` + entryHelpHtml() + prefatHelpHtml();
   if (feat('tr-prog')) h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
@@ -4367,22 +4367,29 @@ function hintOffCard() {
       <button class="btn outline" data-action="hint-on">Wieder anzeigen</button></div>`;
 }
 
-// Optionen: persönlicher Wert der Vorermüdung (ab Standard)
-function prefatCard() {
-  if (!feat('tr-prefat')) return '';
+// Erklärung der Vorermüdung (User-Wunsch 2026-11-10: nicht mehr in den Optionen, sondern einmal oben im Training hinter
+// einem Knopf) – nur, wenn heute mindestens eine Übung vorermüdet ist
+let prefatHelpOpen = false;
+function prefatHelpHtml() {
+  if (!feat('tr-prefat') || !draft || !draft.entries.some(en => en.target && (en.target.fat || 0) >= PREFAT_SHOW - 1e-9)) return '';
+  if (!prefatHelpOpen) return '<button class="help-link" data-action="prefat-help-toggle">💤 Vorermüdung – so rechnet die App</button>';
   const L = prefatLearn(), pct = fmtNum(Math.round(L.rate * 1000) / 10);
   const sure = L.w < 5 ? 'noch wenig Daten' : L.w < 15 ? 'mittlere Sicherheit' : 'gut abgesichert';
-  return `<div class="card"><h2>💤 Vorermüdung</h2>
-      <p>Die App rechnet je Satz, den dieselbe Muskelgruppe vorher im Training gemacht hat, mit <b>${pct} % weniger Kraft</b>
-        (je Satz für einen Hilfsmuskel halb so viel, insgesamt höchstens ${Math.round(PREFAT_MAX * 100)} %).</p>
-      <p class="hint">${L.n ? `Dein persönlicher Wert, gelernt aus ${L.n} ${L.n === 1 ? 'Vergleich' : 'Vergleichen'} deiner Trainings (${sure}): dieselbe Übung an
-        verschiedenen Stellen im Training. Gestartet wird mit 5 %.`
-        : 'Startwert. Sobald eine Übung an verschiedenen Stellen im Training stand (z. B. an Tag A vorn, an Tag B weiter hinten), lernt die App deinen eigenen Wert.'}
-        „Max. bei 10 Wdh.“ ist immer der Frisch-Wert – steht eine Übung weiter hinten, zieht die App die Vorermüdung selbst ab.</p></div>`;
+  return `<div class="entry-help">
+    <b class="entry-help-title">Vorermüdung – so rechnet die App</b>
+    <p>Hat eine Muskelgruppe vorher im Training schon gearbeitet, ist sie bei der nächsten Übung nicht mehr ganz frisch. Die App rechnet
+      je Satz, den dieselbe Muskelgruppe vorher gemacht hat, mit <b>${pct} % weniger Kraft</b> (je Satz für einen Hilfsmuskel halb so viel,
+      insgesamt höchstens ${Math.round(PREFAT_MAX * 100)} %). Bei vorermüdeten Übungen steht der Abzug direkt unter der Vorgabe.</p>
+    <p class="hint">${L.n ? `Dein persönlicher Wert, gelernt aus ${L.n} ${L.n === 1 ? 'Vergleich' : 'Vergleichen'} deiner Trainings (${sure}): dieselbe Übung an
+      verschiedenen Stellen im Training. Gestartet wird mit 5 %.`
+      : 'Startwert. Sobald eine Übung an verschiedenen Stellen im Training stand (z. B. an Tag A vorn, an Tag B weiter hinten), lernt die App deinen eigenen Wert.'}
+      „Max. bei 10 Wdh.“ ist immer der Frisch-Wert – steht eine Übung weiter hinten, zieht die App die Vorermüdung selbst ab.</p>
+    <button class="btn outline" data-action="prefat-help-toggle">Zuklappen</button>
+  </div>`;
 }
 
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + prefatCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -5459,6 +5466,7 @@ const actions = {
   },
   'entry-help-ok': () => { data.profile = data.profile || {}; data.profile.entryHelpKnown = true; entryHelpOpen = false; saveData(); render(); },
   'entry-help-toggle': () => { entryHelpOpen = !entryHelpOpen; render(); },
+  'prefat-help-toggle': () => { prefatHelpOpen = !prefatHelpOpen; render(); },
   'tr-feel': el => {
     const ei = Number(el.dataset.ei), si = Number(el.dataset.si);
     const en = draft.entries[ei];
@@ -6478,7 +6486,7 @@ function applyTheme() {
   if (mode) root.dataset.theme = mode; else delete root.dataset.theme;
   plainSync();
   // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
-  const [light, dark] = PROFILE_COLORS[profileColor()].bg;
+  const [light, dark] = plainOn() ? ['#f4f4f5', '#0e0e10'] : PROFILE_COLORS[profileColor()].bg;  // Schlicht: neutral
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
     const isDark = /dark/.test(m.getAttribute('media') || '');
     m.setAttribute('content', mode === 'dark' ? dark : mode === 'light' ? light : isDark ? dark : light);
@@ -6584,8 +6592,8 @@ function appearanceCard() {
       <p class="lbl">Stil</p>
       <div class="seg two">${Object.entries(LOOKS).map(([k, l]) =>
         `<button class="${((p.look || '') === k) ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
-      <p class="hint">„Standard“: mit Symbolen und Farbverläufen. „Schlicht“: ohne Emojis, flache Flächen und feine Linien –
-        ruhig und minimalistisch. Die Farbwelt gilt in beiden Stilen.</p>
+      <p class="hint">„Standard“: mit Symbolen, Farben und Farbverläufen. „Schlicht“: ohne Emojis, ganz in Schwarz, Weiß und Grau,
+        flache Flächen und feine Linien – nur die Überschriften haben die Farbe deiner Farbwelt.</p>
       <p class="lbl">Übungen im Training</p>
       <div class="seg two tr-viewmode"><button class="${trSwipeOn() ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
         <button class="${trSwipeOn() ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>

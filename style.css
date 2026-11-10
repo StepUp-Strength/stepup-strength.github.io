@@ -2499,7 +2499,7 @@ body.touring { overflow: hidden; }
 [data-look="plain"] .card:not(.cycle) .btn:not(.primary):not(.danger):not(.outline):not(.center) { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
 [data-look="plain"] .btn.danger { background: transparent; box-shadow: inset 0 0 0 1px var(--danger); }
 [data-look="plain"] .card.cycle { box-shadow: none; }
-[data-look="plain"] .card.cycle.is-deload { background: #ea7a12; box-shadow: none; }
+[data-look="plain"] .card.cycle.is-deload { background: var(--accent); box-shadow: none; }
 [data-look="plain"] .day-btn.next { box-shadow: none; }
 [data-look="plain"] .day-no { border-radius: 8px; background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text); font-weight: 600; }
 [data-look="plain"] .day-btn.done .day-no { background: transparent; box-shadow: inset 0 0 0 1px var(--success); }
@@ -2520,3 +2520,55 @@ body.touring { overflow: hidden; }
 [data-look="plain"] .wiz-q .split-opt.cat.on, [data-look="plain"] .split-opt.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 [data-look="plain"] .split-opt { border-radius: 10px; }
 [data-look="plain"] .card.cycle .btn.cyc-adjust-btn:not(.primary):not(.danger) { border-radius: 10px; box-shadow: none; font-weight: 650; }
+
+/* ---------- Schlicht, einfarbig (v195, User-Wunsch 2026-11-10): nur die Überschriften in der Farbe der Farbwelt ---------- */
+/* Farbe der Farbwelt für Überschriften merken (am html-Element); am body werden alle Farben neutral überschrieben –
+   Custom Properties erben den berechneten Wert, --head bleibt daher farbig */
+:root[data-look="plain"] { --head: var(--accent-text); }
+[data-look="plain"] body {
+  --bg: #f4f4f5; --card: #ffffff; --fill: #efeff1; --input: #f7f7f8; --line-strong: #dcdce0; --bar: rgba(244, 244, 245, .86);
+  --accent: #1d1f24; --accent-2: #1d1f24; --accent-soft: rgba(0, 0, 0, .06); --accent-text: var(--text);
+  --success: var(--text); --success-soft: rgba(0, 0, 0, .06);
+  --warn: #c4c6cc; --warn-soft: rgba(0, 0, 0, .06); --warn-text: var(--text);
+  --danger: var(--text); --danger-soft: rgba(0, 0, 0, .06); --ok: var(--text);
+  --shadow: 0 0 0 1px var(--line-strong); --shadow-accent: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-look="plain"]:not([data-theme="light"]) body {
+    --bg: #0e0e10; --card: #19191c; --fill: #252528; --input: #1f1f22; --line-strong: #36363b; --bar: rgba(14, 14, 16, .86);
+    --accent: #55565e; --accent-2: #55565e; --accent-soft: rgba(255, 255, 255, .08);
+    --success-soft: rgba(255, 255, 255, .08); --warn: #8a8c94; --warn-soft: rgba(255, 255, 255, .08); --danger-soft: rgba(255, 255, 255, .08);
+  }
+}
+:root[data-look="plain"][data-theme="dark"] body {
+  --bg: #0e0e10; --card: #19191c; --fill: #252528; --input: #1f1f22; --line-strong: #36363b; --bar: rgba(14, 14, 16, .86);
+  --accent: #55565e; --accent-2: #55565e; --accent-soft: rgba(255, 255, 255, .08);
+  --success-soft: rgba(255, 255, 255, .08); --warn: #8a8c94; --warn-soft: rgba(255, 255, 255, .08); --danger-soft: rgba(255, 255, 255, .08);
+}
+/* Überschriften: die einzige Farbe */
+[data-look="plain"] header h1, [data-look="plain"] main h2, [data-look="plain"] main h3 { color: var(--head); }
+[data-look="plain"] .card.cycle h2, [data-look="plain"] .day-btn h2 { color: #fff; }
+/* fest eingetragene Farben neutral */
+[data-look="plain"] .ex-card.tint-0, [data-look="plain"] .ex-card.tint-1, [data-look="plain"] .ex-card.tint-2, [data-look="plain"] .ex-card.tint-3 { background: var(--card); }
+[data-look="plain"] .cycle .pill.dl.now { color: var(--accent); }
+[data-look="plain"] .pb-star, [data-look="plain"] .pb-tag { color: #fff; background: var(--accent); box-shadow: none; }
+[data-look="plain"] .pb-star.fpb, [data-look="plain"] .pb-tag.fpb { color: var(--text); background: transparent; box-shadow: inset 0 0 0 1px var(--text); }
+[data-look="plain"] .tp-new { color: var(--text); background: var(--fill); }
+[data-look="plain"] .mc-day.mc-mens, [data-look="plain"] .mc-legend .mc-mens::before { background: var(--accent); color: #fff; }
+[data-look="plain"] .mc-day.mc-mens.pred { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); color: var(--text); }
+[data-look="plain"] .mc-legend .mc-mens.pred::before { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
+[data-look="plain"] .mc-day.mc-foll, [data-look="plain"] .mc-legend .mc-foll::before { background: var(--fill); }
+[data-look="plain"] .mc-day.mc-ovu, [data-look="plain"] .mc-legend .mc-ovu::before { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+[data-look="plain"] .mc-day.mc-lut, [data-look="plain"] .mc-legend .mc-lut::before { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+/* Schrift, Linien und Figuren in der einen Farbe = Textfarbe (im Dunkelmodus hell statt mattem Grau) */
+[data-look="plain"] #back, [data-look="plain"] nav button.active, [data-look="plain"] .timer-bar b, [data-look="plain"] .link-btn,
+[data-look="plain"] .step-chip span, [data-look="plain"] .lib-own, [data-look="plain"] .lib-guide > summary,
+[data-look="plain"] .tour-bubble .tour-count, [data-look="plain"] .stepper button { color: var(--text); }
+[data-look="plain"] .c-line, [data-look="plain"] .fig .fg-plate, [data-look="plain"] .fig .fg-cable, [data-look="plain"] .fig .fg-line,
+[data-look="plain"] .nut-hist line, [data-look="plain"] .c-dot.deload { stroke: var(--text); }
+[data-look="plain"] .c-area, [data-look="plain"] .c-dot, [data-look="plain"] .fig .fg-db, [data-look="plain"] .nut-hist rect.neutral,
+[data-look="plain"] .chart-svg .c-bar { fill: var(--text); }
+/* Hilfe-Links als Links erkennbar */
+[data-look="plain"] .help-link { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+[data-look="plain"] .icon-btn { color: var(--text); }
+:root[data-look="plain"] .ex-card.tint-0, :root[data-look="plain"] .ex-card.tint-1, :root[data-look="plain"] .ex-card.tint-2, :root[data-look="plain"] .ex-card.tint-3, :root[data-look="plain"] .seg button.on { background: var(--card); }
