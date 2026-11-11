@@ -453,7 +453,7 @@ const FEATURE_MODE = {
   // Vor dem Training
   'check-detail': 's', 'first-max': 's', 'cycle-choice': 's',
   // Training
-  'tr-rir-input': 's', 'tr-tank-target': 's', 'tr-max': 's', 'tr-step': 's', 'tr-variants': 'x', 'tr-compare': 's', 'tr-sets': 's',
+  'tr-rir-input': 's', 'tr-tank-target': 's', 'tr-max': 's', 'tr-step': 's', 'tr-variants': 's', 'tr-compare': 's', 'tr-sets': 's',
   'tr-add': 's', 'tr-comment': 's', 'tr-prog': 's', 'tr-next': 's', 'tr-prefat': 's',
   // Startseite & Verlauf
   'stall-hints': 's', 'week-view': 's', 'session-edit': 's', 'ex-history': 's', 'chart-detail': 'x', 'steps': 's',
@@ -493,7 +493,8 @@ function fmtDate(iso, long) {
 }
 
 // Tonnage = Summe aus Gewicht × Wiederholungen aller Sätze (Sätze ohne Gewicht zählen nicht)
-const setsTonnage = sets => sets.reduce((a, x) => a + (x.weight != null && x.reps != null ? x.weight * x.reps : 0), 0);
+const setsTonnage = sets => sets.reduce((a, x) => a + (x.weight != null && x.reps != null ? x.weight * x.reps : 0)
+  + (x.subs || []).reduce((b, y) => b + (y.weight != null && y.reps != null ? y.weight * y.reps : 0), 0), 0);
 const sessionTonnage = s => s.entries.reduce((sum, e) => sum + setsTonnage(e.sets), 0);
 
 // 850 kg / 12,4 t / 1.234,5 t
@@ -503,9 +504,12 @@ const fmtTons = kg => kg >= 1000
 
 function fmtSet(s) {
   const tank = (s.rir != null && feat('tr-rir-input') ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
-  if (s.weight == null) return `${s.reps} Wdh.${tank}`;
+  // Teil-Sätze (v211): Reduktion „→ 65 × 8 → 52,5 × 6“, Myo „+ 4+4+3“
+  const subs = !(s.subs || []).length ? '' : s.variant === 'myo' ? ` + ${s.subs.map(x => x.reps).join('+')}`
+    : ' ' + s.subs.map(x => `→ ${x.weight != null ? `${fmtNum(x.weight)} × ` : ''}${x.reps}`).join(' ');
+  if (s.weight == null) return `${s.reps} Wdh.${subs}${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
-  return `${fmtNum(s.weight)} kg × ${s.reps}${tank}`;
+  return `${fmtNum(s.weight)} kg × ${s.reps}${subs}${tank}`;
 }
 
 function sessionsNewestFirst() {
@@ -701,7 +705,7 @@ function prefatLearn() {
   return prefatLearnCache;
 }
 const prefatRate = () => prefatLearn().rate;
-const draftPrefatList = () => draft.entries.map(en => ({ name: en.name, n: en.sets.length }));
+const draftPrefatList = () => draft.entries.map(en => ({ name: en.name, n: en.sets.length + techExtra(en.sets) }));
 // Frisch-Wert auf die heutige Vorermüdung
 const effMax = t => t.max10 == null ? null : t.max10 * (1 - (t.fat || 0));
 // Satz von Vorermüdung a auf b umrechnen: mit Gewicht über das Gewicht (abgerundet auf die Stufen, Wdh. passend),
@@ -1630,10 +1634,10 @@ function estDuration(day, week, plan = activePlan(), deload = false) {
   const bw = data.cycle.buildWeeks || 4;
   const w = Math.min(Math.max(1, week), bw);
   const auto = autoSetsForDay(day, deload ? bw : w, deload, plan.volume || {});
-  const items = exs.map(ex => ({
-    n: auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw),
-    rest: REST_MIN[kindOf(ex)] || 3,
-  }));
+  const items = exs.map(ex => {
+    const n = auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw);
+    return { n, rest: REST_MIN[kindOf(ex)] || 3, extra: deload ? 0 : techPlanMin(ex, n) };  // Teil-Sätze (v211)
+  });
   return seqMinutes(items, dayPairs(exs, ssOn(plan)));  // Supersätze (v210): kürzere Pausen im Wechsel
 }
 
@@ -1689,6 +1693,7 @@ function dayPairs(exs, on = ssOn()) {
 function seqMinutes(items, pairs = new Map()) {
   let t = 0, last = 0;
   const add = (n, rest) => { if (n > 0) { t += n * (1 + rest); last = rest; } };
+  for (const x of items) t += x.n > 0 ? x.extra || 0 : 0;  // Teil-Sätze von Intensitätstechniken (v211)
   for (let i = 0; i < items.length; i++) {
     const p = pairs.get(i);
     if (p && p.role === 'A' && items[i + 1]) {
@@ -1787,7 +1792,7 @@ function trimToTime(entries, limit) {
     return { en, i, rank: KIND_RANK[kind] != null ? KIND_RANK[kind] : 1, rest: REST_MIN[kind] || 3, group: groupOf(ex), max: en.sets.length, n: 0 };
   });
   const pairs = entryPairs(entries);  // Supersätze (v210): kürzere Pausen im Wechsel
-  const time = () => seqMinutes(info.map(x => ({ n: x.n, rest: x.rest })), pairs);
+  const time = () => seqMinutes(info.map(x => ({ n: x.n, rest: x.rest, extra: techMinutes(x.en.sets.slice(0, x.n)) })), pairs);
   info.forEach(x => { x.n = x.max; });
   const before = time();
   if (before <= limit) return null;
@@ -2022,10 +2027,182 @@ function lighterSet(a, b) {
 /* ---------- Ausführungsvarianten ---------- */
 
 // '' = normal. Sätze einer Variante werden nur mit Sätzen derselben Variante verglichen.
-const VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam' };
-const VARIANT_SHORT = { pause: 'P', slow: 'L' };
+const VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam', drop: 'Reduktion', myo: 'Myo' };
+const VARIANT_SHORT = { pause: 'P', slow: 'L', drop: 'R', myo: 'M' };
+const EXEC_VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam' };  // Ausführung im Plan (Techniken extra)
 const variantOf = s => (s && s.variant) || '';
 const ofVariant = (sets, v) => (sets || []).filter(s => variantOf(s) === v);
+
+/* ---------- Intensitätstechniken (v211, User-Wunsch 2026-11-11) ----------
+   Reduktionssatz (drop) und Myo-Satz (myo) sind Ausführungen eines Satzes wie „langsam“: Der Hauptsatz behält seine Vorgabe
+   und wird nur mit Sätzen derselben Technik verglichen. Daran hängen Teil-Sätze s.subs = [{ weight, reps }]:
+   Reduktion = 1–2 Stufen ohne Pause, je etwa 20 % leichter, bis knapp vors Versagen; Myo = 3–5 Mini-Sätze mit demselben
+   Gewicht, je 3–5 Wdh. nach 20 s (3–5 Atemzüge). Die App plant Techniken nie selbst: Plan/Assistent (ex.tech =
+   { k, at: 'last'|'all', n }) gilt dauerhaft mit Steigerung, sonst nur im einzelnen Training. Nicht im Deload, nicht im
+   Modus Einfach. Vorermüdung: Reduktion zählt wie 1,5 Sätze, Myo wie 2 Sätze (User-Regel 2026-11-11). */
+const TECHS = { drop: 'Reduktionssatz', myo: 'Myo-Satz' };
+const isTech = v => v === 'drop' || v === 'myo';
+const TECH_N = { drop: [1, 2], myo: [3, 4, 5] }, TECH_DEF_N = { drop: 1, myo: 4 };
+const TECH_FAT = { drop: 0.5, myo: 1 };    // zusätzliche Satz-Einheiten für die Vorermüdung
+const TECH_MIN = { drop: 1, myo: 0.5 };    // Minuten je Teil-Satz (Dauer-Schätzung)
+const DROP_FACTOR = 0.8, MYO_REST_S = 20, MYO_MIN = 3, MYO_MAX = 5, MYO_FIRST = 4;
+const techOn = () => feat('tr-variants');
+// Technik eines Satzes laut Plan (i = Satz, n = Sätze heute)
+const techVariant = (ex, i, n) => {
+  const t = ex.tech;
+  return t && TECHS[t.k] && techOn() && !(draft && draft.deload) && (t.at === 'all' || i === n - 1) ? t.k : ex.variant || '';
+};
+const techExtra = sets => (sets || []).reduce((a, s) => a + (TECH_FAT[variantOf(s)] || 0), 0);
+const techMinutes = sets => (sets || []).reduce((a, s) => a + (TECH_MIN[variantOf(s)] || 0) * ((s.subs || []).length || 0), 0);
+// Plan: zusätzliche Vorermüdung bzw. Minuten einer Übung mit n Sätzen
+const techPlanCount = (ex, n) => !ex.tech || !TECHS[ex.tech.k] || !techOn() || !n ? 0 : ex.tech.at === 'all' ? n : 1;
+const techPlanFat = (ex, n) => techPlanCount(ex, n) * TECH_FAT[(ex.tech || {}).k] || 0;
+const techPlanMin = (ex, n) => techPlanCount(ex, n) * (TECH_MIN[(ex.tech || {}).k] || 0) * ((ex.tech || {}).n || 0) || 0;
+const subDone = x => x && x.reps !== '' && x.reps != null;
+// k-ter Satz dieser Technik im letzten Training mit der Übung, das sie enthält (mit Teil-Sätzen)
+function lastTechSet(name, v, k) {
+  const key = nameKey(name);
+  for (const s of sessionsNewestFirst()) {
+    const e = s.entries.find(x => nameKey(x.name) === key);
+    const list = e ? e.sets.filter(x => variantOf(x) === v) : [];
+    if (list.length) return list[Math.min(k, list.length - 1)];
+  }
+  return null;
+}
+// Reduktion: nächstleichteres Gewicht (etwa −20 %, auf die Steigerungsstufe bzw. vorhandene Gewichte gerundet)
+function dropWeight(w, t) {
+  if (w == null) return null;
+  let x = wSnap(w * DROP_FACTOR, t || {}, Math.floor);
+  if (!(x < w - 1e-9)) x = wDown(w, t || {});
+  return x != null && x > 0 ? x : null;
+}
+// Teil-Sätze vorschlagen. Steigerung (wenn im Training an): Reduktion = Wdh. vom letzten Mal +1 (anderes Gewicht: umgerechnet),
+// Myo = insgesamt +1 Wdh. (beim schwächsten Mini-Satz), bis jeder Mini-Satz MYO_MAX hat – danach steigt das Gewicht über den
+// Aktivierungssatz. Schwerer als letztes Mal: Mini-Sätze je 1 Wdh. weniger (mind. MYO_MIN).
+function techSubs(en, i, v, set) {
+  const ex = planExercise(en.name) || {};
+  const k = en.sets.slice(0, i).filter(s => variantOf(s) === v).length;
+  const last = lastTechSet(en.name, v, k), lastSubs = (last && last.subs) || [];
+  const n = (ex.tech && ex.tech.k === v && ex.tech.n) || lastSubs.length || TECH_DEF_N[v];
+  const t = en.target || {}, hold = !!t.hold || !!t.own;
+  const w0 = parseNum(set.weight);
+  if (v === 'drop') {
+    const out = [];
+    let w = w0;
+    for (let j = 0; j < n; j++) {
+      w = w != null ? dropWeight(w, t) : null;
+      const ls = lastSubs[j];
+      let reps = '';
+      if (ls && ls.reps != null) {
+        const same = ls.weight == null || w == null || Math.abs(ls.weight - w) < 1e-9;
+        reps = String(hold ? ls.reps : same ? ls.reps + 1 : Math.max(1, repsAtWeight(ls.reps, 0, ls.weight, w)));
+      }
+      out.push({ weight: '', reps: '', goal: reps });  // Gewicht folgt dem Hauptsatz (subWeight), Wdh. trägt man ein
+    }
+    return out;
+  }
+  let reps = Array.from({ length: n }, (_, j) => lastSubs[j] && lastSubs[j].reps != null ? lastSubs[j].reps : MYO_FIRST);
+  if (lastSubs.length && !hold) {
+    const heavier = w0 != null && last.weight != null && w0 > last.weight + 1e-9;
+    if (heavier) reps = reps.map(r => Math.max(MYO_MIN, r - 1));
+    else {
+      const lo = Math.min(...reps);
+      if (lo < MYO_MAX) reps[reps.indexOf(lo)] = lo + 1;
+    }
+  }
+  return reps.map(r => ({ weight: '', reps: '', goal: String(Math.min(MYO_MAX, r)) }));
+}
+// Gewicht eines Teil-Satzes: selbst eingetragen, sonst aus dem Hauptsatz abgeleitet (Myo: immer das Gewicht des Hauptsatzes)
+function subWeight(en, si, j) {
+  const s = en.sets[si], v = variantOf(s), main = parseNum(s.weight);
+  if (v === 'myo') return main;
+  let w = main;
+  for (let x = 0; x <= j; x++) {
+    const sub = s.subs[x];
+    w = sub && sub.wTouched && parseNum(sub.weight) != null ? parseNum(sub.weight) : dropWeight(w, en.target);
+  }
+  return w;
+}
+// Technik am Satz setzen bzw. entfernen
+function techEnsure(en, i) {
+  const s = en.sets[i], v = variantOf(s);
+  if (!isTech(v)) { delete s.subs; return; }
+  if (!s.subs || s.subVariant !== v) { s.subs = techSubs(en, i, v, s); s.subVariant = v; }
+}
+// Erklärungen (User-Wunsch: ausführlich – was, warum, wann sinnvoll, wann nicht)
+const TECH_INFO = {
+  drop: {
+    what: 'Du trainierst den Satz bis kurz vor das Muskelversagen, nimmst sofort etwa 20 % Gewicht weg und machst ohne Pause weiter – ein- bis zweimal, jeweils wieder bis kurz vors Versagen.',
+    why: 'Du sammelst in sehr kurzer Zeit zusätzliche Wiederholungen nahe am Versagen – genau die zählen für den Muskelaufbau. Ein Reduktionssatz bringt ungefähr so viel Reiz wie zwei normale Sätze, dauert aber nur ein bis zwei Minuten statt fünf bis acht.',
+    when: 'Wenn die Zeit knapp ist und du trotzdem genug Reiz setzen willst. Am besten bei Maschinen, am Kabelzug oder mit Kurzhanteln, wo das Gewicht in Sekunden umgesteckt ist – und im letzten Satz einer Übung.',
+    not: 'Nicht bei schweren Grundübungen wie Kniebeuge, Kreuzheben oder Bankdrücken mit der Langhantel: Die Technik leidet, das Verletzungsrisiko steigt. Nicht, solange du die Bewegung noch lernst, nicht im Deload – und nicht bei jeder Übung: Die Ermüdung steigt deutlich, die Erholung dauert länger.',
+    app: 'Der Hauptsatz behält seine Vorgabe und wird nur mit Reduktionssätzen verglichen. Für jede Stufe schlägt die App etwa 20 % weniger Gewicht vor, als Ziel die Wiederholungen vom letzten Mal plus eine. Zwischen den Stufen läuft keine Pause. Für die Vorermüdung zählt ein Reduktionssatz wie 1,5 Sätze.',
+  },
+  myo: {
+    what: 'Ein Aktivierungssatz bis kurz vors Muskelversagen, dann nur 3–5 Atemzüge Pause (etwa 20 Sekunden) und ein Mini-Satz mit 3–5 Wiederholungen – mit demselben Gewicht. Das wiederholst du drei- bis fünfmal.',
+    why: 'Nach dem Aktivierungssatz arbeitet der Muskel schon mit allen Fasern – jede Wiederholung der Mini-Sätze ist deshalb eine besonders wirksame. Ein Myo-Satz bringt ungefähr so viel Reiz wie zwei bis drei normale Sätze, in zwei bis drei Minuten statt zehn bis zwölf.',
+    warn: 'Wichtig: Ein Myo-Satz bringt deutlich mehr Reiz – aber auch deutlich mehr Ermüdung als ein normaler Satz. Setz ihn bewusst ein, eher für einzelne Übungen und eher zusätzlich zu wenigen normalen Sätzen statt zu vielen.',
+    when: 'Wenn die Zeit knapp ist. Gut bei Isolations- und Maschinenübungen mit mittleren bis höheren Wiederholungen (Aktivierungssatz etwa 12–20 Wdh.), z. B. Seitheben, Beinstrecker, Curls oder Kabelübungen.',
+    not: 'Nicht bei schweren Grundübungen und niedrigen Wiederholungen, nicht, solange du die Technik noch lernst, nicht im Deload und nicht bei jeder Übung eines Trainings.',
+    app: 'Der Aktivierungssatz ist der Hauptsatz: Er behält seine Vorgabe und wird nur mit Myo-Sätzen verglichen. Die Mini-Sätze haben dasselbe Gewicht, Ziel 3–5 Wiederholungen. Steigerung: insgesamt eine Wiederholung mehr als letztes Mal, bis jeder Mini-Satz 5 hat – danach steigt das Gewicht über den Aktivierungssatz. Zwischen den Mini-Sätzen läuft ein 20-Sekunden-Timer. Für die Vorermüdung zählt ein Myo-Satz wie 2 Sätze.',
+  },
+};
+function techInfoHtml(k, open = false) {
+  const x = TECH_INFO[k];
+  if (!x) return '';
+  return `<details class="tech-info"${open ? ' open' : ''}><summary>ⓘ ${TECHS[k]} – was ist das, und wann lohnt er sich?</summary>
+    <p><b>So geht’s:</b> ${x.what}</p><p><b>Warum:</b> ${x.why}</p>${x.warn ? `<p class="tech-warn">⚠️ ${x.warn}</p>` : ''}
+    <p><b>Sinnvoll:</b> ${x.when}</p><p><b>Eher nicht:</b> ${x.not}</p><p><b>So rechnet die App:</b> ${x.app}</p></details>`;
+}
+// Schwere Grundübung? (Hinweis im Plan, wenn dort eine Technik eingestellt ist)
+const techRisky = ex => kindOf(ex) === 'compound';
+// Teil-Satz-Zeilen im Training (im Satz-Raster unter dem Hauptsatz): Reduktion mit Gewicht, Myo mit dem Gewicht des Hauptsatzes
+function techRowsHtml(en, ei, si) {
+  const s = en.sets[si], v = variantOf(s);
+  if (!isTech(v) || !s.subs) return '';
+  const drop = v === 'drop', at = `data-ei="${ei}" data-si="${si}"`;
+  let h = s.subs.map((x, j) => {
+    const w = subWeight(en, si, j);
+    return `<span class="subno ${v}" aria-label="${drop ? `Reduktion ${j + 1}` : `Mini-Satz ${j + 1}`}">${drop ? '↘' : 'M'}${j + 1}</span>
+      ${drop ? `<input type="text" inputmode="decimal" autocomplete="off" class="sub-in ${x.wTouched ? '' : 'prop'}" data-field="tr-sub-w" ${at} data-j="${j}"
+          value="${x.wTouched ? esc(x.weight) : w != null ? fmtNum(w) : ''}" placeholder="kg">`
+        : `<span class="sub-kg" data-subkg="${ei}-${si}-${j}">${w != null ? `${fmtNum(w)} kg` : '–'}</span>`}
+      <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="sub-in ${subDone(x) ? 'done' : ''}" data-field="tr-sub-r" ${at} data-j="${j}"
+        value="${esc(x.reps)}" placeholder="${x.goal || (drop ? 'max' : '3–5')}">
+      <button class="sub-del" data-action="sub-del" ${at} data-j="${j}" aria-label="Teil-Satz entfernen">✕</button>`;
+  }).join('');
+  const more = s.subs.length < Math.max(...TECH_N[v]);
+  h += `<div class="sub-foot">${more ? `<button class="btn small outline" data-action="sub-add" ${at}>+ ${drop ? 'Reduktion' : 'Mini-Satz'}</button>` : ''}
+    <small>${drop ? 'Ohne Pause weiter, je ca. 20 % leichter – bis knapp vors Versagen.' : `Je ${MYO_REST_S} s Pause (3–5 Atemzüge), 3–5 Wdh. – bis knapp vors Versagen.`}</small></div>`;
+  return h;
+}
+// Gewichte der Teil-Sätze nachziehen, wenn sich das Gewicht des Hauptsatzes ändert (ohne alles neu zu zeichnen)
+function techSubSync(ei) {
+  const en = draft.entries[ei];
+  en.sets.forEach((s, si) => (isTech(variantOf(s)) ? s.subs || [] : []).forEach((x, j) => {
+    const w = subWeight(en, si, j);
+    const inp = $view.querySelector(`[data-field="tr-sub-w"][data-ei="${ei}"][data-si="${si}"][data-j="${j}"]`);
+    if (inp && !x.wTouched && document.activeElement !== inp) inp.value = w != null ? fmtNum(w) : '';
+    const kg = $view.querySelector(`[data-subkg="${ei}-${si}-${j}"]`);
+    if (kg) kg.textContent = w != null ? `${fmtNum(w)} kg` : '–';
+  }));
+}
+// Plan (Tagesplan): Intensitätstechnik je Übung – keine / Reduktion / Myo, in welchen Sätzen, wie viele Teil-Sätze
+function techPlanHtml(ex, i) {
+  const t = ex.tech && TECHS[ex.tech.k] ? ex.tech : null;
+  const chip = (act, v, label, on) => `<button class="vchip ${on ? 'on' : ''}" data-action="${act}" data-i="${i}" data-v="${v}">${label}</button>`;
+  let h = `<div class="variants plan tech-row"><span>Intensitäts­technik</span>${chip('plan-tech', '', 'Keine', !t)}${chip('plan-tech', 'drop', 'Reduktion', t && t.k === 'drop')}${chip('plan-tech', 'myo', 'Myo', t && t.k === 'myo')}</div>`;
+  if (!t) return h + `<details class="tech-info"><summary>ⓘ Intensitätstechniken – was ist das?</summary>
+      <p>Reduktions- und Myo-Sätze holen in kurzer Zeit mehr aus einem Satz heraus – sinnvoll vor allem, wenn die Zeit knapp ist.
+        Sie ermüden aber auch deutlich mehr. Die App plant sie nie von selbst ein: Du entscheidest je Übung hier im Plan
+        (gilt dann dauerhaft, mit Steigerung) oder im Training für einzelne Sätze (Satznummer antippen).</p>
+      <p><b>Reduktionssatz:</b> ${TECH_INFO.drop.what}</p><p><b>Myo-Satz:</b> ${TECH_INFO.myo.what}</p></details>`;
+  h += `<div class="variants plan"><span>In</span>${chip('plan-tech-at', 'last', 'Letzter Satz', t.at !== 'all')}${chip('plan-tech-at', 'all', 'Alle Sätze', t.at === 'all')}</div>
+    <div class="variants plan"><span>${t.k === 'drop' ? 'Reduktionen' : 'Mini-Sätze'}</span>${TECH_N[t.k].map(n => chip('plan-tech-n', n, String(n), t.n === n)).join('')}</div>`;
+  if (techRisky(ex)) h += `<p class="complaint-note">⚠️ ${esc(ex.name)} ist eine Grundübung – hier leidet bei einem ${TECHS[t.k]} schnell die Technik. Besser bei Maschinen-, Kabel- oder Isolationsübungen einsetzen.</p>`;
+  if (t.k === 'myo') h += `<p class="hint tech-warn">⚠️ ${TECH_INFO.myo.warn}</p>`;
+  return h + techInfoHtml(t.k);
+}
 
 // k-ter Bezugssatz einer Liste; fehlt er, den letzten nehmen und je Satz Ermüdung abziehen
 function refAt(list, k) {
@@ -2463,6 +2640,7 @@ function applyProposal(en, i, v) {
   const { set: proposed, rule } = proposeSet(en, i, v);
   const set = notHeavierThanBefore(en, i, v, applyPenalty(proposed, tAt(en.target, i), draft.penalty || 0));
   en.sets[i] = set;
+  if (isTech(v)) { set.subs = techSubs(en, i, v, set); set.subVariant = v; }  // Intensitätstechnik (v211): Teil-Sätze
   en.planned[i] = { weight: parseNum(set.weight), reps: parseNum(set.reps), variant: v };
   if (i === 0) en.rule = rule;
 }
@@ -2510,8 +2688,19 @@ function startTrainingTimer() {
 const REST_LINGER = 6000;  // so lange steht „Pause vorbei“ noch da
 const REST_TONES = { beep: 'Piepen', gong: 'Gong', bell: 'Glocke', fanfare: 'Fanfare' };
 const restCfg = () => ({ off: false, vib: true, sound: false, tone: 'beep', ...((data.profile || {}).rest || {}) });
-function restStart(ei) {
+function restStart(ei, si = null, sub = null) {
   if (restCfg().off || !draft) return;
+  // Intensitätstechnik (v211): Reduktion ohne Pause weiter, Myo 20 s bis zum nächsten Mini-Satz – erst danach die normale Pause
+  const ts = si != null && draft.entries[ei] ? draft.entries[ei].sets[si] : null;
+  if (ts && isTech(variantOf(ts)) && (ts.subs || []).length) {
+    const open = ts.subs.findIndex((x, j) => j > (sub == null ? -1 : sub) && !subDone(x));
+    if (open >= 0) {
+      if (variantOf(ts) === 'drop') { delete draft.rest; return; }
+      draft.rest = { ei, end: Date.now() + MYO_REST_S * 1000, total: MYO_REST_S * 1000, myo: [si, open] };
+      if (restCfg().sound) restAudio(true);
+      return;
+    }
+  }
   if (trProgress().cur < 0) { delete draft.rest; return; }
   const en = draft.entries[ei];
   // Supersatz (v210): Pause je Satz, solange als Nächstes die andere Übung dran ist (danach normale Pause)
@@ -2550,6 +2739,10 @@ function restHtml() {
 }
 // Supersatz (v210): welcher Satz als Nächstes dran ist, z. B. „Danach: B2 · Rudern am Kabel“
 function restNextHtml(r) {
+  if (r.myo) {
+    const en = draft.entries[r.ei];
+    return en ? `<button class="trh-next" data-action="tr-jump">Danach: <b>Mini-Satz ${r.myo[1] + 1} · ${esc(en.name)}</b></button>` : '';
+  }
   if (!r.next) return '';
   const [ei, si] = r.next, en = draft.entries[ei], p = draftPairs().get(ei);
   if (!en || !p || isDone(en.sets[si] || {})) return '';
@@ -4114,7 +4307,7 @@ function renderTraining() {
         : `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${feelTargetText(t)}</p>`;
       if (feat('tr-prefat') && (t.fat || 0) >= PREFAT_SHOW - 1e-9) {
         const pi = preFatigueInfo(draftPrefatList(), ei);
-        const parts = [pi.same ? `${pi.same} ${pi.same === 1 ? 'Satz' : 'Sätze'} ${MUSCLES[pi.g] || ''}` : '', pi.help ? `${pi.help} ${pi.help === 1 ? 'Satz' : 'Sätze'} für Hilfsmuskeln` : ''].filter(Boolean);
+        const parts = [pi.same ? `${fmtNum(pi.same)} ${pi.same === 1 ? 'Satz' : 'Sätze'} ${MUSCLES[pi.g] || ''}` : '', pi.help ? `${fmtNum(pi.help)} ${pi.help === 1 ? 'Satz' : 'Sätze'} für Hilfsmuskeln` : ''].filter(Boolean);
         h += `<p class="prefat-note">💤 Vorermüdet: ${parts.join(' und ')} vorher – die App rechnet mit etwa ${Math.round(t.fat * 100)} % weniger Kraft als frisch.</p>`;
       }
     }
@@ -4213,9 +4406,11 @@ function renderTraining() {
         <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>
         <div class="typo-hint" data-typo="${ei}-${si}">${typoHtml(en, ei, si)}</div>
         ${!rirInput && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
-          `<button class="vchip" data-action="tr-feel" data-ei="${ei}" data-si="${si}" data-f="${f.k}">${f.icon}<small>${f.label}</small></button>`).join('')}</div>` : ''}`;
+          `<button class="vchip" data-action="tr-feel" data-ei="${ei}" data-si="${si}" data-f="${f.k}">${f.icon}<small>${f.label}</small></button>`).join('')}</div>` : ''}`
+        + techRowsHtml(en, ei, si);  // Teil-Sätze einer Intensitätstechnik (v211)
     });
-    h += `</div>${rirInput ? `<p class="avg" data-avg="${ei}">${avgTankText(en)}</p>` : ''}
+    const techs = [...new Set(en.sets.map(variantOf).filter(isTech))];
+    h += `</div>${techs.map(k => `<div class="tech-train">${techInfoHtml(k)}</div>`).join('')}${rirInput ? `<p class="avg" data-avg="${ei}">${avgTankText(en)}</p>` : ''}
       ${feat('tr-sets') ? `<div class="row set-btns">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
@@ -4224,7 +4419,7 @@ function renderTraining() {
   });
   if (feat('tr-add')) h += draft.adding ? renderAddExercise()
     : '<button class="btn center" data-action="add-open">+ Übung hinzufügen</button>';
-  h += `${feat('tr-variants') ? '<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam). Sätze mit Pause oder langsam werden nur mit gleich ausgeführten Sätzen verglichen.</p>' : ''}
+  h += `${feat('tr-variants') ? '<p class="hint">Satznummer antippen: Ausführung wechseln (normal → mit Pause → langsam → Reduktion → Myo). Jede Ausführung wird nur mit gleich ausgeführten Sätzen verglichen.</p>' : ''}
     <button class="btn primary" data-action="tr-save">Training speichern</button>
     <div class="spacer"></div>
     <button class="btn danger" data-action="tr-cancel">Training verwerfen</button>`;
@@ -4790,6 +4985,7 @@ function planReplaceExercise(day, i, name) {
   const oldGroup = groupOf(ex);
   if (ex.name.trim()) ex.replacedFrom = ex.name.trim();  // für die Schnellauswahl (zurücktauschen)
   Object.assign(ex, { name, kind: null, variant: '', step: null, max10: knownMax10(name) });
+  delete ex.tech;  // Intensitätstechnik gehört zur Übung (v211)
   // unbekannte Übung: Muskelgruppe der alten behalten, damit das Wochenvolumen stimmt
   ex.group = EXERCISE_GROUPS.has(nameKey(name)) ? null : oldGroup;
   planSwap = null;
@@ -4818,7 +5014,7 @@ function ownExerciseCard(ex, i) {
     ${isBodyweight(ex) ? '' : `<label class="row"><span>Startgewicht<br><small class="hint">nur fürs erste Training</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="ex-start" data-i="${i}"
         placeholder="kg" value="${ex.startWeight == null ? '' : fmtNum(ex.startWeight)}"></label>`}
-    <div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+    <div class="variants plan"><span>Ausführung</span>${Object.entries(EXEC_VARIANTS).map(([v, label]) =>
       `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
     </div>
     <div class="row">
@@ -4911,9 +5107,9 @@ function renderDay({ id }) {
         `<button class="vchip ${kindOf(ex) === k ? 'on' : ''}" data-action="plan-kind" data-i="${i}" data-k="${k}">${label}</button>`).join('')}
       </div>` : ''}
       ${feat('tr-tank-target') ? `<p class="hint kind-hint">Ziel im Tank diese Woche: <b>${weekRirText(kindOf(ex), groupOf(ex))}</b></p>` : ''}
-      ${feat('tr-variants') ? `<div class="variants plan"><span>Ausführung</span>${Object.entries(VARIANTS).map(([v, label]) =>
+      ${feat('tr-variants') ? `<div class="variants plan"><span>Ausführung</span>${Object.entries(EXEC_VARIANTS).map(([v, label]) =>
         `<button class="vchip ${(ex.variant || '') === v ? 'on' : ''}" data-action="plan-variant" data-i="${i}" data-v="${v}">${label}</button>`).join('')}
-      </div>` : ''}
+      </div>${ex.name.trim() ? techPlanHtml(ex, i) : ''}` : ''}
       ${bodyweightRow(ex, i)}
       ${isBodyweight(ex) || !feat('tr-max') ? '' : `<label class="row">
         <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
@@ -5305,7 +5501,7 @@ function startSessionEdit(s) {
     id: s.id,
     entries: s.entries.map(e => ({
       comment: e.comment || '',
-      sets: e.sets.map(st => ({ weight: txt(st.weight), reps: txt(st.reps), rir: txt(st.rir), variant: st.variant })),
+      sets: e.sets.map(st => ({ weight: txt(st.weight), reps: txt(st.reps), rir: txt(st.rir), variant: st.variant, ...(st.subs ? { subs: st.subs } : {}) })),
     })),
   };
 }
@@ -5345,7 +5541,7 @@ function saveSessionEdit() {
   sessionEdit.entries.forEach((e, ei) => {
     const sets = e.sets
       .map(st => ({ weight: parseNum(st.weight), reps: parseNum(st.reps), rir: parseNum(st.rir),
-        ...(st.variant ? { variant: st.variant } : {}) }))
+        ...(st.variant ? { variant: st.variant } : {}), ...(st.subs && isTech(st.variant) ? { subs: st.subs } : {}) }))
       .filter(st => st.weight != null || st.reps != null);
     if (!sets.length) return;
     const en = { ...s.entries[ei], sets };
@@ -5780,6 +5976,12 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 211, date: '2026-11-11', items: [
+    ['⚡ Intensitätstechniken: Reduktions- und Myo-Sätze – im Training je Satz (Satznummer antippen) oder dauerhaft je Übung im Tagesplan.', 'tr-variants'],
+    ['Alle Teil-Sätze werden gespeichert und angezeigt; verglichen und gesteigert wird nur mit gleich ausgeführten Sätzen.', 'tr-variants'],
+    ['Ausführliche Erklärungen, wann sich welche Technik lohnt – und warum ein Myo-Satz mehr ermüdet als ein normaler Satz.', 'tr-variants'],
+    ['„mit Pause“ und „langsam“ gibt es jetzt schon im Modus Standard.', 'tr-variants'],
+  ] },
   { v: 210, date: '2026-11-11', items: [
     ['🔗 Supersätze: Zwei Übungen im Wechsel mit kurzer Pause – im Tagesplan „Als Supersatz koppeln“ oder „Supersätze vorschlagen“.', 'supersets'],
     ['Die geschätzte Trainingsdauer rechnet Supersätze mit ein, und „Wenig Zeit?“ koppelt auf Wunsch erst Übungen, bevor Sätze wegfallen.', 'supersets'],
@@ -6112,7 +6314,10 @@ function draftEntries(day) {
   draft.nutAdapt = adapt;
   const auto = autoSetsForDay(day, setsWeek, draft.deload, data.volume, adapt);
   const exs = day.exercises.filter(e => e.name.trim());
-  const nList = exs.map(x => ({ name: x.name.trim(), n: auto.has(x.id) ? auto.get(x.id) : setsForWeek(x, draft.deload ? bw : setsWeek, bw, adapt) }));
+  const nList = exs.map(x => {
+    const n = auto.has(x.id) ? auto.get(x.id) : setsForWeek(x, draft.deload ? bw : setsWeek, bw, adapt);
+    return { name: x.name.trim(), n: n + (draft.deload ? 0 : techPlanFat(x, n)) };  // Myo/Reduktion ermüden mehr (v211)
+  });
   return exs.map((ex, xi) => {
     const en = { name: ex.name.trim(), ...(ex.ss ? { ss: ex.ss, ssRest: ex.ssRest } : {}) };  // Supersatz (v210)
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
@@ -6129,7 +6334,7 @@ function draftEntries(day) {
     if (!draft.deload && !prog.load) target.hold = true;  // Gewicht/Wdh. vom letzten Mal halten
     if (adapt) target.noLoadUp = true;  // Diät/Minicut angepasst: Gewicht nicht steigern, höchstens 1 Wdh. mehr
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
-    setupEntry(en, target, () => ex.variant);
+    setupEntry(en, target, (i, n) => techVariant(ex, i, n));  // Ausführung bzw. Intensitätstechnik laut Plan (v211)
     return en;
   });
 }
@@ -6161,7 +6366,7 @@ function setupEntry(en, target, variantFor = () => '') {
   en.base = buildSets(en.name, en.target);  // Vorschlag ohne Bezugswoche
   en.sets = [];
   en.planned = [];  // ursprünglicher Vorschlag, damit die Bremse nächste Woche vergleichen kann
-  for (let i = 0; i < n; i++) applyProposal(en, i, variantFor(i) || '');
+  for (let i = 0; i < n; i++) applyProposal(en, i, variantFor(i, n) || '');
   en.note = null;
   en.warmup = null;  // Aufwärmen wird beim Anzeigen passend zum ersten Arbeitssatz vorgeschlagen
   en.warmupEdited = false;
@@ -6560,13 +6765,15 @@ function saveTraining() {
           weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir),
           ...(s.variant ? { variant: s.variant } : {}),
           ...(s.open ? { open: 1 } : {}),
+          ...(isTech(s.variant) && s.subs ? { subs: s.subs.map((x, j) => ({ weight: subWeight(en, en.sets.indexOf(s), j), reps: parseNum(x.reps) }))
+            .filter(x => x.reps != null) } : {}),  // Teil-Sätze (v211)
         }))
         .filter(s => s.weight != null || s.reps != null),
     }))
     .filter(en => en.sets.length);
   // tatsächliche Vorermüdung je Übung (Reihenfolge und Sätze, wie sie gespeichert werden)
   if (!draft.own) entries.forEach((e, i, all) => {
-    const f = preFatigue(all.map(x => ({ name: x.name, n: x.sets.length })), i);
+    const f = preFatigue(all.map(x => ({ name: x.name, n: x.sets.length + techExtra(x.sets) })), i);
     if (f) e.fat = f;
   });
 
@@ -6815,8 +7022,9 @@ function showSuggestions(input, pool) {
 function changeVariant(en, i, v) {
   const s = en.sets[i];
   if (variantOf(s) === v) return;
-  if (!en.base || s.touched) { s.variant = v; return; }
+  if (!en.base || s.touched) { s.variant = v; techEnsure(en, i); return; }
   applyProposal(en, i, v);
+  techEnsure(en, i);
 }
 
 // Beim Ersetzen: bekanntes Max.-Gewicht der gewählten Übung eintragen
@@ -7927,6 +8135,7 @@ const fields = {
     s.manualWeight = true;  // selbst gewähltes Gewicht -> nur noch Wdh. anpassen
     s.touched = true;
     recalcSets(+el.dataset.ei);
+    techSubSync(+el.dataset.ei);  // Reduktions-Gewichte folgen dem Hauptsatz (v211)
     platesSync(+el.dataset.ei);
     saveDraft();
   },
@@ -7937,7 +8146,7 @@ const fields = {
     s.reps = el.value;
     s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
     s.touched = true;
-    if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
+    if (!was && isDone(s)) restStart(+el.dataset.ei, +el.dataset.si);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
     platesSync(+el.dataset.ei);
     saveDraft();
@@ -7974,9 +8183,24 @@ const fields = {
     s.rir = el.value;
     delete s.open;
     s.touched = true;
-    if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
+    if (!was && isDone(s)) restStart(+el.dataset.ei, +el.dataset.si);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
     platesSync(+el.dataset.ei);
+    saveDraft();
+  },
+  // Teil-Sätze einer Intensitätstechnik (v211)
+  'tr-sub-r': el => {
+    const ei = +el.dataset.ei, si = +el.dataset.si, j = +el.dataset.j, sub = draft.entries[ei].sets[si].subs[j];
+    const was = subDone(sub);
+    sub.reps = el.value.replace(/[^0-9]/g, '');
+    el.classList.toggle('done', subDone(sub));
+    if (!was && subDone(sub)) { restStart(ei, si, j); if (!$trHead.hidden) $trHead.innerHTML = trHeadHtml(); }
+    saveDraft();
+  },
+  'tr-sub-w': el => {
+    const ei = +el.dataset.ei, si = +el.dataset.si, j = +el.dataset.j, en = draft.entries[ei], sub = en.sets[si].subs[j];
+    sub.weight = el.value; sub.wTouched = parseNum(el.value) != null;
+    techSubSync(ei);
     saveDraft();
   },
 };
@@ -8501,6 +8725,26 @@ actions['color-hint'] = el => {
   if (el.dataset.go) go('opt', { sec: 'look' }); else render();
 };
 actions['opt-open'] = el => go('opt', { sec: el.dataset.sec });
+
+// Intensitätstechniken (v211)
+actions['plan-tech'] = el => {
+  const ex = findDay(current.params.id).exercises[+el.dataset.i], k = el.dataset.v;
+  if (!k) delete ex.tech;
+  else ex.tech = { k, at: (ex.tech && ex.tech.at) || 'last', n: ex.tech && ex.tech.k === k ? ex.tech.n : TECH_DEF_N[k] };
+  saveData(); render();
+};
+actions['plan-tech-at'] = el => { const ex = findDay(current.params.id).exercises[+el.dataset.i]; ex.tech.at = el.dataset.v; saveData(); render(); };
+actions['plan-tech-n'] = el => { const ex = findDay(current.params.id).exercises[+el.dataset.i]; ex.tech.n = +el.dataset.v; saveData(); render(); };
+actions['sub-add'] = el => {
+  const s = draft.entries[+el.dataset.ei].sets[+el.dataset.si];
+  s.subs.push({ weight: '', reps: '', goal: variantOf(s) === 'myo' ? String(MYO_MIN) : '' });
+  saveDraft(); render();
+};
+actions['sub-del'] = el => {
+  const s = draft.entries[+el.dataset.ei].sets[+el.dataset.si];
+  s.subs.splice(+el.dataset.j, 1);
+  saveDraft(); render();
+};
 
 // Supersätze (v210)
 actions['ss-pick-open'] = el => { planSwap = null; exRename = null; ssPick = { day: current.params.id, i: +el.dataset.i }; render(); };

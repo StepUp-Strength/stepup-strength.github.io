@@ -113,6 +113,8 @@ const TOURS = {
       text: 'Tauscht die Übung dauerhaft im Plan gegen eine andere – ihr Platz und ihre Sätze bleiben gleich.' },
     { id: 'day-ss', sel: '.ss-auto-btn, .ss-wrap .ss-head, .ss-btn', title: '🔗 Supersätze',
       text: 'Zwei Übungen im Wechsel sparen Pausen: erlaubt sind Gegenspieler wie Brust und Rücken oder Muskelgruppen, die nichts miteinander zu tun haben, wie Bauch und Waden. „Supersätze vorschlagen“ koppelt passende Übungen auf einmal, „Lösen“ macht es rückgängig.' },
+    { id: 'day-tech', sel: '.tech-row', title: '⚡ Intensitätstechnik',
+      text: 'Reduktions- oder Myo-Satz für diese Übung – dauerhaft, mit Steigerung. Die App plant so etwas nie von selbst ein. „ⓘ“ erklärt, wann sich welche Technik lohnt.' },
     { id: 'day-order', sel: '[data-action="day-reorder"]', title: 'Reihenfolge',
       text: 'Hier änderst du die Reihenfolge der Übungen an diesem Tag – sie bleibt im Plan, bis du sie wieder änderst.' },
     { id: 'day-step', sel: '[data-action="set-step"]', title: 'Steigerung',

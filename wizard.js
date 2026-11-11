@@ -628,6 +628,8 @@ function wizAltPick(g, pick, k, list) {
 
 // Supersätze (v210): nach Rückfrage im Schritt „Trainingsdauer“ koppelt der Assistent passende Übungen (ssAutoPairs in app.js)
 const wizSsAsk = () => feat('supersets') && wiz && wiz.mode !== 'own';
+// Intensitätstechniken (v211): nur, wenn man sie in der Vorschau je Übung wählt – gilt für die Übung an allen Tagen
+const wizTech = name => techOn() && wiz && wiz.tech && wiz.tech[nameKey(name)] || null;
 const wizPairUp = exs => wizSsAsk() && wiz.ss ? ssApply(exs, ssAutoPairs(exs)) : exs;
 
 function buildPlanDays() {
@@ -677,7 +679,8 @@ function buildPlanDays() {
       name: names[di],
       intensity: ints[di],
       groups: [...d.groups],
-      exercises: wizPairUp(list.map(([name, g]) => withDefaults({ id: uid(), name, group: g, max10: knownMax10(name) }))),
+      exercises: wizPairUp(list.map(([name, g]) => withDefaults({ id: uid(), name, group: g, max10: knownMax10(name),
+        ...(wizTech(name) ? { tech: { ...wizTech(name) } } : {}) }))),
     };
   });
 }
@@ -1485,7 +1488,10 @@ function renderWizard() {
         ? `<small class="ss-tag">🔗 Supersatz ${pairsOf(day).get(ei).role} · mit ${esc(day.exercises[ei + (pairsOf(day).get(ei).role === 'A' ? 1 : -1)].name)}</small><br>` : ''}<b>${esc(e.name)}</b><br>
         <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
         ${libInfoBtn(e.name)}
+        ${techOn() ? `<button class="icon-btn swap ${wizTech(e.name) ? 'on' : ''}" data-action="wiz-tech-open" data-n="${esc(e.name)}" aria-label="Intensitätstechnik für ${esc(e.name)}">⚡<small>Technik</small></button>` : ''}
         <button class="icon-btn swap" data-action="wiz-swap-open" data-d="${di}" data-n="${esc(e.name)}" aria-label="${esc(e.name)} ersetzen">⇄<small>Ersetzen</small></button></li>
+        ${wizTech(e.name) && wiz.techOpen !== nameKey(e.name) ? `<li class="wiz-tech-note">⚡ ${TECHS[wizTech(e.name).k]} im letzten Satz</li>` : ''}
+        ${wiz.techOpen === nameKey(e.name) ? `<li class="wiz-swap wiz-tech">${wizTechPanel(e)}</li>` : ''}
         ${open(e) ? `<li class="wiz-swap">${wizSwapPanel(e.name, day)}</li>` : ''}`).join('') ||
         '<li class="hint">Keine Übungen</li>'}</ul>
       <p class="hint">Summe pro Training: ${weeks.map(m => [...m.values()].reduce((a, b) => a + b, 0)).join(' · ')}
@@ -1506,6 +1512,17 @@ function renderWizard() {
       : `<button class="btn primary" data-action="wiz-pday" data-i="${pdi + 1}">Nächster Tag ›</button>`}</div>
     ${lastDay ? '<p class="hint">Zum Schluss noch drei kurze Fragen: Wiederholungsbereich, Deload und Steigerung.</p>' : ''}
     ${needsCoach() ? coachNote() : ''}<button class="btn outline" data-action="wiz-adjust">Übungen anpassen</button>`;
+}
+
+// Vorschau: Intensitätstechnik je Übung wählen (die App schlägt keine vor)
+function wizTechPanel(e) {
+  const cur = wizTech(e.name), chip = (k, l) => `<button class="vchip ${(cur ? cur.k : '') === k ? 'on' : ''}" data-action="wiz-tech" data-n="${esc(e.name)}" data-k="${k}">${l}</button>`;
+  return `<p class="lbl">Intensitätstechnik für „${esc(e.name)}“</p>
+    <div class="variants">${chip('', 'Keine')}${chip('drop', 'Reduktionssatz')}${chip('myo', 'Myo-Satz')}</div>
+    <p class="hint">Gilt im letzten Satz dieser Übung, an allen Tagen, an denen sie steht. Feinheiten (alle Sätze, Anzahl der Teil-Sätze)
+      stellst du später im Tagesplan ein.${kindOf(e) === 'compound' ? ' ⚠️ Bei Grundübungen leidet damit schnell die Technik – besser bei Maschinen-, Kabel- oder Isolationsübungen.' : ''}</p>
+    ${cur ? techInfoHtml(cur.k) : techInfoHtml('drop') + techInfoHtml('myo')}
+    <button class="btn small" data-action="wiz-tech-open" data-n="${esc(e.name)}">Fertig</button>`;
 }
 
 /* --- Aktionen & Felder --- */
@@ -1750,6 +1767,13 @@ Object.assign(actions, {
   // Vorlage wählen: Tage neu setzen, Volumen/RIR/Übungen werden danach neu vorgeschlagen
   // Volumen-Variante: Volumen und Tank werden danach neu vorgeschlagen
   'wiz-quick': () => wizQuick(),  // Einfach-Modus: Plan direkt fertigstellen
+  'wiz-tech-open': el => { const k = nameKey(el.dataset.n); wiz.techOpen = wiz.techOpen === k ? null : k; render(); },
+  'wiz-tech': el => {
+    wiz.tech = wiz.tech || {};
+    const k = nameKey(el.dataset.n), t = el.dataset.k;
+    if (t) wiz.tech[k] = { k: t, at: 'last', n: TECH_DEF_N[t] }; else delete wiz.tech[k];
+    render();
+  },
   'wiz-ss': el => {
     const v = el.dataset.v === '1';
     if (!!wiz.ss !== v) { wiz.ss = v; wiz.volKey = {}; }
