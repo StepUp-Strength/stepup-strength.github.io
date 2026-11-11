@@ -2684,3 +2684,24 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .share-btn { margin-top: 4px; }
 .share-wrap { display: flex; justify-content: center; margin: 0 0 14px; }
 .share-img { display: block; width: min(100%, 340px); aspect-ratio: 9 / 16; border-radius: 22px; background: var(--fill); box-shadow: var(--shadow); object-fit: cover; }
+/* ---------- v207: Optionen mit Unterseiten, Textgröße, Plan, Ernährung, Kleinigkeiten ---------- */
+.range .chip.on::before { content: none; }
+.mode-seg button { font-size: 16px; }
+.mode-desc { margin: 2px 0 0; }
+.opt-list { margin-top: 2px; }
+.opt-row { display: flex; align-items: center; gap: 14px; }
+.opt-ico { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 13px; background: var(--accent-soft); font-size: 22px; }
+.opt-txt { flex: 1; min-width: 0; }
+.opt-row.warn small { color: var(--warn-text); font-weight: 600; }
+.plan-btns { margin: 4px 0 12px; }
+.plan-btns .btn { flex: 1; min-width: 0; margin: 0; font-size: 16.5px; }
+.plan-days .day-txt { font-size: 18px; line-height: 1.25; }
+.bw-entries summary small { margin-left: 8px; font-weight: 500; color: var(--muted); }
+.bw-entries .list { margin: 10px 0 0; }
+/* Textgröße: Inhalt größer, Kopf- und Fußleiste bleiben (CSS zoom, Diagramm-Antippen rechnet es heraus) */
+:root[data-size="l"] #view, :root[data-size="l"] .tour-bubble, :root[data-size="l"] .welcome-card { zoom: 1.12; }
+:root[data-size="xl"] #view, :root[data-size="xl"] .tour-bubble, :root[data-size="xl"] .welcome-card { zoom: 1.25; }
+.seg.three button.on::before, .tr-viewmode button.on::before { content: none; }
+
+.meas-link { display: block; margin: 2px 4px 14px; padding: 6px 0; font-size: 15px; font-weight: 600; text-align: left; }
+[data-look="plain"] .meas-link { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }

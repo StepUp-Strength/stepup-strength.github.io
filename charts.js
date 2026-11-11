@@ -836,12 +836,11 @@ function lastMeasures() {
   }
   return out;
 }
-// Knopf im Ernährungs-Reiter
+// Ernährungs-Reiter: nur ein kleiner Textlink weit unten (User 2026-11-11: nutzen wenige, nur beiläufig erwähnen)
 function measBtnHtml() {
-  const last = lastMeasures(), keys = MEASURES.filter(([k]) => last[k]);
-  const sub = keys.length ? keys.slice(0, 3).map(([k, l]) => `${l} ${fmtNum(last[k].v)} cm`).join(' · ')
-    + ` · zuletzt ${fmtDate(keys.map(([k]) => last[k].date).sort().pop() + 'T12:00:00')}` : 'Taille, Hüfte, Brust … – freiwillig, mit Verlauf';
-  return `<button class="btn nav meas-btn" data-action="meas-open">📏 Körpermaße<small>${sub}</small></button>`;
+  const last = lastMeasures(), k = MEASURES.find(([x]) => last[x]);
+  return `<button class="link-btn meas-link" data-action="meas-open">${k
+    ? `Körpermaße · zuletzt ${k[1]} ${fmtNum(last[k[0]].v)} cm ›` : 'Auch Körpermaße wie Taille oder Hüfte festhalten ›'}</button>`;
 }
 function renderMeasures() {
   if (!measForm) measForm = { date: todayISO(), v: {} };
@@ -1104,7 +1103,9 @@ document.addEventListener('pointercancel', () => { chartDrag = null; });
 function selectNearest(clientX) {
   const svg = document.querySelector('.chart-svg');
   if (!svg || !chartGeo.vis.length) return;
-  const x = clientX - svg.getBoundingClientRect().left;
+  // Textgröße (v207, CSS zoom): Bildschirm-Pixel auf Diagramm-Pixel umrechnen
+  const rect = svg.getBoundingClientRect(), z = rect.width / (svg.width.baseVal.value || rect.width) || 1;
+  const x = (clientX - rect.left) / z;
   let best = null, dist = Infinity;
   for (const p of chartGeo.vis) {
     const d = Math.abs(chartGeo.X(p.t) - x);

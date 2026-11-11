@@ -24,7 +24,7 @@ function errLog(msg, stack) {
     localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(-ERR_MAX)));
     if (!errToastShown && typeof toast === 'function') {
       errToastShown = true;  // nur einmal pro Sitzung Bescheid geben
-      setTimeout(() => { try { toast('Da ist etwas schiefgelaufen – steht unter Optionen → Fehlerprotokoll'); } catch (e) { /* egal */ } }, 0);
+      setTimeout(() => { try { toast('Da ist etwas schiefgelaufen – steht unter Optionen → Hilfe & Info'); } catch (e) { /* egal */ } }, 0);
     }
   } catch (e) { /* das Protokoll darf selbst nie stören */ }
 }
@@ -399,8 +399,8 @@ function storageWarnCard() {
   const pct = Math.round(dataBytes() / LS_LIMIT * 100);
   if (pct < 80) return '';
   return `<div class="card hints"><h2>💾 Speicher fast voll (${pct} %)</h2>
-    <p class="hint">Bitte sichere deine Daten (Optionen → Sicherung exportieren). Wird der Speicher voll, kann ein neues Training nicht gespeichert werden.</p>
-    <button class="btn" data-action="tab" data-tab="data">Zu den Optionen</button></div>`;
+    <p class="hint">Bitte sichere deine Daten (Optionen → Deine Daten → Sicherung exportieren). Wird der Speicher voll, kann ein neues Training nicht gespeichert werden.</p>
+    <button class="btn" data-action="opt-open" data-sec="data">Zu den Optionen</button></div>`;
 }
 
 function loadDraft() {
@@ -3073,7 +3073,7 @@ function installStepsHtml() {
       <li><b>„App installieren“</b> oder <b>„Zum Startbildschirm hinzufügen“</b> wählen.</li><li>Bestätigen – fertig.</li></ol>`;
   }
   const move = hasOwnData() ? `<li><b>Zuerst sichern:</b> Auf dem iPhone hat die App auf dem Home-Bildschirm einen eigenen Speicher und
-      startet dort leer. Exportiere deshalb jetzt eine Sicherung und importiere sie danach dort unter Optionen → „Sicherung importieren“.
+      startet dort leer. Exportiere deshalb jetzt eine Sicherung und importiere sie danach dort unter Optionen → Deine Daten → „Sicherung importieren“.
       <button class="btn outline" data-action="export">Sicherung exportieren</button></li>` : '';
   return `<ol class="install-steps">${move}
     <li>Unten in Safari auf das Teilen-Symbol ${SHARE_ICON} tippen (iPad: oben rechts).</li>
@@ -3674,21 +3674,27 @@ function renderPlan() {
       : 'Noch kein Plan vorhanden. Erstelle deinen ersten Plan.'}</p>
       <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
   }
-  h += `<button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
-    <button class="btn outline" data-action="plan-end">⏹ „${esc(active.name)}“ beenden</button>
+  // v207: Neuer Plan / Beenden dezent – bei aktivem Plan selten gebraucht
+  h += `<div class="row plan-btns"><button class="btn outline" data-action="wiz-start">✨ Neuer Plan</button>
+      <button class="btn outline" data-action="plan-end">⏹ Beenden</button></div>
     ${libBtn}
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
     h += '<p class="hint">Dieser Plan hat noch keine Trainingstage.</p>';
   }
   if (typeof pendingDaysHtml === 'function') h += pendingDaysHtml();  // Tage, die noch erstellt werden müssen (wizard.js)
+  // Dauer je Tag: eine Zahl für die aktuelle Woche (v207, vorher Spanne Intro bis Höhepunkt)
+  const ci = active.own ? null : cycleInfo();
+  h += '<div class="plan-days">';
   data.days.forEach((day, i) => {
-    const [lo, hi] = estRange(day, active);
     const open = !day.exercises.some(e => e.name.trim());
+    const est = open ? 0 : ci ? estDuration(day, ci.week, active, ci.deload) : estRange(day, active)[1];
+    const n = day.exercises.filter(e => e.name.trim()).length;
     h += `<button class="btn nav day-btn ${open ? 'pending' : ''}" data-action="${open && active.byHand ? 'own-resume' : 'open-day'}" data-id="${day.id}">
       <span class="day-no">${open ? '⏳' : i + 1}</span><span class="day-txt">${esc(day.name)}${open ? '<small>noch zu erstellen</small>'
-        : hi ? `<small>${estText(lo, hi)}${lo !== hi ? ' (Intro bis Höhepunkt)' : ''}</small>` : ''}</span></button>`;
+        : `<small>${n} Übung${n === 1 ? '' : 'en'}${est ? ` · ${estText(est)}${ci ? (ci.deload ? ' im Deload' : ci.week === 1 ? ' in der Intro-Woche' : ` in Woche ${ci.week}`) : ''}` : ''}</small>`}</span></button>`;
   });
+  h += '</div>';
   if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
     h += `<p class="hint">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
@@ -4911,14 +4917,15 @@ const readinessText = r => {
 };
 
 // Modus wählen (Optionen)
+// v207: kompakt – drei Knöpfe nebeneinander, darunter die Beschreibung des gewählten Modus
 function modeCard() {
   const m = appMode();
   return `<div class="card mode-card">
       <h2>Modus</h2>
-      <div class="mode-opts">${Object.entries(APP_MODES).map(([k, x]) =>
-        `<button class="split-opt ${m === k ? 'on' : ''}" data-action="mode-set" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
-      <p class="hint">Bestimmt, wie viel die App zeigt und fragt. Die Trainingssteuerung ist in allen Modi dieselbe: Was du nicht siehst,
-        läuft mit der Empfehlung der App weiter. Ein Wechsel ändert nichts an deinen Daten.</p>
+      <div class="seg three mode-seg">${Object.entries(APP_MODES).map(([k, x]) =>
+        `<button class="${m === k ? 'on' : ''}" data-action="mode-set" data-m="${k}">${x.label}</button>`).join('')}</div>
+      <p class="hint mode-desc"><b>${APP_MODES[m].icon} ${APP_MODES[m].label}:</b> ${APP_MODES[m].text} Ein Wechsel ändert nichts an deinen Daten –
+        die Trainingssteuerung ist in allen Modi dieselbe.</p>
     </div>`;
 }
 
@@ -4952,8 +4959,37 @@ function prefatHelpHtml() {
   </div>`;
 }
 
+/* ---------- Optionen (v207, User-Wunsch 2026-11-11): Hauptseite + Unterseiten ---------- */
+// Vorher eine ~5.900 px lange Seite. Jetzt: Modus kompakt, darunter je Bereich eine Zeile -> views.opt { sec }.
+const SIZES = { '': 'Normal', l: 'Groß', xl: 'Sehr groß' };
+const OPT_SECS = {
+  look: { icon: '🎨', title: 'Aussehen', render: () => appearanceCard(),
+    sub: () => { const p = data.profile || {}; return [PROFILE_COLORS[profileColor()].label, THEME_MODES[p.theme || ''], LOOKS[p.look || ''], `Schrift ${SIZES[p.size || '']}`].join(' · '); } },
+  train: { icon: '🏋️', title: 'Training', render: () => restCard() + platesCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard(),
+    sub: () => `Pausen-Timer ${restCfg().off ? 'aus' : 'an'} · Langhantel ${barKg()} kg · Einführungen` },
+  me: { icon: '👤', title: 'Profil & Ernährung', render: () => profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : ''),
+    sub: () => [(data.profile || {}).name || 'Name, Geschlecht', 'Hinweise zur Ernährung', typeof mcAvailable === 'function' && mcAvailable() ? 'Zykluskalender' : ''].filter(Boolean).join(' · ') },
+  data: { icon: '💾', title: 'Deine Daten', render: () => dataSecHtml(),
+    sub: () => `${data.sessions.length} Trainings · ${data.lastExport ? `letzte Sicherung vor ${daysSinceISO(data.lastExport)} Tag${daysSinceISO(data.lastExport) === 1 ? '' : 'en'}` : 'noch nie gesichert'}`,
+    warn: () => backupDue() && data.sessions.length >= 2 },
+  info: { icon: 'ℹ️', title: 'Hilfe & Info', render: () => infoSecHtml(),
+    sub: () => { const n = errLoad().length; return `Was ist neu · Fehlerprotokoll${n ? ` (${n})` : ''} · Über die App`; } },
+};
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + restCard() + platesCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  const rows = Object.entries(OPT_SECS).map(([k, s]) => `<button class="btn nav opt-row ${s.warn && s.warn() ? 'warn' : ''}" data-action="opt-open" data-sec="${k}">
+      <span class="opt-ico" aria-hidden="true">${s.icon}</span><span class="opt-txt">${s.title}<small>${esc(s.sub())}</small></span></button>`).join('');
+  return modeCard() + `<div class="opt-list">${rows}</div><p class="hint app-version" id="app-version"></p>`;
+}
+views.opt = { title: p => (OPT_SECS[p.sec] || { title: 'Optionen' }).title, tab: 'data', back: 'data',
+  render: p => OPT_SECS[p.sec] ? OPT_SECS[p.sec].render() : '<p class="hint">Bereich nicht gefunden.</p>',
+  after: () => { showAppVersion(); storageInfoFill(); persistFill(); } };
+function infoSecHtml() {
+  return `${whatsNewOptionsCard()}${errCard()}
+    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
+    <p class="hint app-version" id="app-version"></p>`;
+}
+function dataSecHtml() {
+  return `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -4977,10 +5013,6 @@ function renderData() {
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht, Körpermaße und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
-    ${whatsNewOptionsCard()}
-    ${errCard()}
-    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
-    <p class="hint app-version" id="app-version"></p>
 `;
 }
 
@@ -4989,6 +5021,11 @@ function renderData() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 207, date: '2026-11-11', items: [
+    ['Optionen aufgeräumt: Die Einstellungen sind jetzt nach Bereichen sortiert – Aussehen, Training, Profil, Deine Daten, Hilfe.'],
+    ['Textgröße: Unter Optionen → Aussehen kannst du Schrift und Knöpfe größer stellen.'],
+    ['Ernährung und Plan übersichtlicher: Das Körpergewicht steht direkt unter „Heute gegessen“, die Grundlagen als Zeile ganz unten.'],
+  ] },
   { v: 206, date: '2026-11-11', items: [
     ['Ergebnis teilen: Nach dem Training malt die App ein Bild mit Dauer, bewegtem Gewicht und neuen Bestleistungen – zum Teilen in WhatsApp, Instagram & Co.'],
     ['Die Werte vom letzten Mal stehen im Training wieder immer sichtbar bei jeder Übung.'],
@@ -4998,14 +5035,14 @@ const CHANGES = [
     ['Fehlerprotokoll: Hakt einmal etwas, merkt sich die App den Fehler (ohne Trainingsdaten). Unter Optionen kannst du ihn an den Entwickler schicken.'],
   ] },
   { v: 204, date: '2026-11-11', items: [
-    ['Scheiben-Rechner: Bei Langhantel-Übungen steht im Training, welche Scheiben auf jede Seite gehören. Stange und deine Scheiben stellst du unter Optionen → Langhantel ein.'],
-    ['Körpermaße: Unter Ernährung trägst du Taille, Hüfte, Brust und mehr ein – mit Verlauf.'],
+    ['Scheiben-Rechner: Bei Langhantel-Übungen steht im Training, welche Scheiben auf jede Seite gehören. Stange und deine Scheiben stellst du unter Optionen → Training ein.'],
+    ['Nebenbei: Ganz unten bei Ernährung lassen sich auch Körpermaße wie die Taille festhalten.'],
   ] },
   { v: 203, date: '2026-11-11', items: [
     ['Diagramme, Statistik und Erfolge stehen jetzt im Verlauf. Eine Übung zeigt Diagramm und alle Sätze auf einer Seite – unten sind es nur noch fünf Reiter.'],
   ] },
   { v: 202, date: '2026-11-11', items: [
-    ['Pausen-Timer: Nach jedem Satz läuft oben die Pause – auf Wunsch mit Vibration oder Ton (Optionen → Pausen-Timer).'],
+    ['Pausen-Timer: Nach jedem Satz läuft oben die Pause – auf Wunsch mit Vibration oder Ton (Optionen → Training).'],
   ] },
   { v: 201, date: '2026-11-11', items: [
     ['Startseite aufgeräumt: Der nächste Trainingstag steht ganz oben, die Zyklus-Karte klappt auf, wenn du sie antippst.'],
@@ -5041,7 +5078,7 @@ function whatsNewCard() {
   const show = items.slice(0, 5);
   return `<div class="card hints whats-new"><p><b>✨ Neu in der App</b></p>
       <ul class="wn-list">${show.map(t => `<li>${t}</li>`).join('')}</ul>
-      ${items.length > show.length ? `<p class="hint">… und ${items.length - show.length} weitere – alle unter Optionen → „Was ist neu“.</p>` : ''}
+      ${items.length > show.length ? `<p class="hint">… und ${items.length - show.length} weitere – alle unter Optionen → Hilfe & Info.</p>` : ''}
       <button class="btn primary" data-action="wn-ok">Alles klar</button></div>`;
 }
 // Optionen: alle Neuerungen zum Nachlesen
@@ -5073,7 +5110,7 @@ function errCard() {
       <small>${list.length ? `${list.length} ${list.length === 1 ? 'Eintrag' : 'Einträge'}` : 'keine Fehler ✓'}</small></summary>
     ${list.length ? `<ul class="err-list">${[...list].reverse().slice(0, 10).map(x => `<li><small>${fmtErrTime(x.t)} · ${esc(x.view || '–')}${x.n > 1 ? ` · ${x.n}×` : ''}</small>${esc(x.msg)}</li>`).join('')}</ul>
       <p class="hint">Hakt etwas? Schick das Protokoll an den Entwickler. Es enthält keine Trainingsdaten – nur Fehlertext, Ansicht, App-Version und Gerätetyp.</p>
-      <div class="row"><button class="btn primary" data-action="err-share">Teilen / Kopieren</button>
+      <div class="row"><button class="btn primary" data-action="err-share">Weitergeben</button>
         <button class="btn" data-action="err-clear">Löschen</button></div>`
     : '<p class="hint">Bisher ist kein Fehler aufgetreten. Falls doch einmal etwas hakt, steht es hier – zum Weitergeben an den Entwickler.</p>'}
   </details>`;
@@ -7340,6 +7377,8 @@ function applyTheme() {
   root.dataset.accent = profileColor();
   const mode = (data.profile && data.profile.theme) || '';
   if (mode) root.dataset.theme = mode; else delete root.dataset.theme;
+  const size = data.profile && data.profile.size;  // Textgröße (v207): '' | 'l' | 'xl'
+  if (size === 'l' || size === 'xl') root.dataset.size = size; else delete root.dataset.size;
   plainSync();
   // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
   const [light, dark] = plainOn() ? ['#f4f4f5', '#0e0e10'] : PROFILE_COLORS[profileColor()].bg;  // Schlicht: neutral
@@ -7445,6 +7484,10 @@ function appearanceCard() {
       <p class="hint">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
         „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
         „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
+      <p class="lbl">Textgröße</p>
+      <div class="seg three size-seg">${Object.entries(SIZES).map(([k, l]) =>
+        `<button class="${((p.size || '') === k) ? 'on' : ''}" data-action="profile-size" data-k="${k}">${l}</button>`).join('')}</div>
+      <p class="hint">Macht Schrift, Felder und Knöpfe auf allen Seiten größer – gut lesbar auch ohne Brille.</p>
       <p class="lbl">Stil</p>
       <div class="seg two">${Object.entries(LOOKS).map(([k, l]) =>
         `<button class="${((p.look || '') === k) ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
@@ -7657,7 +7700,13 @@ actions['profile-color'] = el => {
 actions['color-hint'] = el => {
   data.profile = { ...(data.profile || {}), colorHint: true };
   saveData();
-  if (el.dataset.go) go('data'); else render();
+  if (el.dataset.go) go('opt', { sec: 'look' }); else render();
+};
+actions['opt-open'] = el => go('opt', { sec: el.dataset.sec });
+// Textgröße (v207): vergrößert den Inhalt (#view), Kopf- und Fußleiste bleiben gleich
+actions['profile-size'] = el => {
+  data.profile = { ...(data.profile || {}), size: el.dataset.k || null };
+  saveData(); applyTheme(); render();
 };
 fields['profile-name'] = el => {
   data.profile = { ...(data.profile || {}), name: el.value.trim() };

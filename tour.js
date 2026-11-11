@@ -191,6 +191,11 @@ const TOURS = {
   data: [
     { id: 'opt-mode', sel: '.mode-card', title: 'Modus',
       text: 'Einfach, Standard oder Experte bestimmt, wie viele Einstellungen und Erklärungen du siehst. Deine Daten bleiben beim Wechsel erhalten – neue Funktionen stellt dir die App dann kurz vor.' },
+    { id: 'opt-secs', sel: '.opt-list', title: 'Alle Einstellungen',
+      text: 'Darunter sind die Einstellungen nach Bereichen sortiert: Aussehen (auch die Textgröße), Training, Profil, deine Daten mit der Sicherung und Hilfe.' },
+  ],
+  // Unterseiten der Optionen (v207)
+  opt: [
     { id: 'opt-tour', sel: '[data-action="tour-reset"]', title: 'Einführungen',
       text: 'Hier lässt du dir alle Einführungen noch einmal zeigen.' },
     { id: 'opt-look', sel: '.color-grid', title: 'Aussehen',
@@ -201,6 +206,18 @@ const TOURS = {
       text: 'Deine Daten liegen nur auf diesem Handy. Sichere sie regelmäßig – die Datei kannst du z. B. in iCloud, Google Drive oder per Mail ablegen.' },
     { id: 'opt-import', sel: '[data-action="import"]', title: 'Sicherung laden',
       text: 'Lädt eine gesicherte Datei wieder – z. B. auf einem neuen Handy.' },
+  ],
+  measures: [
+    { id: 'meas-form', sel: '.meas-form', title: 'Körpermaße eintragen',
+      text: 'Trag nur ein, was du messen möchtest – alle Felder sind freiwillig. Daneben steht jeweils dein letzter Wert.' },
+    { id: 'meas-pick', sel: '.meas-pick', title: 'Verlauf je Maß',
+      text: 'Wähle ein Maß, um zu sehen, wie es sich entwickelt – z. B. die Taille in einer Diät.' },
+  ],
+  share: [
+    { id: 'share-img', sel: '.share-wrap', title: 'Dein Bild',
+      text: 'Die App malt aus deinem Training ein Bild für Story oder Status – ohne Körpergewicht und Gesundheitsdaten.' },
+    { id: 'share-send', sel: '[data-action="share-send"]', title: 'Teilen',
+      text: 'Öffnet das Teilen-Menü deines Handys, z. B. für WhatsApp oder Instagram. Mit „Bild speichern“ landet es in deinen Fotos bzw. Downloads.' },
   ],
   library: [
     { id: 'lib-search', sel: '.lib-search', title: 'Suchen',

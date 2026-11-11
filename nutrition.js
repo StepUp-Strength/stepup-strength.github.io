@@ -497,7 +497,8 @@ function nutBasicsCard(kcal, kg) {
   const seen = !!(data.profile && data.profile.nutBasicsSeen) || !nutHintsOn();
   const fiber = kcal ? Math.round(kcal / 100) : null;  // 10 g je 1.000 kcal
   const water = kg ? fmtNum(round1(kg / 20)) : null;   // 1 Liter je 20 kg Körpergewicht
-  return `<details class="card nut-help nut-basics" ${seen ? '' : 'open'}>
+  // v207: immer eingeklappt (steht jetzt als Zeile ganz unten)
+  return `<details class="card nut-help nut-basics">
       <summary data-action="nut-basics-sum">🥗 Grundlagen: gut und ausgewogen essen</summary>
       <p>Kalorien und Eiweiß bestimmen, ob du ab- oder zunimmst und Muskeln aufbaust. <b>Wie gesund</b> du isst, hängt aber
         vor allem davon ab, <b>was</b> auf dem Teller liegt. Diese Faustregeln helfen:</p>
@@ -1194,7 +1195,12 @@ function renderNutrition() {
   const planOn = typeof nutPlanActive === 'function' && nutPlanActive();
   // Grundlagen-Karte ganz oben (mit dem Tagesziel für die persönliche Ballaststoff-Menge, falls bekannt)
   const dayKcal = n && nutPaused(n) ? null : planOn ? nutForDay(null).kcal : n && nutReady(n) && kg != null ? nutForDay(nutCalc(n, kg)).kcal : null;
-  h += nutBasicsCard(dayKcal, kg != null ? kg : currentBodyweight());
+  // v207: Grundlagen als eingeklappte Zeile ganz unten; Körpergewicht direkt unter „Heute gegessen“ (bwBlock), Einträge zuklappbar
+  const paused = n && nutPaused(n);
+  const intakeShown = !paused && (planOn || (n && nutReady(n) && kg != null));
+  const bwBlock = `<h2>Körpergewicht</h2>${intakeShown ? '<p class="hint nut-small">Wiege dich 3–4× pro Woche, am besten morgens nach dem Aufstehen. Die App braucht das für ihre Kalorienvorschläge.</p>' : ''}${bwCard()}${feat('nut-health') && !intakeShown ? healthCard() : ''}${rangeRow()}
+    <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>`;
+  let bwDone = false;
   if (n && nutPaused(n)) {
     h += nutLowCard(n, null) + nutPauseCard(n);
   } else if (planOn && !(n && nutReady(n) && kg != null)) {
@@ -1226,6 +1232,7 @@ function renderNutrition() {
       ${nutPhaseHint(n)}
       ${typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanCard() : nutTargetCard(n, c, true)}
       ${nutIntakeCard(n, c)}
+      ${(bwDone = true) && bwBlock}
       ${feat('nut-history') ? nutHistoryCard(n, nutForDay(c)) : ''}
       ${nutMeasuredCard(n, c)}
       ${nutGoalCard(n, c, kg)}
@@ -1242,14 +1249,15 @@ function renderNutrition() {
         Schwangerschaft und Stillzeit oder bei Essstörungen bitte vorher ärztlich abklären.</p>`;
   }
   // Ernährungstagebuch (und darunter Plan-Import) auch ohne fertig eingerichtete Phase erreichbar
-  const paused = n && nutPaused(n);
   if (paused || (!planOn && (!n || !nutReady(n) || kg == null))) {
     h += `<button class="btn nav" data-action="food-open">🍎 Ernährungstagebuch<small>Eintragen, was du isst</small></button>${NP_OPEN_BTN}`;
   }
   // Nur ein Health-Knopf: steht in „Heute gegessen“; ohne diese Karte (Ernährung nicht eingerichtet) hier beim Gewicht
-  const intakeShown = !paused && (planOn || (n && nutReady(n) && kg != null));
-  h += `<h2>Körpergewicht</h2>${intakeShown ? '<p class="hint nut-small">Wiege dich 3–4× pro Woche, am besten morgens nach dem Aufstehen. Die App braucht das für ihre Kalorienvorschläge.</p>' : ''}${bwCard()}${feat('nut-health') && !intakeShown ? healthCard() : ''}${rangeRow()}
-    <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${typeof measBtnHtml === 'function' ? measBtnHtml() : ''}${bwList()}`;
+  if (!bwDone) h += bwBlock;
+  const list = bwList();
+  if (list) h += `<details class="card about-sec bw-entries"><summary><b>Alle Gewichts-Einträge</b><small>${data.bodyweight.length}</small></summary>${list.replace('<h2>Einträge</h2>', '')}</details>`;
+  if (typeof measBtnHtml === 'function') h += measBtnHtml();  // Körpermaße nur beiläufig (v207, User-Wunsch)
+  h += nutBasicsCard(dayKcal, kg != null ? kg : currentBodyweight());
   return h;
 }
 

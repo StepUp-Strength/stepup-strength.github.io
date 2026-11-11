@@ -112,7 +112,7 @@ function aboutRights() {
   </div>`;
 }
 
-views.about = { title: 'Über die App', tab: 'data', back: 'data', render: renderAbout, after: () => showAppVersion() };
+views.about = { title: 'Über die App', tab: 'data', back: () => ['opt', { sec: 'info' }], render: renderAbout, after: () => showAppVersion() };
 
 Object.assign(actions, {
   'about': () => go('about'),
