@@ -1,6 +1,41 @@
 /* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
+/* ---------- Fehlerprotokoll (v205, User-Wunsch 2026-11-11) ---------- */
+// Unerwartete Fehler nur auf dem Gerät merken – eigener Schlüssel, NICHT in den Daten und nicht in der Sicherung, höchstens
+// ERR_MAX Einträge, ohne Trainingsdaten: Fehlertext, Stelle (nur Dateiname:Zeile), Ansicht, App-Version. Gleicher Fehler direkt
+// hintereinander wird gezählt statt doppelt gespeichert. Optionen → „Fehlerprotokoll“: teilen/kopieren, löschen.
+const ERR_KEY = 'trainingsapp-fehler', ERR_MAX = 30;
+let errToastShown = false;
+function errLoad() {
+  try { const a = JSON.parse(localStorage.getItem(ERR_KEY)); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function errLog(msg, stack) {
+  try {
+    const list = errLoad();
+    const view = typeof current !== 'undefined' && current ? current.view : '';
+    const text = String(msg || 'Unbekannter Fehler').slice(0, 300);
+    // Pfade auf den Dateinamen kürzen (keine Adressen/Ordner im Protokoll)
+    const at = String(stack || '').split('\n').slice(0, 4).map(l => l.trim().replace(/[a-z-]+:\/\/[^\s)]*\/([^/\s)]+)/gi, '$1'))
+      .filter(Boolean).join(' | ').slice(0, 400);
+    const last = list[list.length - 1];
+    if (last && last.msg === text && last.view === view) { last.n = (last.n || 1) + 1; last.t = new Date().toISOString(); }
+    else list.push({ t: new Date().toISOString(), msg: text, at, view, v: typeof APP_V !== 'undefined' ? APP_V : null });
+    localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(-ERR_MAX)));
+    if (!errToastShown && typeof toast === 'function') {
+      errToastShown = true;  // nur einmal pro Sitzung Bescheid geben
+      setTimeout(() => { try { toast('Da ist etwas schiefgelaufen – steht unter Optionen → Fehlerprotokoll'); } catch (e) { /* egal */ } }, 0);
+    }
+  } catch (e) { /* das Protokoll darf selbst nie stören */ }
+}
+window.addEventListener('error', e => {
+  if (e.message) errLog(e.message, (e.error && e.error.stack) || `${e.filename || ''}:${e.lineno || ''}:${e.colno || ''}`);
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e.reason;
+  errLog((r && r.message) || String(r), r && r.stack);
+});
+
 /* ---------- Speicher ---------- */
 // Die Daten liegen in IndexedDB (Platz für hunderte MB). localStorage (nur ca. 5 MB) war der frühere Speicher: Dort
 // liegt weiter ein Spiegel, solange er hineinpasst – als zusätzliche Sicherung und damit beim Start sofort etwas da
@@ -312,7 +347,30 @@ const fmtMB = b => b < 100 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : 
 
 // Optionen: Platzanzeige (Speicherort, belegt, frei) – die freie Menge liefert der Browser erst asynchron
 const storageInfoHtml = () => `<p class="hint storage-info" id="storage-info">💾 Deine Daten: ${fmtMB(dataBytes())}${storeMode === 'idb'
-  ? ' · Speicher wird geprüft …' : ` von ca. 5 MB`}</p>`;
+  ? ' · Speicher wird geprüft …' : ` von ca. 5 MB`}</p><p class="hint persist-info" id="persist-info"></p>`;
+
+// Optionen (v205): Hat der Browser die Daten als dauerhaft markiert (löscht sie nicht von sich aus)? Sonst Rat je Gerät
+function persistAdvice() {
+  if (isIOS()) return isStandalone()
+    ? 'Als App auf dem Home-Bildschirm löscht das iPhone deine Daten nicht nach 7 Tagen ohne Besuch. Mach trotzdem regelmäßig eine Sicherung.'
+    : 'In Safari löscht das iPhone die Daten von Websites, die 7 Tage nicht geöffnet wurden. Hol dir die App auf den Home-Bildschirm (Anleitung unten) und mach regelmäßig eine Sicherung.';
+  if (isAndroid()) return 'Chrome erlaubt das meist erst, wenn die App installiert ist oder öfter benutzt wird: Menü ⋮ → „App installieren“. Mach bis dahin regelmäßig eine Sicherung.';
+  return 'Der Browser darf die Daten bei Speichermangel löschen. Mach regelmäßig eine Sicherung.';
+}
+async function persistFill() {
+  const el = document.getElementById('persist-info');
+  if (!el) return;
+  if (!navigator.storage || !navigator.storage.persisted) {
+    el.innerHTML = 'ℹ️ Dein Browser verrät nicht, ob die Daten dauerhaft gespeichert sind – mach regelmäßig eine Sicherung.';
+    return;
+  }
+  let on = false;
+  try { on = await navigator.storage.persisted(); } catch (e) { /* unbekannt = nein */ }
+  el.classList.toggle('ok', on);
+  el.innerHTML = on ? '🔒 <b>Dauerhaft gespeichert:</b> Der Browser löscht deine Daten nicht von sich aus.'
+    : `⚠️ <b>Nicht dauerhaft geschützt.</b> ${persistAdvice()}
+      ${navigator.storage.persist ? '<button class="link-btn persist-ask" data-action="persist-ask">Erneut anfragen</button>' : ''}`;
+}
 async function storageInfoFill() {
   const el = document.getElementById('storage-info');
   if (!el) return;
@@ -2772,7 +2830,7 @@ const views = {
   pausecheck: { title: 'Wieder da', tab: 'start', back: 'start', render: p => renderPauseCheck(p) },
   cyclefeel: { title: 'Neuer Zyklus', tab: 'start', back: 'start', render: p => renderCycleFeel(p) },
   entryweek: { title: 'Neuer Plan',      tab: 'start', back: 'start', render: renderEntryWeek, cancel: () => CANCEL_START },
-  data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: () => { showAppVersion(); storageInfoFill(); } },
+  data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: () => { showAppVersion(); storageInfoFill(); persistFill(); } },
 };
 
 function go(view, params = {}) {
@@ -4792,6 +4850,7 @@ function renderData() {
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
     <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht, Körpermaße und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
     ${whatsNewOptionsCard()}
+    ${errCard()}
     <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>
 `;
@@ -4802,6 +4861,10 @@ function renderData() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 205, date: '2026-11-11', items: [
+    ['Unter Optionen → Deine Daten siehst du jetzt, ob dein Browser die Daten dauerhaft speichert – und was du sonst tun kannst.'],
+    ['Fehlerprotokoll: Hakt einmal etwas, merkt sich die App den Fehler (ohne Trainingsdaten). Unter Optionen kannst du ihn an den Entwickler schicken.'],
+  ] },
   { v: 204, date: '2026-11-11', items: [
     ['Scheiben-Rechner: Bei Langhantel-Übungen steht im Training, welche Scheiben auf jede Seite gehören. Stange und deine Scheiben stellst du unter Optionen → Langhantel ein.'],
     ['Körpermaße: Unter Ernährung trägst du Taille, Hüfte, Brust und mehr ein – mit Verlauf.'],
@@ -4856,6 +4919,32 @@ function whatsNewOptionsCard() {
         const items = c.items.filter(([, f]) => wnShow(f));
         return items.length ? `<p class="lbl wn-v">Version ${c.v} · ${fmtDate(c.date + 'T12:00:00')}</p><ul class="wn-list">${items.map(([t]) => `<li>${t}</li>`).join('')}</ul>` : '';
       }).join('')}</details>`;
+}
+
+// Fehlerprotokoll in den Optionen (v205): die letzten 10 Einträge, Teilen/Kopieren als Text, Löschen
+const fmtErrTime = iso => { const d = new Date(iso); return `${fmtDate(iso)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+function deviceText() {
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad|iPod/.test(ua) ? `${/iPad/.test(ua) ? 'iPad' : 'iPhone'} iOS ${((ua.match(/OS (\d+)[_.](\d+)/) || []).slice(1).join('.')) || '?'}`
+    : /Android (\d+)/.test(ua) ? `Android ${ua.match(/Android (\d+)/)[1]}` : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : 'anderes Gerät';
+  const br = /Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return `${os} · ${br}${isStandalone() ? ' · Home-Bildschirm' : ''}`;
+}
+function errReport() {
+  const list = errLoad();
+  return [`StepUp Fehlerprotokoll · App-Version ${APP_V} · ${deviceText()} · Modus ${appMode()}`,
+    ...list.map((x, i) => `${i + 1}) ${fmtErrTime(x.t)} · ${x.view || '–'} · v${x.v || '?'} · ${x.msg}${x.n > 1 ? ` (${x.n}×)` : ''}${x.at ? `\n   ${x.at}` : ''}`)].join('\n');
+}
+function errCard() {
+  const list = errLoad();
+  return `<details class="card about-sec err-card"><summary><b>🧰 Fehlerprotokoll</b>
+      <small>${list.length ? `${list.length} ${list.length === 1 ? 'Eintrag' : 'Einträge'}` : 'keine Fehler ✓'}</small></summary>
+    ${list.length ? `<ul class="err-list">${[...list].reverse().slice(0, 10).map(x => `<li><small>${fmtErrTime(x.t)} · ${esc(x.view || '–')}${x.n > 1 ? ` · ${x.n}×` : ''}</small>${esc(x.msg)}</li>`).join('')}</ul>
+      <p class="hint">Hakt etwas? Schick das Protokoll an den Entwickler. Es enthält keine Trainingsdaten – nur Fehlertext, Ansicht, App-Version und Gerätetyp.</p>
+      <div class="row"><button class="btn primary" data-action="err-share">Teilen / Kopieren</button>
+        <button class="btn" data-action="err-clear">Löschen</button></div>`
+    : '<p class="hint">Bisher ist kein Fehler aufgetreten. Falls doch einmal etwas hakt, steht es hier – zum Weitergeben an den Entwickler.</p>'}
+  </details>`;
 }
 
 // App-Version = Name des Offline-Speichers (CACHE in sw.js), z. B. „Version 82“ – zum Prüfen, ob ein Update angekommen ist
@@ -6063,6 +6152,26 @@ const actions = {
     saveData(); render();
   },
   'wn-ok': () => { data.seenV = APP_V; saveData(); render(); },
+  // Fehlerprotokoll und dauerhafter Speicher (v205)
+  'err-share': async () => {
+    const text = errReport();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'StepUp Fehlerprotokoll', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(text); toast('Fehlerprotokoll kopiert ✔ – z. B. in eine Nachricht einfügen'); }
+    catch (e) { prompt('Zum Kopieren markieren:', text); }
+  },
+  'err-clear': () => {
+    if (!confirm('Fehlerprotokoll löschen?')) return;
+    try { localStorage.removeItem(ERR_KEY); } catch (e) { /* egal */ }
+    render();
+  },
+  'persist-ask': async () => {
+    let ok = false;
+    try { ok = await navigator.storage.persist(); } catch (e) { /* nein */ }
+    toast(ok ? 'Dauerhafter Speicher erlaubt ✔' : 'Der Browser hat es (noch) nicht erlaubt');
+    persistFill();
+  },
   // Scheiben-Rechner (v204)
   'plates-bar': el => {
     data.profile = { ...(data.profile || {}), plates: { have: platesHave(), ...((data.profile || {}).plates || {}), bar: Number(el.dataset.v) } };

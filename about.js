@@ -49,6 +49,10 @@ function aboutDatenschutz() {
     <h3>Sicherungen</h3>
     <p>Eine Sicherung ist eine Datei, die du selbst speicherst oder teilst. Wohin sie geht, bestimmst du – wir haben keinen Zugriff darauf.
       Auf Wunsch verschlüsselt die App die Sicherung mit einem Passwort (Einstellung unter „Deine Daten“); das Passwort wird nirgends gespeichert.</p>
+    <h3>Fehlerprotokoll</h3>
+    <p>Tritt in der App ein Fehler auf, merkt sie sich die letzten Fehler auf deinem Gerät: Fehlertext, betroffene Ansicht, App-Version und
+      Zeitpunkt – keine Trainings- oder Gesundheitsdaten. Das Protokoll verlässt dein Gerät nur, wenn du es unter „Optionen“ →
+      „Fehlerprotokoll“ selbst teilst; dann kommen Gerätetyp und Browser dazu. Dort kannst du es auch jederzeit löschen.</p>
     <h3>Löschen</h3>
     <p>Unter „Optionen“ → „Alles zurücksetzen“ löschst du alle Daten der App. Auch das Löschen der Website-Daten im Browser oder das
       Entfernen der App vom Home-Bildschirm löscht sie.</p>
