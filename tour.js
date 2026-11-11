@@ -41,8 +41,9 @@ const TOURS = {
     { id: 'tr-details', sel: 'section.card .det-btn', title: 'Details',
       text: () => {
         const a = [feat('tr-comment') ? 'Kommentar' : '', 'Ersetzen', feat('tr-max') ? 'Max. bei 10 Wdh.' : '',
-          feat('tr-step') ? 'Steigerung' : '', feat('tr-variants') ? 'Ausführung' : '', 'die Werte vom letzten Mal'].filter(Boolean);
-        return `Hier klappst du mehr zur Übung auf: ${a.slice(0, -1).join(', ')} und ${a[a.length - 1]}. Die App merkt sich, ob du die Details lieber offen oder zu hast.`;
+          feat('tr-step') ? 'Steigerung' : '', feat('tr-variants') ? 'Ausführung' : ''].filter(Boolean);
+        const list = a.length > 1 ? `${a.slice(0, -1).join(', ')} und ${a[a.length - 1]}` : a[0];
+        return `Hier klappst du mehr zur Übung auf: ${list}. Die App merkt sich, ob du die Details lieber offen oder zu hast.`;
       } },
     { id: 'tr-tools', sel: 'section.card .ex-tools', title: 'Kommentar und Ersetzen',
       text: () => (feat('tr-comment') ? '„Kommentar“: eine Notiz zur Übung, z. B. die Sitzhöhe – sie erscheint beim nächsten Mal wieder. ' : '')

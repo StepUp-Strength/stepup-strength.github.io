@@ -3415,9 +3415,8 @@ function renderTraining() {
       h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
         ${setRows([{ sets: en.weekFirst.sets }])}<b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></div>`;
     }
-    if (!det) {
-      // Werte vom letzten Mal stehen in den Details (v200)
-    } else if (!feat('tr-compare')) {
+    // Werte vom letzten Mal: immer sichtbar, auch bei zugeklappten Details (User-Wunsch 2026-11-11, v206)
+    if (!feat('tr-compare')) {
       // Einfach: eine Zeile mit den Werten vom letzten Mal
       h += last ? `<p class="last">Letztes Mal: ${last.sets.map(x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps}` : `${x.reps} Wdh.`).join(' · ')}</p>`
         : '<p class="last">Erstes Mal – noch keine Werte.</p>';
@@ -4636,7 +4635,8 @@ function renderSession({ id, fresh, edit, week }) {
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
     (fresh ? backupAfterTrainingCard() : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
-      <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>`;
+      <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>
+    <button class="btn ${fresh ? 'primary' : 'outline'} share-btn" data-action="share-open" data-id="${s.id}">📤 Ergebnis teilen</button>`;
   const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
   let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
     (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + (s.timeLimit ? `<br>⏱ auf ${s.timeLimit} min gekürzt` : '') + '</p>' +
@@ -4653,6 +4653,134 @@ function renderSession({ id, fresh, edit, week }) {
       <div class="sets">${sessionPbHtml(s, e)}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
+}
+
+/* ---------- Ergebnis teilen (v206, User-Wunsch 2026-11-11) ---------- */
+// Aus einem gespeicherten Training malt die App ein Bild im Story-Format (1080 × 1920) in der Farbwelt der App: Tagesname,
+// Datum/Woche, Dauer, Tonnage, Sätze, Übungen und neue Bestleistungen (sonst die schwersten Sätze). Nie Körpergewicht oder
+// Gesundheitsdaten. Teilen über das Teilen-Menü (Web Share mit Datei), sonst als Bild-Download.
+const APP_NAME = 'StepUp Strength';  // bei der Umbenennung hier ändern
+let shareUrl = null, shareFile = null;
+const shareSetText = x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps != null ? x.reps : '–'}` : `${x.reps != null ? x.reps : '–'} Wdh.`;
+function shareData(s) {
+  const heavier = (a, b) => (b.weight || 0) > (a.weight || 0) || ((b.weight || 0) === (a.weight || 0) && (b.reps || 0) > (a.reps || 0)) ? b : a;
+  const pbs = [], tops = [];
+  for (const e of s.entries) {
+    if (!e.sets.length) continue;
+    const flags = pbFlags(e.sets, pbBest(e.name, s.date, s.id), e.target && e.target.band);
+    const hit = e.sets.filter((x, i) => flags[i]);
+    if (hit.length) pbs.push({ name: e.name, set: hit.reduce(heavier) });
+    tops.push({ name: e.name, set: e.sets.reduce(heavier) });
+  }
+  return { sets: s.entries.reduce((a, e) => a + e.sets.length, 0), pbs, tops };
+}
+function shareCanvas(s) {
+  const W = 1080, H = 1920, X = 90, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const cs = getComputedStyle(document.body);
+  const a1 = cs.getPropertyValue('--accent').trim() || '#3a6df0', a2 = cs.getPropertyValue('--accent-2').trim() || a1;
+  const F = (w, px) => `${w} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+  const fit = (t, max) => { if (g.measureText(t).width <= max) return t; while (t.length > 1 && g.measureText(t + '…').width > max) t = t.slice(0, -1); return t.trimEnd() + '…'; };
+  const wrap = (t, max) => {
+    const out = [];
+    let line = '';
+    for (const w of String(t).split(/\s+/)) {
+      const test = line ? `${line} ${w}` : w;
+      if (line && g.measureText(test).width > max) { out.push(line); line = w; } else line = test;
+    }
+    if (line) out.push(line);
+    return out;
+  };
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  // Hintergrund: Verlauf der Farbwelt, zwei helle Kreise
+  const grd = g.createLinearGradient(0, 0, W, H);
+  grd.addColorStop(0, a1); grd.addColorStop(1, a2);
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  g.fillStyle = 'rgba(255,255,255,.08)';
+  g.beginPath(); g.arc(W - 40, 170, 360, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(60, H - 300, 250, 0, Math.PI * 2); g.fill();
+  g.textBaseline = 'alphabetic';
+  // Kopf
+  let y = 200;
+  g.fillStyle = 'rgba(255,255,255,.78)'; g.font = F(800, 38);
+  g.fillText('TRAINING GESCHAFFT', X, y);
+  y += 120;
+  g.fillStyle = '#fff'; g.font = F(800, 92);
+  for (const line of wrap(s.dayName, W - 2 * X).slice(0, 2)) { g.fillText(fit(line, W - 2 * X), X, y); y += 104; }
+  g.font = F(500, 42); g.fillStyle = 'rgba(255,255,255,.88)';
+  const wk = s.deload ? 'Deload-Woche' : s.week ? weekLabel(s.week) : '';
+  g.fillText(fit(fmtDate(s.date, true) + (wk ? ` · ${wk}` : ''), W - 2 * X), X, y);
+  y += 80;
+  // Kacheln
+  const d = shareData(s);
+  const tiles = [s.duration ? ['Dauer', fmtDur(s.duration)] : ['Bestleistungen', String(d.pbs.length)],
+    ['Bewegt', fmtTons(sessionTonnage(s))], ['Sätze', String(d.sets)], ['Übungen', String(s.entries.length)]];
+  const tw = (W - 2 * X - 30) / 2, th = 190;
+  tiles.forEach(([label, val], i) => {
+    const tx = X + (i % 2) * (tw + 30), ty = y + Math.floor(i / 2) * (th + 30);
+    g.fillStyle = 'rgba(255,255,255,.16)'; rr(tx, ty, tw, th, 36); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.8)'; g.font = F(700, 32); g.fillText(label.toUpperCase(), tx + 40, ty + 62);
+    g.fillStyle = '#fff'; g.font = F(800, 72); g.fillText(fit(val, tw - 80), tx + 40, ty + 146);
+  });
+  y += 2 * th + 30 + 100;
+  // Bestleistungen, sonst die schwersten Sätze
+  const list = d.pbs.length ? d.pbs : d.tops;
+  g.fillStyle = '#fff'; g.font = F(800, 50);
+  g.fillText(d.pbs.length ? `★ ${d.pbs.length === 1 ? 'Neue Bestleistung' : `${d.pbs.length} neue Bestleistungen`}` : 'Heute trainiert', X, y);
+  y += 30;
+  const fits = n => Math.max(1, Math.floor((H - 230 - n - y) / 120));
+  const room = Math.min(5, list.length <= fits(0) ? fits(0) : fits(60));  // passt nicht alles: Platz für „+ N weitere“
+  const shown = list.slice(0, Math.min(5, room));
+  for (const it of shown) {
+    y += 120;
+    g.fillStyle = 'rgba(255,255,255,.14)'; rr(X, y - 94, W - 2 * X, 106, 28); g.fill();
+    g.font = F(800, 44); g.fillStyle = '#fff';
+    const val = shareSetText(it.set), vw = g.measureText(val).width;
+    g.fillText(val, W - X - 36 - vw, y - 27);
+    g.font = F(600, 40); g.fillStyle = 'rgba(255,255,255,.92)';
+    g.fillText(fit(it.name, W - 2 * X - 108 - vw), X + 36, y - 27);
+  }
+  if (list.length > shown.length) {
+    y += 64; g.font = F(600, 36); g.fillStyle = 'rgba(255,255,255,.8)';
+    g.fillText(`+ ${list.length - shown.length} weitere`, X + 36, y);
+  }
+  // Fuß: App-Name
+  g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(X, H - 190, W - 2 * X, 3);
+  g.fillStyle = '#fff'; g.font = F(800, 46); g.fillText(APP_NAME, X, H - 110);
+  return c;
+}
+function renderShare({ id }) {
+  const s = data.sessions.find(x => x.id === id);
+  if (!s) return '<p class="hint">Training nicht gefunden.</p>';
+  return `<div class="share-wrap"><img class="share-img" id="share-img" alt="Bild deines Trainings ${esc(s.dayName)}"></div>
+    <div class="row"><button class="btn primary" data-action="share-send" disabled>📤 Teilen</button>
+      <button class="btn" data-action="share-save" disabled>Bild speichern</button></div>
+    <p class="hint">Das Bild zeigt nur Trainingstag, Dauer, bewegtes Gewicht, Sätze und deine Bestleistungen – kein Körpergewicht und
+      keine Gesundheitsdaten. Die Farben kommen aus deiner Farbwelt (Optionen → Aussehen).</p>`;
+}
+function shareDraw({ id }) {
+  const s = data.sessions.find(x => x.id === id), img = document.getElementById('share-img');
+  if (!s || !img) return;
+  // sofort (toDataURL) statt asynchron (toBlob): zuverlässiger, und das Teilen-Menü bekommt die Datei ohne Wartezeit
+  // JPEG statt PNG: der Farbverlauf wäre als PNG über 1 MB groß
+  const url = shareCanvas(s).toDataURL('image/jpeg', 0.92);
+  const bin = atob(url.slice(url.indexOf(',') + 1)), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'image/jpeg' });
+  if (shareUrl) URL.revokeObjectURL(shareUrl);
+  shareUrl = URL.createObjectURL(blob);
+  shareFile = new File([blob], `StepUp-Training ${localDay(s.date)}.jpg`, { type: 'image/jpeg' });
+  img.src = url;
+  $view.querySelectorAll('[data-action="share-send"], [data-action="share-save"]').forEach(b => { b.disabled = false; });
+}
+views.share = { title: 'Ergebnis teilen', tab: 'history', back: p => ['session', { id: p.id, week: p.week }], render: renderShare, after: shareDraw };
+function shareSave() {
+  if (!shareUrl) return;
+  const a = document.createElement('a');
+  a.href = shareUrl; a.download = shareFile.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Bild gespeichert ✔');
 }
 
 // Erstes Training eines neuen Plans: mit welcher Zykluswoche geht es los? (w = 1 … buildWeeks oder 'deload')
@@ -4861,6 +4989,10 @@ function renderData() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 206, date: '2026-11-11', items: [
+    ['Ergebnis teilen: Nach dem Training malt die App ein Bild mit Dauer, bewegtem Gewicht und neuen Bestleistungen – zum Teilen in WhatsApp, Instagram & Co.'],
+    ['Die Werte vom letzten Mal stehen im Training wieder immer sichtbar bei jeder Übung.'],
+  ] },
   { v: 205, date: '2026-11-11', items: [
     ['Unter Optionen → Deine Daten siehst du jetzt, ob dein Browser die Daten dauerhaft speichert – und was du sonst tun kannst.'],
     ['Fehlerprotokoll: Hakt einmal etwas, merkt sich die App den Fehler (ohne Trainingsdaten). Unter Optionen kannst du ihn an den Entwickler schicken.'],
@@ -6152,6 +6284,17 @@ const actions = {
     saveData(); render();
   },
   'wn-ok': () => { data.seenV = APP_V; saveData(); render(); },
+  // Ergebnis teilen (v206)
+  'share-open': el => go('share', { id: el.dataset.id, week: current.params && current.params.week }),
+  'share-send': async () => {
+    if (!shareFile) return;
+    if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+      try { await navigator.share({ files: [shareFile], title: 'Mein Training' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    shareSave();  // ohne Teilen-Menü (z. B. am Computer): als Bild herunterladen
+  },
+  'share-save': () => shareSave(),
   // Fehlerprotokoll und dauerhafter Speicher (v205)
   'err-share': async () => {
     const text = errReport();
