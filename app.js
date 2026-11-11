@@ -13,14 +13,17 @@ function errLoad() {
 function errLog(msg, stack) {
   try {
     const list = errLoad();
-    const view = typeof current !== 'undefined' && current ? current.view : '';
+    // Fehler schon beim Laden: current/APP_V gibt es dann noch nicht (Zugriff würde selbst einen Fehler werfen)
+    let view = '', ver = null;
+    try { view = current ? current.view : ''; } catch (e) { view = 'Laden'; }
+    try { ver = APP_V; } catch (e) { /* noch nicht da */ }
     const text = String(msg || 'Unbekannter Fehler').slice(0, 300);
     // Pfade auf den Dateinamen kürzen (keine Adressen/Ordner im Protokoll)
     const at = String(stack || '').split('\n').slice(0, 4).map(l => l.trim().replace(/[a-z-]+:\/\/[^\s)]*\/([^/\s)]+)/gi, '$1'))
       .filter(Boolean).join(' | ').slice(0, 400);
     const last = list[list.length - 1];
     if (last && last.msg === text && last.view === view) { last.n = (last.n || 1) + 1; last.t = new Date().toISOString(); }
-    else list.push({ t: new Date().toISOString(), msg: text, at, view, v: typeof APP_V !== 'undefined' ? APP_V : null });
+    else list.push({ t: new Date().toISOString(), msg: text, at, view, v: ver });
     localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(-ERR_MAX)));
     if (!errToastShown && typeof toast === 'function') {
       errToastShown = true;  // nur einmal pro Sitzung Bescheid geben
@@ -158,7 +161,8 @@ function upgradeData(d) {
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
   if (!Array.isArray(d.measures)) d.measures = [];      // Körpermaße (v204): [{ id, date: JJJJ-MM-TT, v: { waist, hip, … } }] in cm
-  if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
+  if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...], pain?, side?, note? }] (Beschwerde-Tagebuch)
+  if (!Array.isArray(d.painLog)) d.painLog = [];        // „Zwickt“ im Training (v209): [{ id, date, ex, area, pain, side? }]
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};
   // Umbenannte Übungen: Pläne und Trainings ziehen mit, damit Verlauf und Vergleich weiter passen
@@ -2462,14 +2466,14 @@ function restCard() {
   return `<div class="card rest-card">
       <h2>Pausen-Timer</h2>
       ${seg('off', !c.off, 'An', 'Aus')}
-      <p class="hint">Nach jedem erledigten Satz läuft oben im Training die Pause: Grundübungen 4, normale Übungen 3, Isolationsübungen
+      <p class="hint explain">Nach jedem erledigten Satz läuft oben im Training die Pause: Grundübungen 4, normale Übungen 3, Isolationsübungen
         2 Minuten. Mit −30 s und +30 s passt du sie an, „Weiter“ beendet sie. Die Gesamtzeit läuft immer mit.</p>
       ${c.off ? '' : `<p class="lbl">Vibration am Ende</p>${seg('vib', c.vib, 'An', 'Aus')}
       <p class="lbl">Ton am Ende</p>${seg('sound', c.sound, 'An', 'Aus')}
       ${c.sound ? `<div class="variants rest-tones">${Object.entries(REST_TONES).map(([k, l]) =>
         `<button class="vchip ${c.tone === k ? 'on' : ''}" data-action="rest-tone" data-k="${k}">${l}</button>`).join('')}</div>
         <p class="hint">Antippen spielt den Ton zur Probe. Lautstärke wie bei anderen Tönen am Handy – im Lautlos-Modus bleibt das iPhone stumm.</p>` : ''}
-      <p class="hint">Vibration gibt es nur auf Android – das iPhone erlaubt sie Web-Apps nicht. Ton und Vibration kommen, solange die App
+      <p class="hint explain">Vibration gibt es nur auf Android – das iPhone erlaubt sie Web-Apps nicht. Ton und Vibration kommen, solange die App
         geöffnet und der Bildschirm an ist.</p>`}
     </div>`;
 }
@@ -2553,19 +2557,345 @@ const BODY_AREAS = {
     tip: 'Gewicht reduzieren, Waden lieber sitzend' },
 };
 
-// Beschwerden für den aktuellen Zyklus (null = noch nicht abgefragt)
+// Beschwerden für den aktuellen Zyklus (null = noch nicht abgefragt). Seit v208 lassen sie sich zwischendurch ändern
+// (Beschwerden-Verlauf): jede Änderung ist ein weiterer Eintrag mit Datum – es gilt der neueste des Zyklus.
 function currentComplaints() {
   const ci = cycleInfo();
-  const c = data.complaints.find(x => x.cycleStart === ci.cycleStart);
-  return c ? c.areas : null;
+  const list = data.complaints.filter(x => x.cycleStart === ci.cycleStart);
+  return list.length ? list[list.length - 1].areas : null;
 }
+
+// Betrifft die Beschwerde-Stelle a diese Übung? (Muskelgruppe oder Name)
+const areaHits = (a, name) => !!BODY_AREAS[a] && (BODY_AREAS[a].groups.includes(groupOf({ name })) || (!!BODY_AREAS[a].match && BODY_AREAS[a].match.test(norm(name))));
 
 // Hinweise für eine Übung aus den Beschwerden dieses Zyklus
 function complaintTips(name) {
   const areas = currentComplaints() || [];
-  const g = groupOf({ name }), n = norm(name);
-  return areas.filter(a => BODY_AREAS[a] && (BODY_AREAS[a].groups.includes(g) || (BODY_AREAS[a].match && BODY_AREAS[a].match.test(n))))
-    .map(a => ({ label: BODY_AREAS[a].label, tip: BODY_AREAS[a].tip }));
+  return areas.filter(a => areaHits(a, name)).map(a => ({ label: BODY_AREAS[a].label, tip: BODY_AREAS[a].tip }));
+}
+
+/* ---------- Beschwerde-Tagebuch (v208 Verlauf; v209 Stärke, Seite, Notiz, „Zwickt“ im Training, Bericht) ---------- */
+// User-Vorgabe 2026-11-11: Die App DOKUMENTIERT nur – sie bewertet nichts und passt deshalb nichts automatisch an
+// (sonst Medizinprodukt). Hinweise verweisen auf Ärztin/Arzt bzw. Physiotherapie.
+// data.complaints: [{ cycleStart, date, areas, pain?: { stelle: 0–10 }, side?: { stelle: 'l'|'r'|'b' }, note? }] – höchstens ein Eintrag je Tag
+// data.painLog:    [{ id, date, ex, area, pain: 0–10|null, side? }] – „Zwickt“ während des Trainings
+const SIDES = { l: 'links', r: 'rechts', b: 'beidseits' };
+const areaSided = k => k !== 'ruecken';
+const PAIN_HIGH = 7;
+const COMPL_DISCLAIMER = 'Die App dokumentiert nur – sie bewertet nichts und ersetzt keine Untersuchung. Was deine Einträge bedeuten, '
+  + 'besprichst du am besten mit deiner Ärztin oder deinem Arzt bzw. in der Physiotherapie.';
+const COMPL_HIGH_NOTE = '🩺 Starke Beschwerden besprichst du am besten bald mit deiner Ärztin oder deinem Arzt.';
+const areaName = (k, side) => (BODY_AREAS[k] || { label: k }).label + (side && SIDES[side] ? ' ' + SIDES[side] : '');
+const dShort = iso => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+const heavierSet = (a, b) => (b.weight || 0) > (a.weight || 0) || ((b.weight || 0) === (a.weight || 0) && (b.reps || 0) > (a.reps || 0)) ? b : a;
+
+// neuester Eintrag dieses Zyklus (Grundlage für die Hinweise im Training)
+function currentComplaintEntry() {
+  const ci = cycleInfo();
+  const list = data.complaints.filter(x => x.cycleStart === ci.cycleStart);
+  return list.length ? list[list.length - 1] : null;
+}
+// zuletzt angegebene Seite einer Stelle (Tagebuch oder Training)
+function lastSideOf(k) {
+  const all = [...data.complaints.filter(e => e.side && e.side[k]).map(e => ({ d: e.date, s: e.side[k] })),
+    ...data.painLog.filter(z => z.area === k && z.side).map(z => ({ d: z.date, s: z.side }))].sort((a, b) => a.d.localeCompare(b.d));
+  return all.length ? all[all.length - 1].s : null;
+}
+// alle Stärke-Werte einer Stelle (Tagebuch und „Zwickt“), älteste zuerst
+function painPoints(k, from = '') {
+  const pts = [];
+  for (const e of data.complaints) if (e.date >= from && e.areas.includes(k) && e.pain && e.pain[k] != null) pts.push({ date: e.date, pain: e.pain[k], side: e.side && e.side[k] });
+  for (const z of data.painLog) if (z.date >= from && z.area === k && z.pain != null) pts.push({ date: z.date, pain: z.pain, side: z.side, ex: z.ex });
+  return pts.sort((a, b) => a.date.localeCompare(b.date));
+}
+// „Zwickt“ je Übung: wie oft, höchster Wert, zuletzt
+function painExercises(k, from = '') {
+  const m = new Map();
+  for (const z of data.painLog) {
+    if (z.area !== k || z.date < from) continue;
+    const key = nameKey(z.ex), x = m.get(key) || { name: z.ex, n: 0, max: null, last: z.date };
+    x.n++;
+    if (z.pain != null) x.max = Math.max(x.max == null ? 0 : x.max, z.pain);
+    if (z.date > x.last) x.last = z.date;
+    m.set(key, x);
+  }
+  return [...m.values()].sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
+}
+// schwerster Satz einer Übung im ersten und letzten Training ab „from“ (für den Bericht)
+function exWeights(name, from) {
+  const k = nameKey(name);
+  const list = data.sessions.filter(s => s.date >= from).sort((a, b) => a.date.localeCompare(b.date)).map(s => {
+    const e = s.entries.find(x => nameKey(x.name) === k);
+    return e && e.sets.length ? { date: s.date, set: e.sets.reduce(heavierSet) } : null;
+  }).filter(Boolean);
+  return list.length ? { first: list[0], last: list[list.length - 1], n: list.length } : null;
+}
+
+let complEdit = null;  // { areas: Set, pain, side, note, today } – solange die Seite offen ist
+function complEditInit() {
+  const e = currentComplaintEntry();
+  const today = !!e && localDay(e.date) === localDay(new Date().toISOString());
+  return { areas: new Set(e ? e.areas : []), pain: { ...((e && e.pain) || {}) }, side: { ...((e && e.side) || {}) }, note: today ? e.note || '' : '', today };
+}
+function complaintSummary() {
+  const entries = [...data.complaints].sort((a, b) => a.date.localeCompare(b.date));
+  const cur = currentComplaints();
+  const now = cur || (entries.length ? entries[entries.length - 1].areas : []);
+  return Object.keys(BODY_AREAS).filter(k => entries.some(e => e.areas.includes(k)) || data.painLog.some(z => z.area === k)).map(k => {
+    let since = null;
+    for (let i = entries.length - 1; i >= 0 && entries[i].areas.includes(k); i--) since = entries[i].date;
+    const withK = entries.filter(e => e.areas.includes(k));
+    const zw = data.painLog.filter(z => z.area === k).map(z => z.date);
+    const dates = [...withK.map(e => e.date), ...zw].sort();
+    const pts = painPoints(k);
+    return { k, label: BODY_AREAS[k].label, now: now.includes(k), since, first: dates[0], last: dates[dates.length - 1],
+      lastDiary: withK.length ? withK[withK.length - 1].date : null, n: withK.length, nZw: zw.length,
+      pts, lastP: pts.length ? pts[pts.length - 1] : null, side: lastSideOf(k) };
+  });
+}
+// Stärke 0–10 (die übliche Skala aus Arztpraxis und Physiotherapie); erneut antippen = Auswahl aufheben
+function painScaleHtml(val, attrs) {
+  let h = '<div class="pain-scale" role="group" aria-label="Stärke von 0 bis 10">';
+  for (let v = 0; v <= 10; v++) h += `<button class="${val === v ? 'on' : ''}" ${attrs} data-v="${v}" aria-label="Stärke ${v}">${v}</button>`;
+  return h + '</div><p class="pain-legend"><span>0 = gar nicht</span><span>10 = so stark wie vorstellbar</span></p>';
+}
+const sideSegHtml = (cur, attrs) => `<div class="seg three side-seg">${Object.entries(SIDES).map(([s, l]) =>
+  `<button class="${cur === s ? 'on' : ''}" ${attrs} data-v="${s}">${l}</button>`).join('')}</div>`;
+// kleine Verlaufslinie der Stärke (eine Reihe, keine Legende); Punkt antippen zeigt Datum und Wert
+function painSpark(pts) {
+  if (pts.length < 2) return '';
+  const W = 320, H = 92, L = 24, R = 10, T = 10, B = 22;
+  const t0 = Date.parse(pts[0].date), t1 = Math.max(Date.parse(pts[pts.length - 1].date), t0 + 86400000);
+  const X = d => L + (Date.parse(d) - t0) / (t1 - t0) * (W - L - R), Y = p => T + (10 - p) / 10 * (H - T - B);
+  const tip = p => `${fmtDate(p.date)} · ${p.pain}/10${p.ex ? ` · im Training bei ${p.ex}` : ''}`;
+  return `<svg class="pain-spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Verlauf der Stärke, ${pts.length} Werte">
+    ${[0, 5, 10].map(v => `<line class="ps-grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ps-ax" x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`).join('')}
+    <polyline class="ps-line" points="${pts.map(p => `${X(p.date).toFixed(1)},${Y(p.pain).toFixed(1)}`).join(' ')}"/>
+    ${pts.map(p => `<g data-action="pain-pt" data-t="${esc(tip(p))}"><circle class="ps-hit" cx="${X(p.date).toFixed(1)}" cy="${Y(p.pain).toFixed(1)}" r="13"/>
+      <circle class="ps-dot${p.ex ? ' ex' : ''}" cx="${X(p.date).toFixed(1)}" cy="${Y(p.pain).toFixed(1)}" r="4.5"><title>${esc(tip(p))}</title></circle></g>`).join('')}
+    <text class="ps-ax" x="${L}" y="${H - 4}">${dShort(pts[0].date)}</text>
+    <text class="ps-ax" x="${W - R}" y="${H - 4}" text-anchor="end">${dShort(pts[pts.length - 1].date)}</text>
+  </svg><p class="ps-cap" hidden></p>`;
+}
+function renderComplaints() {
+  if (!complEdit) complEdit = complEditInit();
+  const E = complEdit;
+  let h = `<div class="card compl-card"><h2>Wo zwickt es heute?</h2>
+      <p class="hint explain">Tipp an, wo es zwickt, und gib – wenn du magst – Seite und Stärke an. Ein Eintrag pro Tag; die Hinweise im Training passen sich sofort an.</p>
+      <div class="group-chips">${Object.entries(BODY_AREAS).map(([k, a]) =>
+        `<button class="gchip ${E.areas.has(k) ? 'on' : ''}" data-action="compl-pick" data-k="${k}">${a.label}</button>`).join('')}</div>`;
+  for (const k of Object.keys(BODY_AREAS).filter(k => E.areas.has(k))) {
+    h += `<div class="compl-detail"><p class="compl-dt"><b>${BODY_AREAS[k].label}</b>${E.pain[k] != null ? `<span>${E.pain[k]}/10</span>` : '<span class="muted">Stärke?</span>'}</p>
+      ${areaSided(k) ? sideSegHtml(E.side[k], `data-action="compl-side" data-k="${k}"`) : ''}
+      ${painScaleHtml(E.pain[k], `data-action="compl-pain" data-k="${k}"`)}</div>`;
+  }
+  if (E.areas.size) {
+    h += `<textarea class="inp compl-note" rows="2" data-field="compl-note"
+      placeholder="Notiz für deinen Termin (freiwillig), z. B. „morgens steif, nach dem Training besser“">${esc(E.note)}</textarea>`;
+  }
+  if ([...E.areas].some(k => E.pain[k] >= PAIN_HIGH)) h += `<p class="compl-doc">${COMPL_HIGH_NOTE}</p>`;
+  h += `<button class="btn primary" data-action="compl-save">${E.areas.size ? (E.today ? 'Eintrag von heute ändern' : 'Heute eintragen') : 'Speichern – nichts zwickt'}</button>
+    </div>`;
+  const sum = complaintSummary();
+  if (!sum.length) return h + `<p class="hint">Bisher hast du keine Beschwerden angegeben. Die App fragt einmal pro Zyklus vor dem Training nach –
+    und hier kannst du jederzeit selbst etwas eintragen.</p><p class="hint compl-disc">🩺 ${COMPL_DISCLAIMER}</p>`;
+  h += `<button class="btn nav compl-rep-btn" data-action="compl-report">📄 Bericht für deinen Termin
+    <small>Verlauf, betroffene Übungen und Notizen als Bild oder Text</small></button>`;
+  const exNames = [...new Set(data.days.flatMap(d => d.exercises.map(e => e.name.trim()).filter(Boolean)))];
+  h += '<h2>Verlauf</h2>';
+  for (const x of sum.sort((a, b) => b.now - a.now || (b.last || '').localeCompare(a.last || ''))) {
+    const hits = exNames.filter(n => areaHits(x.k, n));
+    const exs = painExercises(x.k);
+    const high = x.pts.some(p => p.pain >= PAIN_HIGH && daysSinceISO(localDay(p.date)) <= 14);
+    const when = x.now ? `Seit ${fmtDate(x.since)}` : x.n ? `Zuletzt angegeben am ${fmtDate(x.lastDiary)}` : `Zuletzt am ${fmtDate(x.last)}`;
+    h += `<div class="card compl-area ${x.now ? 'now' : 'gone'}">
+        <p class="compl-head"><b>${areaName(x.k, x.side)}</b><span class="compl-badges">${x.lastP ? `<span class="compl-val">${x.lastP.pain}/10</span>` : ''}<span class="badge ${x.now ? 'warn' : 'ok'}">${x.now ? 'aktuell' : x.n ? 'abgeklungen ✓' : 'im Training notiert'}</span></span></p>
+        <p class="hint">${when}${x.n ? ` · ${x.n}× im Tagebuch` : ''}${x.nZw ? ` · ${x.nZw}× im Training` : ''}.</p>
+        ${painSpark(x.pts)}
+        ${exs.length ? `<p class="compl-ex">Gezwickt bei: ${exs.map(e => `${esc(e.name)} ${e.n}×${e.max != null ? ` (bis ${e.max}/10)` : ''}`).join(', ')}</p>` : ''}
+        ${x.now && hits.length ? `<p class="compl-ex">Betrifft im Plan: ${hits.map(esc).join(', ')}</p><p class="hint">Tipp: ${BODY_AREAS[x.k].tip}.</p>` : ''}
+        ${high ? `<p class="compl-doc">${COMPL_HIGH_NOTE}</p>` : ''}
+      </div>`;
+  }
+  const rows = [...data.complaints.map(e => ({ d: e.date, h: `<div><span>${fmtDate(e.date)}</span>
+      <b>${e.areas.length ? e.areas.map(a => areaName(a, e.side && e.side[a]) + (e.pain && e.pain[a] != null ? ` ${e.pain[a]}/10` : '')).join(', ') : 'nichts'}</b>
+      ${e.note ? `<small>„${esc(e.note)}“</small>` : ''}</div>` })),
+    ...data.painLog.map(z => ({ d: z.date, h: `<div><span>${fmtDate(z.date)} · im Training</span>
+      <b>🩹 ${areaName(z.area, z.side)}${z.pain != null ? ` ${z.pain}/10` : ''}</b><small>bei ${esc(z.ex)}</small></div>
+      <button class="icon-btn" data-action="pain-del" data-id="${z.id}" aria-label="Eintrag löschen">✕</button>` }))]
+    .sort((a, b) => b.d.localeCompare(a.d));
+  h += `<details class="card about-sec compl-log"><summary><b>Alle Angaben</b><small>${rows.length}</small></summary>
+    <ul class="list">${rows.map(r => `<li class="compl-row">${r.h}</li>`).join('')}</ul></details>
+    <p class="hint compl-disc">🩺 ${COMPL_DISCLAIMER}</p>`;
+  return h;
+}
+// Ansicht und Aktionen: views.complaints / complreport / compl-* / pain-* stehen hinter der Definition von views bzw. actions (weiter unten)
+// Verlauf → Kalender: Zeile mit dem aktuellen Stand – auch ohne Angaben, damit man das Tagebuch jederzeit beginnen kann
+function complaintsHistBtn() {
+  const sum = complaintSummary();
+  const now = sum.filter(x => x.now);
+  const txt = !sum.length ? 'Schmerzen und Beschwerden festhalten – z. B. für deinen nächsten Termin'
+    : now.length ? now.map(x => `${areaName(x.k, x.side)} seit ${fmtDate(x.since)}${x.lastP ? ` · ${x.lastP.pain}/10` : ''}`).join(' · ') : 'Zurzeit nichts – alles abgeklungen ✓';
+  return `<button class="btn nav compl-btn" data-action="compl-open" data-from="history">🩹 Beschwerden<small>${txt}</small></button>`;
+}
+
+/* „Zwickt“ im Training (v209): je Übung festhalten, wo und wie stark – landet im Beschwerde-Tagebuch */
+let painQuick = null;  // { ei, area, pain, side } – offenes Eingabefeld im Training
+function painTrainingHtml(en, ei, affected) {
+  const day = localDay(draft.date);
+  const noted = data.painLog.filter(z => nameKey(z.ex) === nameKey(en.name) && localDay(z.date) === day);
+  let h = noted.map(z => `<p class="pain-noted"><span>🩹 Notiert: ${areaName(z.area, z.side)}${z.pain != null ? ` · ${z.pain}/10` : ''}</span>
+    <button class="icon-btn" data-action="pain-del" data-id="${z.id}" aria-label="Eintrag löschen">✕</button></p>`).join('');
+  if (painQuick && painQuick.ei === ei) {
+    const q = painQuick;
+    return h + `<div class="pain-quick">
+      <p class="lbl">Wo zwickt es?</p>
+      <div class="group-chips">${Object.entries(BODY_AREAS).map(([k, a]) =>
+        `<button class="gchip ${q.area === k ? 'on' : ''}" data-action="pain-area" data-k="${k}">${a.label}</button>`).join('')}</div>
+      ${q.area && areaSided(q.area) ? sideSegHtml(q.side, 'data-action="pain-side"') : ''}
+      <p class="lbl">Wie stark? <small>freiwillig</small></p>
+      ${painScaleHtml(q.pain, 'data-action="pain-val"')}
+      ${q.pain >= PAIN_HIGH ? `<p class="compl-doc">${COMPL_HIGH_NOTE}</p>` : ''}
+      <div class="row"><button class="btn" data-action="pain-cancel">Abbrechen</button>
+        <button class="btn primary" data-action="pain-save" ${q.area ? '' : 'disabled'}>Eintragen</button></div>
+      <p class="hint">Bei Schmerz den Satz lieber abbrechen. Der Eintrag landet in deinem Beschwerde-Tagebuch (Verlauf → Beschwerden).</p>
+    </div>`;
+  }
+  if (affected && !noted.length) h += `<button class="link-btn pain-link" data-action="pain-open" data-ei="${ei}">🩹 Zwickt es heute? Kurz eintragen</button>`;
+  return h;
+}
+
+/* Bericht für den Termin (v209): Bild (Teilen/Speichern) oder Text – Zeitraum 4, 8 oder 12 Wochen */
+function complReportData(weeks) {
+  const d = new Date();
+  d.setDate(d.getDate() - weeks * 7); d.setHours(0, 0, 0, 0);
+  const from = d.toISOString(), cur = currentComplaints() || [];
+  const diary = data.complaints.filter(e => e.date >= from);
+  const keys = Object.keys(BODY_AREAS).filter(k => cur.includes(k) || diary.some(e => e.areas.includes(k)) || data.painLog.some(z => z.area === k && z.date >= from));
+  const areas = keys.map(k => {
+    const pts = painPoints(k, from);
+    return { k, side: lastSideOf(k), now: cur.includes(k), pts, nDiary: diary.filter(e => e.areas.includes(k)).length,
+      exs: painExercises(k, from).map(x => ({ ...x, w: exWeights(x.name, from) })) };
+  });
+  const notes = diary.filter(e => (e.note || '').trim()).map(e => ({ date: e.date, note: e.note.trim() })).sort((a, b) => a.date.localeCompare(b.date));
+  return { weeks, from, areas, notes, sessions: data.sessions.filter(s => s.date >= from).length, name: ((data.profile || {}).name || '').trim() };
+}
+function complReportText(R) {
+  const L = [`Beschwerde-Tagebuch${R.name ? ` – ${R.name}` : ''}`,
+    `Zeitraum: ${fmtDate(R.from)} bis ${fmtDate(new Date().toISOString())} (${R.weeks} Wochen) · ${R.sessions} Trainings`, ''];
+  if (!R.areas.length) L.push('Im Zeitraum gibt es keine Einträge.', '');
+  for (const a of R.areas) {
+    L.push(`${areaName(a.k, a.side)}${a.now ? ' (aktuell)' : ''}`);
+    L.push(a.pts.length ? `- Stärke: ${a.pts.map(p => `${dShort(p.date)} ${p.pain}/10${p.ex ? ' (Training)' : ''}`).join(', ')}` : '- ohne Angabe der Stärke');
+    for (const x of a.exs) {
+      L.push(`- Gezwickt bei ${x.name}: ${x.n}×${x.max != null ? `, bis ${x.max}/10` : ''}`);
+      if (x.w) L.push(`  Trainingsgewicht: ${shareSetText(x.w.first.set)} (${dShort(x.w.first.date)})${x.w.n > 1 ? ` → ${shareSetText(x.w.last.set)} (${dShort(x.w.last.date)})` : ''}`);
+    }
+    L.push('');
+  }
+  if (R.notes.length) { L.push('Notizen:'); R.notes.forEach(n => L.push(`- ${dShort(n.date)}: „${n.note}“`)); L.push(''); }
+  L.push(`Selbst erfasst mit ${APP_NAME}. ${COMPL_DISCLAIMER}`);
+  return L.join('\n');
+}
+// Bild: weißer Hintergrund (gut zu drucken), Akzentfarbe der Farbwelt nur für Linie und Kopf
+function complReportCanvas(R) {
+  const W = 1080, X = 80, MAXH = 9000, IW = W - 2 * X;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = MAXH;
+  const g = c.getContext('2d');
+  const acc = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#3a6df0';
+  const INK = '#1d1d1f', MUTED = '#5f6368', LINE = '#dcdfe4';
+  const F = (w, px) => `${w} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+  const wrap = (t, max) => {
+    const out = [];
+    let line = '';
+    for (const w of String(t).split(/\s+/)) {
+      const test = line ? `${line} ${w}` : w;
+      if (line && g.measureText(test).width > max) { out.push(line); line = w; } else line = test;
+    }
+    if (line) out.push(line);
+    return out;
+  };
+  let y = 0;
+  const text = (t, font, color, lh, max = IW, x = X) => { g.font = font; g.fillStyle = color; for (const l of wrap(t, max)) { y += lh; g.fillText(l, x, y); } };
+  const rule = () => { y += 34; g.fillStyle = LINE; g.fillRect(X, y, IW, 3); };
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, MAXH);
+  g.fillStyle = acc; g.fillRect(0, 0, W, 16);
+  g.textBaseline = 'alphabetic';
+  y = 40;
+  text('Beschwerde-Tagebuch', F(800, 64), INK, 84);
+  if (R.name) text(R.name, F(600, 40), INK, 56);
+  text(`${fmtDate(R.from)} bis ${fmtDate(new Date().toISOString())} · ${R.weeks} Wochen · ${R.sessions} Trainings`, F(500, 32), MUTED, 50);
+  rule();
+  if (!R.areas.length) text('Im gewählten Zeitraum gibt es keine Einträge.', F(500, 36), INK, 80);
+  for (const a of R.areas) {
+    y += 20;
+    text(areaName(a.k, a.side), F(800, 48), INK, 76, IW - 260);
+    g.font = F(700, 30); g.fillStyle = MUTED; g.textAlign = 'right';
+    g.fillText(a.now ? 'AKTUELL' : 'ABGEKLUNGEN', W - X, y); g.textAlign = 'left';
+    const lp = a.pts[a.pts.length - 1];
+    text(lp ? `Zuletzt ${lp.pain}/10 am ${fmtDate(lp.date)} · ${a.pts.length} ${a.pts.length === 1 ? 'Wert' : 'Werte'}` : 'Ohne Angabe der Stärke', F(500, 32), MUTED, 50);
+    if (a.pts.length) {
+      // Diagramm: Stärke 0–10 über den Zeitraum
+      const top = y + 36, ch = 250, cl = X + 50, cr = W - X - 10;
+      const t0 = Date.parse(R.from), t1 = Date.now();
+      const PX = d => cl + (Date.parse(d) - t0) / (t1 - t0) * (cr - cl), PY = p => top + (10 - p) / 10 * ch;
+      g.font = F(500, 26);
+      for (const v of [0, 5, 10]) {
+        g.fillStyle = LINE; g.fillRect(cl, PY(v) - 1, cr - cl, 2);
+        g.fillStyle = MUTED; g.textAlign = 'right'; g.fillText(String(v), cl - 14, PY(v) + 9); g.textAlign = 'left';
+      }
+      g.strokeStyle = acc; g.lineWidth = 5; g.lineJoin = 'round'; g.beginPath();
+      a.pts.forEach((p, i) => { const px = PX(p.date), py = PY(p.pain); if (i) g.lineTo(px, py); else g.moveTo(px, py); });
+      if (a.pts.length > 1) g.stroke();
+      for (const p of a.pts) {
+        g.beginPath(); g.arc(PX(p.date), PY(p.pain), 11, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+        g.beginPath(); g.arc(PX(p.date), PY(p.pain), 8, 0, Math.PI * 2); g.fillStyle = acc; g.fill();
+      }
+      g.fillStyle = MUTED; g.font = F(500, 26);
+      g.fillText(dShort(R.from), cl, top + ch + 42);
+      g.textAlign = 'right'; g.fillText('heute', cr, top + ch + 42); g.textAlign = 'left';
+      y = top + ch + 50;
+    }
+    if (a.exs.length) {
+      text('Gezwickt bei', F(700, 34), INK, 62);
+      for (const x of a.exs) {
+        text(`${x.name} – ${x.n}×${x.max != null ? `, bis ${x.max}/10` : ''}`, F(500, 32), INK, 46);
+        if (x.w) text(`Trainingsgewicht: ${shareSetText(x.w.first.set)} (${dShort(x.w.first.date)})${x.w.n > 1 ? ` → ${shareSetText(x.w.last.set)} (${dShort(x.w.last.date)})` : ''}`, F(500, 28), MUTED, 40, IW - 30, X + 30);
+      }
+    }
+    rule();
+  }
+  if (R.notes.length) {
+    y += 20;
+    text('Notizen', F(800, 44), INK, 70);
+    for (const n of R.notes) text(`${dShort(n.date)}: „${n.note}“`, F(500, 32), INK, 46);
+    rule();
+  }
+  y += 10;
+  text(`🩺 ${COMPL_DISCLAIMER}`, F(500, 28), MUTED, 42);
+  text(`Selbst erfasst mit ${APP_NAME} · erstellt am ${fmtDate(new Date().toISOString())}`, F(600, 28), MUTED, 52);
+  const H = Math.min(MAXH, Math.ceil(y + 70));
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  out.getContext('2d').drawImage(c, 0, 0);
+  return out;
+}
+function renderComplReport({ weeks = 8 }) {
+  return `<div class="seg three rep-weeks">${[4, 8, 12].map(w =>
+      `<button class="${w === weeks ? 'on' : ''}" data-action="crep-weeks" data-w="${w}">${w} Wochen</button>`).join('')}</div>
+    <div class="share-wrap"><img class="share-img rep-img" id="share-img" alt="Bericht deiner Beschwerden"></div>
+    <div class="row"><button class="btn primary" data-action="crep-send" disabled>📤 Bild teilen</button>
+      <button class="btn" data-action="share-save" disabled>Bild speichern</button></div>
+    <button class="btn" data-action="crep-text">📝 Als Text teilen</button>
+    <p class="hint">🔒 Der Bericht enthält Gesundheitsdaten. Teile ihn nur mit Menschen, denen du vertraust – z. B. deiner Ärztin, deinem Arzt
+      oder in der Physiotherapie. Der Hinweis, dass die App nur dokumentiert, steht im Bericht mit drin.</p>`;
+}
+function complReportDraw({ weeks = 8 }) {
+  const img = document.getElementById('share-img');
+  if (!img) return;
+  img.src = canvasToShare(complReportCanvas(complReportData(weeks)), `Beschwerde-Bericht ${localDay(new Date().toISOString())}.jpg`);
+  $view.querySelectorAll('[data-action="crep-send"], [data-action="share-save"]').forEach(b => { b.disabled = false; });
 }
 
 /* ---------- Stillstand erkennen ---------- */
@@ -2773,7 +3103,7 @@ function platesCard() {
       <div class="seg three">${BAR_OPTS.map(b => `<button class="${bar === b ? 'on' : ''}" data-action="plates-bar" data-v="${b}">${b} kg</button>`).join('')}</div>
       <p class="lbl">Deine Scheiben</p>
       <div class="variants plate-chips">${PLATE_ALL.map(p => `<button class="vchip ${have.includes(p) ? 'on' : ''}" data-action="plates-toggle" data-v="${p}">${fmtNum(p)}</button>`).join('')}</div>
-      <p class="hint">Danach rechnet die App bei Langhantel-Übungen aus, welche Scheiben auf jede Seite gehören – im Training und beim Aufwärmen.
+      <p class="hint explain">Danach rechnet die App bei Langhantel-Übungen aus, welche Scheiben auf jede Seite gehören – im Training und beim Aufwärmen.
         Passt es nicht genau, steht der Rest in Klammern.</p>
     </div>`;
 }
@@ -2833,9 +3163,49 @@ const views = {
   data:     { title: 'Optionen',      tab: 'data',    render: renderData, after: () => { showAppVersion(); storageInfoFill(); persistFill(); } },
 };
 
+/* ---------- Erklärtexte einklappen (v209, User-Wunsch 2026-11-11) ---------- */
+// Längere Erklärungen (class="hint explain") stehen bei den ersten 3 Besuchen einer Seite offen, danach klappen sie zu
+// einem kleinen „? Erklärung“ zusammen. Nur Standard und Experte; Einfach bleibt, wie es ist. Warnungen, Status und
+// Sicherheitshinweise sind bewusst NICHT markiert. Besuche je Seite (Optionen je Bereich) zählt das Gerät
+// (localStorage, gehört nicht in die Sicherung). „Alle Einführungen noch einmal zeigen“ setzt sie zurück.
+const VISIT_KEY = 'trainingsapp-besuche', EXPLAIN_AFTER = 3;
+let explainOpen = new Set();  // auf dieser Seite wieder aufgeklappte Erklärungen (bis zum Seitenwechsel)
+const visitKey = (view, p) => view + (p && p.sec ? ':' + p.sec : '');
+function visitsLoad() {
+  try { const o = JSON.parse(localStorage.getItem(VISIT_KEY)); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; }
+}
+function visitAdd(k) {
+  const o = visitsLoad();
+  o[k] = Math.min(99, (o[k] || 0) + 1);
+  try { localStorage.setItem(VISIT_KEY, JSON.stringify(o)); } catch (e) { /* ohne Speicher bleibt alles offen */ }
+}
+function visitsReset() { try { localStorage.removeItem(VISIT_KEY); } catch (e) { /* egal */ } }
+const explainKeep = () => !!(data.profile && data.profile.explainKeep);
+const explainId = p => p.textContent.replace(/\s+/g, ' ').trim().slice(0, 80);
+function explainFold() {
+  if (appMode() === 'e' || explainKeep()) return;
+  if ((visitsLoad()[visitKey(current.view, current.params)] || 0) <= EXPLAIN_AFTER) return;
+  $view.querySelectorAll('.explain').forEach(p => {
+    if (explainOpen.has(explainId(p))) return;
+    p.classList.add('folded');
+    p.insertAdjacentHTML('beforebegin', '<button class="explain-q" data-action="explain-show" aria-expanded="false">? Erklärung</button>');
+  });
+}
+function explainCard() {
+  if (appMode() === 'e') return '';
+  const keep = explainKeep();
+  return `<div class="card"><h2>❔ Erklärtexte</h2>
+      <div class="seg two"><button class="${keep ? '' : 'on'}" data-action="explain-mode" data-v="0">Einklappen</button>
+        <button class="${keep ? 'on' : ''}" data-action="explain-mode" data-v="1">Immer zeigen</button></div>
+      <p class="hint">Längere Erklärungen klappen ab dem vierten Besuch einer Seite zu einem kleinen „? Erklärung“ zusammen – antippen
+        zeigt sie wieder. Warnungen und wichtige Hinweise bleiben immer sichtbar.</p></div>`;
+}
+
 function go(view, params = {}) {
   exRename = null;  // offenes Umbenennen-Feld schließt beim Wechsel der Ansicht
   if (!current || current.view !== view || (params.id && params.id !== current.params.id)) dayReorder = null;
+  const vk = visitKey(view, params);
+  if (!current || visitKey(current.view, current.params) !== vk) { visitAdd(vk); explainOpen = new Set(); painQuick = null; }
   current = { view, params };
   render();
   window.scrollTo(0, 0);
@@ -2854,6 +3224,7 @@ function render() {
   });
   $view.innerHTML = v.render(current.params);
   if (v.after) v.after(current.params);  // z. B. Diagramm zeichnen, wenn die Breite bekannt ist
+  explainFold();  // v209: Erklärtexte ab dem 4. Besuch einklappen
   syncBackKey();
   syncTyping();  // Feld beim Neuzeichnen verschwunden (z. B. Seitenwechsel) -> Leiste wieder zeigen
   if (typeof tourCheck === 'function') tourCheck();  // Einführung beim ersten Öffnen (tour.js)
@@ -2994,8 +3365,10 @@ function hintsCard() {
   if (!hints.length && !areas.length) return '';
   let h = '<div class="card hints"><h2>💡 Hinweise</h2>';
   if (areas.length) {
-    h += `<p><b>Beschwerden in diesem Zyklus:</b> ${areas.map(a => BODY_AREAS[a].label).join(', ')}.
-      Betroffene Übungen sind im Training markiert. Bei Schmerzen den Satz abbrechen.</p>`;
+    const ce = currentComplaintEntry() || {};
+    h += `<p><b>Beschwerden in diesem Zyklus:</b> ${areas.map(a => areaName(a, ce.side && ce.side[a]) + (ce.pain && ce.pain[a] != null ? ` (${ce.pain[a]}/10)` : '')).join(', ')}.
+      Betroffene Übungen sind im Training markiert. Bei Schmerzen den Satz abbrechen.</p>
+      <button class="btn small compl-link" data-action="compl-open" data-from="start">Besser geworden? Verlauf & ändern</button>`;
   }
   for (const s of hints) {
     h += `<div class="hint-item"><div><b>Stillstand bei ${esc(s.name)}</b><br><small>${stagnationText(s)}</small></div>
@@ -3118,6 +3491,92 @@ function backupAfterTrainingCard() {
       <button class="btn primary" data-action="export">Jetzt sichern</button></div>`;
 }
 
+/* ---------- Motivation (v208, User-Wunsch 2026-11-11) ---------- */
+// profile.motiv: 'soft' (freundlich, Standard) | 'hard' (fordernd) | 'off'. Zwei Varianten gibt es nur für Motivations-Texte –
+// Erklärungen, Zahlen und Warnungen bleiben sachlich. Auch „fordernd“ nie abwertend: kein Vorwurf, keine Warnfarben.
+// Bei neuem Rekord steht in beiden Varianten die Freude vorn (User-Wunsch).
+const MOTIV_OPTS = { soft: ['🤗', 'Freundlich', 'Mit Lob, ohne Druck'], hard: ['🔥', 'Fordernd', 'Klare Ansagen, die mich antreiben'],
+  off: ['🔕', 'Gar nicht', 'Keine solchen Hinweise'] };
+const motivMode = () => { const m = (data.profile || {}).motiv; return MOTIV_OPTS[m] ? m : 'soft'; };
+const MOTIV = {
+  weekPart: { soft: (d, t) => `${d} von ${t} Trainings diese Woche – stark! 💪`,
+    hard: (d, t) => `${d} von ${t}. ${t - d === 1 ? 'Eins fehlt noch' : `${t - d} fehlen noch`} – zieh's durch.` },
+  weekDone: { soft: () => 'Woche geschafft! Gönn dir die Erholung.',
+    hard: (d, t) => `${d === t ? `${d} von ${t}.` : 'Woche komplett.'} Genau so – nächste Woche wieder.` },
+  pb: { soft: (ex, more) => `Neue Bestleistung bei ${ex}${more} – richtig gut!`,
+    hard: (ex, more) => `Neue Bestleistung bei ${ex}${more} – du siehst: Die harte Arbeit zahlt sich aus!` },
+  back: { soft: day => `Schön, dass du da bist! Als Nächstes wartet <b>${day}</b> – wann immer es dir passt.`,
+    hard: (day, n) => `${n} Tage ohne Training. <b>${day}</b> wartet – heute ist ein guter Tag dafür.` },
+  short: { soft: () => 'Wenig Zeit heute? Die App kürzt das Training auf deine Minuten.',
+    hard: () => 'Wenig Zeit ist kein Grund auszulassen – die App kürzt das Training auf deine Minuten.' },
+  deload: { soft: () => 'Leichte Woche – dein Körper baut jetzt auf. Genieß es.',
+    hard: () => 'Deload ist Teil des Plans. Leicht trainieren, nicht auslassen.' },
+};
+const motivText = (k, ...a) => MOTIV[k][motivMode() === 'hard' ? 'hard' : 'soft'](...a);
+const shortExName = n => esc(String(n).replace(/\s*\([^()]*\)$/, ''));
+// Nächster offener Trainingstag (wie auf der Startseite: ab dem zuletzt trainierten Tag weiter)
+function nextOpenDay(ci = cycleInfo()) {
+  const open = new Set(roundOpen(ci.cycleStart, ci.week).map(x => x.day.id));
+  const lastOwn = sessionsNewestFirst().find(s => findDay(s.dayId));
+  const from = lastOwn ? data.days.indexOf(findDay(lastOwn.dayId)) + 1 : 0;
+  return data.days.map((_, i) => data.days[(from + i) % data.days.length]).find(d => open.has(d.id)) || null;
+}
+// Gleich nach dem Speichern eines Trainings (Trainingsansicht, fresh): Rekorde und Stand der Woche
+function motivAfterHtml(s) {
+  if (motivMode() === 'off') return '';
+  const lines = [];
+  const pbs = typeof shareData === 'function' ? shareData(s).pbs : [];
+  if (pbs.length) lines.push(motivText('pb', shortExName(pbs[0].name), pbs.length > 1 ? ` und ${pbs.length - 1} weiteren Übung${pbs.length === 2 ? '' : 'en'}` : ''));
+  if (s.deload) lines.push(motivText('deload'));
+  else if (s.cycleStart && !ownPlan()) {
+    const total = activeDays().reduce((a, d) => a + dayTimes(d, s.week), 0);
+    const left = roundOpen(s.cycleStart, s.week).reduce((a, x) => a + x.left, 0);
+    const done = roundSessions(s.cycleStart, s.week).length;
+    if (total) lines.push(left ? motivText('weekPart', Math.min(done, total), total) : motivText('weekDone', Math.min(done, total), total));
+  }
+  return lines.length ? `<div class="card motiv-card ${motivMode()}">${lines.map(l => `<p>${l}</p>`).join('')}</div>` : '';
+}
+// Startseite (Hinweis-Karte, niedrigster Rang): Deload-Woche noch ohne Training, oder nach ein paar Tagen Pause eine Einladung.
+// Ab der Pausen-Frage („Wieder da“, 7 bzw. 14 Tage) nichts, die übernimmt dann. ✕ blendet bis zum nächsten Durchlauf aus.
+function motivStartCard() {
+  if (motivMode() === 'off' || draft || !hasActivePlan() || ownPlan()) return '';
+  const ci = cycleInfo(), key = roundKey(ci.cycleStart, ci.week);
+  if ((data.profile || {}).motivHide === key) return '';
+  const x = `<button class="icon-btn motiv-x" data-action="motiv-hide" data-k="${esc(key)}" aria-label="Bis zur nächsten Woche ausblenden">✕</button>`;
+  if (ci.deload) return roundSessions(ci.cycleStart, ci.week).length ? '' : `<div class="card hints motiv-card ${motivMode()}">${x}<p>${motivText('deload')}</p></div>`;
+  const last = sessionsNewestFirst().find(s => findDay(s.dayId));
+  if (!last) return '';
+  const days = Math.floor((Date.parse(todayISO() + 'T12:00:00') - Date.parse(last.date.slice(0, 10) + 'T12:00:00')) / DAY);
+  const perWeek = Math.max(1, activeDays().reduce((a, d) => a + dayTimes(d, ci.week), 0));
+  const from = Math.max(4, Math.round(7 / perWeek) + 2), to = perWeek <= 1 ? 14 : 7;  // seltener Trainierende: später einladen
+  const nd = nextOpenDay(ci);
+  if (days < from || days >= to || !nd) return '';
+  const est = estDuration(nd, ci.week, activePlan(), ci.deload);
+  return `<div class="card hints motiv-card ${motivMode()}">${x}<p>${motivText('back', esc(nd.name), days)}</p>
+    ${est > 60 && !(data.timeLimit && data.timeLimit.min) ? `<p class="hint">${motivText('short')}</p>
+      <button class="btn small" data-action="time-open">⏱ Training kürzen</button>` : ''}</div>`;
+}
+// Bisherige Nutzer einmal fragen (neue: in der Begrüßung)
+function motivAskCard() {
+  if ((data.profile || {}).motiv || !hasOwnData()) return '';
+  return `<div class="card hints motiv-ask"><p><b>Wie möchtest du motiviert werden?</b></p>
+      <p class="hint">Nach dem Training und nach einer kleinen Pause meldet sich die App mit ein paar Worten. Du entscheidest, in welchem Ton.</p>
+      <div class="mode-opts">${Object.entries(MOTIV_OPTS).map(([k, [ic, l, t]]) =>
+        `<button class="split-opt" data-action="motiv-set" data-m="${k}"><b>${ic} ${l}</b><small>${t}</small></button>`).join('')}</div>
+      <p class="hint">Jederzeit änderbar unter Optionen → Training.</p></div>`;
+}
+// Optionen → Training
+function motivCard() {
+  const m = motivMode();
+  return `<div class="card motiv-opt">
+      <h2>Motivation</h2>
+      <div class="seg three">${Object.entries(MOTIV_OPTS).map(([k, [, l]]) => `<button class="${m === k ? 'on' : ''}" data-action="motiv-set" data-m="${k}">${l}</button>`).join('')}</div>
+      <p class="hint explain">${m === 'off' ? 'Keine Lob- oder Erinnerungs-Texte. Zahlen und Hinweise zum Training bleiben.'
+        : m === 'hard' ? 'Klare Ansagen nach dem Training und nach einer Pause – z. B. „2 von 3. Eins fehlt noch – zieh\'s durch.“'
+        : 'Lob nach dem Training und eine freundliche Einladung nach einer Pause – z. B. „2 von 3 Trainings diese Woche – stark!“'}</p>
+    </div>`;
+}
+
 // „⏱ Wenig Zeit?“ (Zeitlimit): data.timeLimit = { min, once } – once = nur fürs nächste Training, sonst bis man es ändert.
 // timeEdit = { min (Text), once } solange das Eingabefeld offen ist
 let timeEdit = null;
@@ -3173,7 +3632,7 @@ function skipHtml(ci) {
 // Startseite (v201, User-Wunsch 2026-11-11): höchstens EINE Hinweis-Karte gleichzeitig, die wichtigste zuerst –
 // die übrigen kommen nach Erledigen bzw. „Später“ der Reihe nach dran
 function startHintCard() {
-  for (const f of [storageWarnCard, iosMoveCard, whatsNewCard, backupCard, installCard, colorHintCard, modeUpCard]) {
+  for (const f of [storageWarnCard, iosMoveCard, whatsNewCard, motivAskCard, backupCard, installCard, colorHintCard, modeUpCard, motivStartCard]) {
     const h = f();
     if (h) return h;
   }
@@ -3332,6 +3791,7 @@ function renderTraining() {
           ${feat('tr-comment') ? `<button class="icon-btn bubble ${hasComment ? 'has' : ''}" data-action="comment-toggle"
             data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>` : ''}
           <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
+          <button class="icon-btn pain-btn" data-action="pain-open" data-ei="${ei}">🩹 Zwickt</button>
         </div>` : ''}
       </div>`;
     if (en.added) {
@@ -3342,9 +3802,11 @@ function renderTraining() {
       h += `<textarea class="inp comment" rows="3" data-field="tr-comment" data-ei="${ei}"
         placeholder="Kommentar zur Übung, z. B. Sitzhöhe 4, Schulter zwickt …">${esc(en.comment)}</textarea>`;
     }
-    for (const c of complaintTips(en.name)) {
+    const tips = complaintTips(en.name);
+    for (const c of tips) {
       h += `<p class="complaint-note">⚠️ ${c.label}: ${c.tip}. Bei Schmerz Satz abbrechen.</p>`;
     }
+    h += painTrainingHtml(en, ei, tips.length > 0);  // „Zwickt“ (v209)
     const stall = stalls.find(s => s.key === nameKey(en.name));
     if (stall && feat('stall-hints')) h += `<p class="stall-note">💡 Stillstand: ${stagnationText(stall)}</p>`;
     const body = en.target && en.target.bodyweight;  // Eigengewicht: kein Aufwärmen, kg = Körpergewicht
@@ -3697,7 +4159,7 @@ function renderPlan() {
   h += '</div>';
   if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
-    h += `<p class="hint">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
+    h += `<p class="hint explain">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
       Isolationsübungen 2 Minuten (ohne Aufwärmen).</p>`;
   }
   if (active.own) {
@@ -3846,7 +4308,7 @@ function periodCard(c, active) {
   const cfg = feat('plan-cycle-settings');
   if (!cfg && !feat('cycle-adjust') && !feat('plan-volume')) return '';
   let h = '<h2>Periodisierung</h2><div class="card">';
-  if (feat('cycle-adjust')) h += '<p class="hint">Woche wechseln, Zykluslänge, Verlängern/Verkürzen und „Zyklus beenden“ findest du im Reiter Training an der Zykluskarte unter „⚙️ Zyklus anpassen“.</p>';
+  if (feat('cycle-adjust')) h += '<p class="hint explain">Woche wechseln, Zykluslänge, Verlängern/Verkürzen und „Zyklus beenden“ findest du im Reiter Training an der Zykluskarte unter „⚙️ Zyklus anpassen“.</p>';
   if (cfg) {
     h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald ${roundDoneText(active)} – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
       <p class="lbl chips-title">Deload</p>
@@ -4119,7 +4581,7 @@ function renderDay({ id }) {
       .filter(([t]) => t || feat('day-free') || !dayIntensity(day)).map(([t, label]) =>
       `<button class="vchip ${(dayIntensity(day) || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
     </div>` : ''}
-    <p class="hint">${!feat('day-reprange') ? 'Sätze, Wiederholungen und Gewichte rechnet die App automatisch aus.' : dayIntensity(day)
+    <p class="hint explain">${!feat('day-reprange') ? 'Sätze, Wiederholungen und Gewichte rechnet die App automatisch aus.' : dayIntensity(day)
       ? `${{ heavy: 'Niedrig: mehr Gewicht, weniger Wiederholungen', light: 'Hoch: weniger Gewicht, mehr Wiederholungen' }[dayIntensity(day)]} – beides sind intensive Trainingstage, nur mit unterschiedlicher Belastung.
         Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.`
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
@@ -4182,7 +4644,7 @@ function renderDay({ id }) {
   });
   h += `${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
+    <p class="hint explain">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
       : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
@@ -4265,6 +4727,7 @@ function renderHistory() {
   h += inMonth.length ? inMonth.map(sessionBtn).join('') : '<p class="hint">In diesem Monat keine Trainings.</p>';
   h += `<h2>Cardio</h2>${cardio}`;
   h += typeof reviewHistoryHtml === 'function' ? reviewHistoryHtml() : '';  // Zyklus-Rückblicke (charts.js)
+  h += complaintsHistBtn();  // Beschwerden-Verlauf (v208)
   // die Übungsliste steht seit v203 im Bereich „Übungen“ (charts.js, histExListHtml)
   return h;
 }
@@ -4322,9 +4785,9 @@ function renderLibrary() {
       spellcheck="false" placeholder="Übung suchen, z. B. Rudern …" value="${esc(libQuery)}">
     <div id="lib-results">${libResults()}</div>
     <div id="lib-groups" ${libQuery.trim() ? 'hidden' : ''}>
-    <p class="hint">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>
+    <p class="hint explain">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>
     ${feat('custom-ex') ? '<button class="btn outline lib-add-btn" data-action="libc-new">＋ Eigene Übung hinzufügen</button>' : ''}
-    <p class="hint">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an – danach kannst du sie
+    <p class="hint explain">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an – danach kannst du sie
       jederzeit wieder aufrufen: im Plan, im Plan-Assistenten und beim Ersetzen oder Hinzufügen im Training.</p>`;
   if (data.customExercises.length) {
     const open = libOpenGroups.has('own');
@@ -4637,7 +5100,7 @@ function renderSession({ id, fresh, edit, week }) {
     return renderSessionEdit(s);
   }
   const won = fresh || [];
-  const top = (won.length ? `<div class="card award-new">${won.map(a =>
+  const top = (fresh ? motivAfterHtml(s) : '') + (won.length ? `<div class="card award-new">${won.map(a =>
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
     (fresh ? backupAfterTrainingCard() : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
@@ -4762,25 +5225,33 @@ function renderShare({ id }) {
   return `<div class="share-wrap"><img class="share-img" id="share-img" alt="Bild deines Trainings ${esc(s.dayName)}"></div>
     <div class="row"><button class="btn primary" data-action="share-send" disabled>📤 Teilen</button>
       <button class="btn" data-action="share-save" disabled>Bild speichern</button></div>
-    <p class="hint">Das Bild zeigt nur Trainingstag, Dauer, bewegtes Gewicht, Sätze und deine Bestleistungen – kein Körpergewicht und
+    <p class="hint explain">Das Bild zeigt nur Trainingstag, Dauer, bewegtes Gewicht, Sätze und deine Bestleistungen – kein Körpergewicht und
       keine Gesundheitsdaten. Die Farben kommen aus deiner Farbwelt (Optionen → Aussehen).</p>`;
 }
 function shareDraw({ id }) {
   const s = data.sessions.find(x => x.id === id), img = document.getElementById('share-img');
   if (!s || !img) return;
-  // sofort (toDataURL) statt asynchron (toBlob): zuverlässiger, und das Teilen-Menü bekommt die Datei ohne Wartezeit
-  // JPEG statt PNG: der Farbverlauf wäre als PNG über 1 MB groß
-  const url = shareCanvas(s).toDataURL('image/jpeg', 0.92);
+  img.src = canvasToShare(shareCanvas(s), `StepUp-Training ${localDay(s.date)}.jpg`);
+  $view.querySelectorAll('[data-action="share-send"], [data-action="share-save"]').forEach(b => { b.disabled = false; });
+}
+// Bild zum Teilen bereitlegen (shareUrl/shareFile) und als Daten-URL für die Vorschau zurückgeben
+// sofort (toDataURL) statt asynchron (toBlob): zuverlässiger, und das Teilen-Menü bekommt die Datei ohne Wartezeit
+// JPEG statt PNG: der Farbverlauf wäre als PNG über 1 MB groß
+function canvasToShare(c, fileName) {
+  const url = c.toDataURL('image/jpeg', 0.92);
   const bin = atob(url.slice(url.indexOf(',') + 1)), bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const blob = new Blob([bytes], { type: 'image/jpeg' });
   if (shareUrl) URL.revokeObjectURL(shareUrl);
   shareUrl = URL.createObjectURL(blob);
-  shareFile = new File([blob], `StepUp-Training ${localDay(s.date)}.jpg`, { type: 'image/jpeg' });
-  img.src = url;
-  $view.querySelectorAll('[data-action="share-send"], [data-action="share-save"]').forEach(b => { b.disabled = false; });
+  shareFile = new File([blob], fileName, { type: 'image/jpeg' });
+  return url;
 }
 views.share = { title: 'Ergebnis teilen', tab: 'history', back: p => ['session', { id: p.id, week: p.week }], render: renderShare, after: shareDraw };
+// Beschwerde-Tagebuch (v208/v209) – hier, weil views erst oben im Abschnitt „Bildschirme“ entsteht
+views.complaints = { title: 'Beschwerden', tab: p => p.from === 'start' ? 'start' : 'history', back: p => [p.from || 'history', {}], render: renderComplaints };
+views.complreport = { title: 'Bericht', tab: p => p.from === 'start' ? 'start' : 'history', back: p => ['complaints', { from: p.from }],
+  render: renderComplReport, after: complReportDraw };
 function shareSave() {
   if (!shareUrl) return;
   const a = document.createElement('a');
@@ -4965,8 +5436,8 @@ const SIZES = { '': 'Normal', l: 'Groß', xl: 'Sehr groß' };
 const OPT_SECS = {
   look: { icon: '🎨', title: 'Aussehen', render: () => appearanceCard(),
     sub: () => { const p = data.profile || {}; return [PROFILE_COLORS[profileColor()].label, THEME_MODES[p.theme || ''], LOOKS[p.look || ''], `Schrift ${SIZES[p.size || '']}`].join(' · '); } },
-  train: { icon: '🏋️', title: 'Training', render: () => restCard() + platesCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard(),
-    sub: () => `Pausen-Timer ${restCfg().off ? 'aus' : 'an'} · Langhantel ${barKg()} kg · Einführungen` },
+  train: { icon: '🏋️', title: 'Training', render: () => motivCard() + restCard() + platesCard() + (typeof tourCard === 'function' ? tourCard() : '') + explainCard() + hintOffCard(),
+    sub: () => `Motivation ${MOTIV_OPTS[motivMode()][1].toLowerCase()} · Pausen-Timer ${restCfg().off ? 'aus' : 'an'} · Langhantel ${barKg()} kg` },
   me: { icon: '👤', title: 'Profil & Ernährung', render: () => profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : ''),
     sub: () => [(data.profile || {}).name || 'Name, Geschlecht', 'Hinweise zur Ernährung', typeof mcAvailable === 'function' && mcAvailable() ? 'Zykluskalender' : ''].filter(Boolean).join(' · ') },
   data: { icon: '💾', title: 'Deine Daten', render: () => dataSecHtml(),
@@ -5021,6 +5492,16 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 209, date: '2026-11-11', items: [
+    ['Beschwerde-Tagebuch: Stärke von 0 bis 10, Seite und Notiz je Stelle – mit Verlaufslinie (Verlauf → Beschwerden).'],
+    ['„🩹 Zwickt“ im Training: Bei jeder Übung festhalten, wo und wie stark es zwickt. So siehst du, welche Übungen sich melden.'],
+    ['Bericht für deinen Termin: Verlauf, betroffene Übungen und Notizen als Bild oder Text – zum Zeigen in Arztpraxis oder Physiotherapie.'],
+    ['Weniger Text: Längere Erklärungen klappen nach dem dritten Besuch einer Seite zu „? Erklärung“ zusammen.', 'tr-comment'],
+  ] },
+  { v: 208, date: '2026-11-11', items: [
+    ['Motivation nach deinem Geschmack: freundlich mit Lob, fordernd mit klaren Ansagen – oder gar nicht (Optionen → Training).'],
+    ['Beschwerden-Verlauf: Im Verlauf siehst du, seit wann es wo zwickt – und änderst es jederzeit, wenn es besser wird.'],
+  ] },
   { v: 207, date: '2026-11-11', items: [
     ['Optionen aufgeräumt: Die Einstellungen sind jetzt nach Bereichen sortiert – Aussehen, Training, Profil, Deine Daten, Hilfe.'],
     ['Textgröße: Unter Optionen → Aussehen kannst du Schrift und Knöpfe größer stellen.'],
@@ -5965,6 +6446,7 @@ function importData(file) {
       cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV, rirV: d.rirV,
       measures: Array.isArray(d.measures) ? d.measures : [],
+      painLog: Array.isArray(d.painLog) ? d.painLog : [],
     });
     registerCustomExercises();
     prefatMigrate();  // ältere Sicherung: Max.-Werte auf frisch umrechnen
@@ -7023,7 +7505,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], measures: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], measures: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], painLog: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);
@@ -7047,6 +7529,7 @@ const actions = {
 
 // Eingabefelder schreiben direkt in die Daten (ohne neu zu zeichnen)
 const fields = {
+  'compl-note': el => { if (complEdit) complEdit.note = el.value; },  // Beschwerde-Tagebuch (v209), gespeichert mit „Heute eintragen“
   'day-name': el => { findDay(current.params.id).name = el.value; saveData(); },
   'backup-pw': el => { backupPw = el.value.trim(); },  // nur im Arbeitsspeicher
   // Suche in der Bibliothek: nur die Trefferliste neu zeichnen, damit das Feld den Fokus behält
@@ -7481,7 +7964,7 @@ function appearanceCard() {
       <div class="seg three">${Object.entries(THEME_MODES).map(([k, l]) =>
         `<button class="${((p.theme || '') === k) ? 'on' : ''}" data-action="profile-theme" data-k="${k}">${l}</button>`).join('')}
       </div>
-      <p class="hint">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
+      <p class="hint explain">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
         „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
         „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
       <p class="lbl">Textgröße</p>
@@ -7491,12 +7974,12 @@ function appearanceCard() {
       <p class="lbl">Stil</p>
       <div class="seg two">${Object.entries(LOOKS).map(([k, l]) =>
         `<button class="${((p.look || '') === k) ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
-      <p class="hint">„Standard“: mit Symbolen, Farben und Farbverläufen. „Schlicht“: ohne Emojis, ganz in Schwarz, Weiß und Grau,
+      <p class="hint explain">„Standard“: mit Symbolen, Farben und Farbverläufen. „Schlicht“: ohne Emojis, ganz in Schwarz, Weiß und Grau,
         flache Flächen und feine Linien – nur die Überschriften haben die Farbe deiner Farbwelt.</p>
       <p class="lbl">Übungen im Training</p>
       <div class="seg two tr-viewmode"><button class="${trSwipeOn() ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
         <button class="${trSwipeOn() ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>
-      <p class="hint">„Untereinander“: alle Übungen auf einer Seite zum Scrollen. „Wischen“: eine Übung je Bildschirm – nach links wischen
+      <p class="hint explain">„Untereinander“: alle Übungen auf einer Seite zum Scrollen. „Wischen“: eine Übung je Bildschirm – nach links wischen
         für die nächste Übung, nach rechts für die vorige.</p>
     </div>`;
 }
@@ -7510,7 +7993,7 @@ function profileCard() {
       </label>
       <p class="lbl">Geschlecht</p>
       <div class="seg two">${sexButtons(p.sex, 'profile-sex')}</div>
-      <p class="hint">Das Geschlecht bestimmt, welcher Klassiker im Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan),
+      <p class="hint explain">Das Geschlecht bestimmt, welcher Klassiker im Plan-Assistenten angeboten wird (Diskopumper oder Booty-Plan),
         und wird im Ernährungsrechner vorausgefüllt.</p>
     </div>`;
 }
@@ -7573,7 +8056,11 @@ function welcomeHtml() {
           <div class="welcome-modes" id="welcome-mode">${Object.entries(APP_MODES).map(([k, x]) =>
             `<button class="split-opt ${welc.mode === k ? 'on' : ''}" data-action="welcome-mode" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
           <p class="hint welcome-note">Die Trainingssteuerung ist in allen Modi gleich – der Modus bestimmt nur, wie viele Zahlen und
-            Einstellungen du siehst. Du kannst ihn jederzeit in den Optionen ändern.</p>` : ''}
+            Einstellungen du siehst. Du kannst ihn jederzeit in den Optionen ändern.</p>
+          <p class="lbl">Wie möchtest du motiviert werden?</p>
+          <div class="seg three" id="welcome-motiv">${Object.entries(MOTIV_OPTS).map(([k, [, l]]) =>
+            `<button class="${(welc.motiv || 'soft') === k ? 'on' : ''}" data-action="welcome-motiv" data-m="${k}">${l}</button>`).join('')}</div>
+          <p class="hint welcome-note">Freundlich: mit Lob, ohne Druck. Fordernd: klare Ansagen, die dich antreiben. Gar nicht: keine solchen Hinweise.</p>` : ''}
       </div>
       ${two ? '' : '<p class="hint welcome-note">Du kannst beides später im Reiter „Optionen“ unter „Profil“ ändern.</p>'}
       <button class="btn primary" data-action="welcome-ok">${two ? 'Weiter' : 'Speichern'}</button>`;
@@ -7644,6 +8131,7 @@ actions['welcome-ok'] = () => {
   if (welc.fresh && !welc.mode) { alert('Bitte wähle aus, wie viel die App zeigen soll (Einfach, Standard oder Experte).'); return; }
   // Erste Farbwahl nach dem Geschlecht (Frau: Beere, sonst Blau) – danach nur noch unter „Optionen“ änderbar
   data.profile = { ...(data.profile || {}), name, sex: on.dataset.k, ...(welc.mode ? { mode: welc.mode, modeUpSeen: welc.mode } : {}),
+    ...(welc.fresh ? { motiv: welc.motiv || 'soft' } : {}),
     color: (data.profile && data.profile.color) || (on.dataset.k === 'f' ? 'berry' : 'blue') };
   if (!welcomeNeedsPhase()) data.welcomeSeen = true;
   saveData();
@@ -7703,6 +8191,108 @@ actions['color-hint'] = el => {
   if (el.dataset.go) go('opt', { sec: 'look' }); else render();
 };
 actions['opt-open'] = el => go('opt', { sec: el.dataset.sec });
+// Beschwerden-Verlauf (v208)
+actions['compl-open'] = el => { complEdit = null; go('complaints', { from: el.dataset.from || current.view }); };
+actions['compl-pick'] = el => {
+  const k = el.dataset.k, E = complEdit;
+  if (E.areas.has(k)) { E.areas.delete(k); delete E.pain[k]; delete E.side[k]; }
+  else { E.areas.add(k); if (!E.side[k] && areaSided(k)) { const s = lastSideOf(k); if (s) E.side[k] = s; } }
+  render();
+};
+actions['compl-pain'] = el => { const k = el.dataset.k, v = +el.dataset.v; if (complEdit.pain[k] === v) delete complEdit.pain[k]; else complEdit.pain[k] = v; render(); };
+actions['compl-side'] = el => { const k = el.dataset.k, v = el.dataset.v; if (complEdit.side[k] === v) delete complEdit.side[k]; else complEdit.side[k] = v; render(); };
+// höchstens ein Eintrag je Tag: ein zweites Speichern am selben Tag ersetzt den Eintrag von heute
+actions['compl-save'] = () => {
+  const E = complEdit, areas = Object.keys(BODY_AREAS).filter(k => E.areas.has(k));
+  const entry = { cycleStart: cycleInfo().cycleStart, date: new Date().toISOString(), areas };
+  const pain = {}, side = {};
+  for (const k of areas) { if (E.pain[k] != null) pain[k] = E.pain[k]; if (E.side[k] && areaSided(k)) side[k] = E.side[k]; }
+  if (Object.keys(pain).length) entry.pain = pain;
+  if (Object.keys(side).length) entry.side = side;
+  if ((E.note || '').trim()) entry.note = E.note.trim();
+  const last = data.complaints[data.complaints.length - 1];
+  if (last && last.cycleStart === entry.cycleStart && localDay(last.date) === localDay(entry.date)) data.complaints[data.complaints.length - 1] = entry;
+  else data.complaints.push(entry);
+  saveData();
+  complEdit = null;
+  toast('Eingetragen ✔ – die Hinweise im Training sind angepasst');
+  render();
+};
+actions['compl-report'] = () => go('complreport', { from: current.params.from, weeks: 8 });
+actions['crep-weeks'] = el => go('complreport', { ...current.params, weeks: +el.dataset.w });
+actions['crep-send'] = async () => {
+  if (!shareFile) return;
+  if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+    try { await navigator.share({ files: [shareFile], title: 'Beschwerde-Bericht' }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  shareSave();
+};
+actions['crep-text'] = async () => {
+  const text = complReportText(complReportData(current.params.weeks || 8));
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Beschwerde-Bericht', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(text); toast('Bericht kopiert ✔ – z. B. in eine Mail einfügen'); }
+  catch (e) { prompt('Zum Kopieren markieren:', text); }
+};
+actions['pain-pt'] = el => {
+  const cap = el.closest('.compl-area') && el.closest('.compl-area').querySelector('.ps-cap');
+  if (cap) { cap.textContent = el.dataset.t; cap.hidden = false; }
+};
+actions['pain-del'] = el => {
+  if (!confirm('Diesen Eintrag löschen?')) return;
+  data.painLog = data.painLog.filter(z => z.id !== el.dataset.id);
+  saveData(); render();
+};
+// „Zwickt“ im Training (v209)
+actions['pain-open'] = el => {
+  const ei = +el.dataset.ei, name = draft.entries[ei].name, cur = currentComplaints() || [];
+  const area = cur.find(a => areaHits(a, name)) || Object.keys(BODY_AREAS).find(a => areaHits(a, name)) || null;
+  painQuick = { ei, area, pain: null, side: area && areaSided(area) ? lastSideOf(area) : null };
+  render();
+};
+actions['pain-area'] = el => {
+  const k = el.dataset.k;
+  painQuick.area = painQuick.area === k ? null : k;
+  painQuick.side = painQuick.area && areaSided(painQuick.area) ? lastSideOf(painQuick.area) : null;
+  render();
+};
+actions['pain-side'] = el => { painQuick.side = painQuick.side === el.dataset.v ? null : el.dataset.v; render(); };
+actions['pain-val'] = el => { const v = +el.dataset.v; painQuick.pain = painQuick.pain === v ? null : v; render(); };
+actions['pain-cancel'] = () => { painQuick = null; render(); };
+actions['pain-save'] = () => {
+  const q = painQuick;
+  if (!q || !q.area || !draft) return;
+  const z = { id: uid(), date: new Date().toISOString(), ex: draft.entries[q.ei].name, area: q.area, pain: q.pain };
+  if (q.side && areaSided(q.area)) z.side = q.side;
+  data.painLog.push(z);
+  saveData();
+  painQuick = null;
+  toast('Notiert ✔ – steht in deinem Beschwerde-Tagebuch');
+  render();
+};
+// Erklärtexte (v209)
+actions['explain-show'] = el => {
+  const p = el.nextElementSibling;
+  if (p && p.classList.contains('explain')) { p.classList.remove('folded'); explainOpen.add(explainId(p)); }
+  el.remove();
+};
+actions['explain-mode'] = el => {
+  data.profile = { ...(data.profile || {}), explainKeep: el.dataset.v === '1' };
+  saveData(); render();
+};
+// Motivation (v208)
+actions['motiv-set'] = el => {
+  data.profile = { ...(data.profile || {}), motiv: el.dataset.m };
+  saveData(); render();
+  if (current.view === 'start') toast(`Motivation: ${MOTIV_OPTS[el.dataset.m][1]} – änderbar unter Optionen → Training`);
+};
+actions['motiv-hide'] = el => { data.profile = { ...(data.profile || {}), motivHide: el.dataset.k }; saveData(); render(); };
+actions['welcome-motiv'] = el => {
+  welc.motiv = el.dataset.m;
+  el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+};
 // Textgröße (v207): vergrößert den Inhalt (#view), Kopf- und Fußleiste bleiben gleich
 actions['profile-size'] = el => {
   data.profile = { ...(data.profile || {}), size: el.dataset.k || null };

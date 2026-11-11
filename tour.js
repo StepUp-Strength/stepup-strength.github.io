@@ -48,6 +48,8 @@ const TOURS = {
     { id: 'tr-tools', sel: 'section.card .ex-tools', title: 'Kommentar und Ersetzen',
       text: () => (feat('tr-comment') ? '„Kommentar“: eine Notiz zur Übung, z. B. die Sitzhöhe – sie erscheint beim nächsten Mal wieder. ' : '')
         + '„Ersetzen“: die Übung heute gegen eine ähnliche tauschen, z. B. wenn das Gerät besetzt ist. Der Plan bleibt, wie er ist.' },
+    { id: 'tr-pain', sel: 'section.card .pain-btn, section.card .pain-link', title: '🩹 Zwickt',
+      text: 'Meldet sich bei einer Übung etwas, tipp hier und halte fest, wo und wie stark. Das landet in deinem Beschwerde-Tagebuch – so siehst du mit der Zeit, welche Übungen sich melden.' },
     { id: 'tr-warm', sel: 'section.card .warmup', title: 'Aufwärmen',
       text: 'Vor der ersten schweren Übung schlägt die App Aufwärmsätze vor. Antippen klappt sie auf – sie zählen nicht als Arbeitssätze.' },
     { id: 'tr-target', sel: 'section.card .target', title: 'Ziel für heute',
@@ -207,6 +209,14 @@ const TOURS = {
     { id: 'opt-import', sel: '[data-action="import"]', title: 'Sicherung laden',
       text: 'Lädt eine gesicherte Datei wieder – z. B. auf einem neuen Handy.' },
   ],
+  complaints: [
+    { id: 'compl-edit', sel: '.compl-card', title: 'Dein Beschwerde-Tagebuch',
+      text: 'Tipp an, wo es zwickt – wenn du magst, mit Seite und Stärke von 0 bis 10. Ist etwas besser geworden, nimm es einfach wieder heraus. Ein Eintrag pro Tag genügt.' },
+    { id: 'compl-rep', sel: '[data-action="compl-report"]', title: 'Bericht für deinen Termin',
+      text: 'Fasst Verlauf, betroffene Übungen und Notizen zusammen – als Bild oder Text zum Zeigen in der Arztpraxis oder Physiotherapie.' },
+    { id: 'compl-hist', sel: '.compl-area', title: 'Verlauf',
+      text: 'Hier siehst du je Stelle, seit wann sie dich beschäftigt, wie sich die Stärke entwickelt und bei welchen Übungen es gezwickt hat. Die App bewertet nichts – sie hält nur fest.' },
+  ],
   measures: [
     { id: 'meas-form', sel: '.meas-form', title: 'Körpermaße eintragen',
       text: 'Trag nur ein, was du messen möchtest – alle Felder sind freiwillig. Daneben steht jeweils dein letzter Wert.' },
@@ -356,13 +366,14 @@ function tourClick(e) {
 
 // Optionen: Einführungen wieder zeigen
 const tourCard = () => `<div class="card"><h2>💡 Einführungen</h2>
-    <p class="hint">Beim ersten Öffnen eines Fensters erklärt die App die wichtigsten Knöpfe. Nach einem Wechsel des Modus kommen
+    <p class="hint explain">Beim ersten Öffnen eines Fensters erklärt die App die wichtigsten Knöpfe. Nach einem Wechsel des Modus kommen
       die neuen Funktionen dazu.${tourState().off ? ' <b>Zurzeit ausgeschaltet.</b>' : ''}</p>
     <button class="btn" data-action="tour-reset">${tourState().off ? 'Einführungen wieder einschalten' : 'Alle Einführungen noch einmal zeigen'}</button></div>`;
 
 Object.assign(actions, {
   'tour-reset': () => {
     data.tour = { seen: {}, off: false };
+    if (typeof visitsReset === 'function') visitsReset();  // v209: Erklärtexte stehen danach auch wieder offen
     saveData(); render();
     toast('Die Einführungen erscheinen wieder beim Öffnen der Fenster');
   },

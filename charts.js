@@ -661,7 +661,7 @@ function stepsList() {
 function healthCard() {
   return `<div class="card health">
     <button class="btn primary" data-action="health-paste">❤️ Aus Health einfügen</button>
-    <p class="hint">Übernimmt Schritte, Gewicht und – wenn eingerichtet – Kalorien, Eiweiß, Kohlenhydrate und Fett, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
+    <p class="hint explain">Übernimmt Schritte, Gewicht und – wenn eingerichtet – Kalorien, Eiweiß, Kohlenhydrate und Fett, die dein Kurzbefehl in die Zwischenablage kopiert hat.</p>
     ${healthPasteBox()}
     ${healthGuide()}
   </div>`;
@@ -720,7 +720,7 @@ const healthGuide = () => `<details class="health-guide">
       <li>Kommen die Kalorien in <b>kJ</b> statt kcal an, stell in der Health-App bei „Nahrungsenergie“ die Einheit auf kcal um.</li>
       <li>Schreiben <b>zwei</b> Ernährungs-Apps nach Health, zählt Health beide zusammen – dann nur eine davon verbinden.</li>
     </ul>
-    <p class="hint">Ganz ohne Tippen geht es leider nicht: Das iPhone lässt Web-Apps nicht selbst auf Health zugreifen. Der
+    <p class="hint explain">Ganz ohne Tippen geht es leider nicht: Das iPhone lässt Web-Apps nicht selbst auf Health zugreifen. Der
       Kurzbefehl legt die Daten jeden Tag bereit – am besten am selben Abend einfügen, bevor du etwas anderes kopierst.</p>
   </details>`;
 
@@ -845,7 +845,7 @@ function measBtnHtml() {
 function renderMeasures() {
   if (!measForm) measForm = { date: todayISO(), v: {} };
   const last = lastMeasures();
-  let h = `<p class="hint">Miss immer an derselben Stelle, am besten morgens – das Maßband liegt an, schnürt aber nicht ein.
+  let h = `<p class="hint explain">Miss immer an derselben Stelle, am besten morgens – das Maßband liegt an, schnürt aber nicht ein.
       Trag nur ein, was du messen möchtest.</p>
     <div class="card meas-form">${MEASURES.map(([k, l]) => `<label class="row"><span>${l}${last[k] ? `<small>zuletzt ${fmtNum(last[k].v)} cm</small>` : ''}</span>
         <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" placeholder="cm" data-field="meas-in" data-k="${k}" value="${esc(measForm.v[k] || '')}"></label>`).join('')}
@@ -962,7 +962,7 @@ function exChartHtml(name) {
   if (feat('chart-detail')) h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
     ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
   return h + rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>'
-    + `<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
+    + `<p class="hint explain">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
       ? 'Hohle Punkte = Deload-Woche.' : 'Deload-Wochen sind ausgeblendet.'}</p>`;
 }
 
@@ -979,7 +979,7 @@ function renderCharts() {
   if (s.mode === 'cardio') return h + renderCardioStats();  // cardio.js
 
   if (s.mode === 'steps') {
-    h += (feat('nut-health') ? `<p class="hint">❤️ Schritte aus Apple Health holst du im Reiter <b>Ernährung</b> mit „Aus Health“ –
+    h += (feat('nut-health') ? `<p class="hint explain">❤️ Schritte aus Apple Health holst du im Reiter <b>Ernährung</b> mit „Aus Health“ –
       zusammen mit Gewicht und Kalorien.</p>` : '') + `<div class="card">
       <label class="row"><span>Schritte</span>
         <input class="inp kg" id="steps-n" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="8500"></label>

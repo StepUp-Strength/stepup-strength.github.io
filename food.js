@@ -781,7 +781,7 @@ function renderFood(p) {
         <p class="hint nut-small">Nicht erfasst – geschätzt: Eiweiß ${pr} g · Kohlenhydrate ${ca} g · Fett ${fa} g</p></div>`;
   }
   h += foodCloseHtml(date, list);
-  return h + `<p class="hint nut-small">Die Tagessumme zählt automatisch für „Heute gegessen“, die letzten 14 Tage und den gemessenen
+  return h + `<p class="hint explain nut-small">Die Tagessumme zählt automatisch für „Heute gegessen“, die letzten 14 Tage und den gemessenen
     Bedarf. Werte der Grundliste sind Durchschnittswerte – bei Markenprodukten ist der Barcode genauer.</p>`;
 }
 
