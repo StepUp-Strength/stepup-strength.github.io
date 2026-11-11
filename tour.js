@@ -48,6 +48,8 @@ const TOURS = {
     { id: 'tr-tools', sel: 'section.card .ex-tools', title: 'Kommentar und Ersetzen',
       text: () => (feat('tr-comment') ? '„Kommentar“: eine Notiz zur Übung, z. B. die Sitzhöhe – sie erscheint beim nächsten Mal wieder. ' : '')
         + '„Ersetzen“: die Übung heute gegen eine ähnliche tauschen, z. B. wenn das Gerät besetzt ist. Der Plan bleibt, wie er ist.' },
+    { id: 'tr-ss', sel: '.ss-wrap .ss-head', title: '🔗 Supersatz',
+      text: 'Diese beiden Übungen machst du im Wechsel: Satz A, kurze Pause, Satz B, kurze Pause, dann wieder A. Der nächste Satz ist umrandet, der Pausen-Timer oben zeigt, was danach dran ist. Gerät besetzt? „Heute einzeln“ – dann gelten die normalen Pausen.' },
     { id: 'tr-pain', sel: 'section.card .pain-btn, section.card .pain-link', title: '🩹 Zwickt',
       text: 'Meldet sich bei einer Übung etwas, tipp hier und halte fest, wo und wie stark. Das landet in deinem Beschwerde-Tagebuch – so siehst du mit der Zeit, welche Übungen sich melden.' },
     { id: 'tr-warm', sel: 'section.card .warmup', title: 'Aufwärmen',
@@ -109,6 +111,8 @@ const TOURS = {
       text: 'Das „i“ zeigt dir die Übung mit Animation und Anleitung.' },
     { id: 'day-swap', sel: '[data-action="plan-swap-open"]', title: 'Übung ersetzen',
       text: 'Tauscht die Übung dauerhaft im Plan gegen eine andere – ihr Platz und ihre Sätze bleiben gleich.' },
+    { id: 'day-ss', sel: '.ss-auto-btn, .ss-wrap .ss-head, .ss-btn', title: '🔗 Supersätze',
+      text: 'Zwei Übungen im Wechsel sparen Pausen: erlaubt sind Gegenspieler wie Brust und Rücken oder Muskelgruppen, die nichts miteinander zu tun haben, wie Bauch und Waden. „Supersätze vorschlagen“ koppelt passende Übungen auf einmal, „Lösen“ macht es rückgängig.' },
     { id: 'day-order', sel: '[data-action="day-reorder"]', title: 'Reihenfolge',
       text: 'Hier änderst du die Reihenfolge der Übungen an diesem Tag – sie bleibt im Plan, bis du sie wieder änderst.' },
     { id: 'day-step', sel: '[data-action="set-step"]', title: 'Steigerung',

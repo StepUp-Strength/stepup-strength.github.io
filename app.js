@@ -460,7 +460,7 @@ const FEATURE_MODE = {
   // Plan-Reiter
   'plans-multi': 's', 'plan-add-ex': 's', 'day-reprange': 's', 'ex-kind-group': 'x', 'day-free': 'x', 'day-volume': 'x',
   'plan-cycle-settings': 'x', 'plan-week-jump': 's', 'cycle-len': 's', 'cycle-adjust': 's', 'plan-week-prog': 'x', 'plan-volume': 'x', 'plan-rir': 'x', 'custom-ex': 's',
-  'day-templates': 's',
+  'day-templates': 's', 'supersets': 's',
   // Ernährung
   'nut-minicut': 's', 'nut-pace': 's', 'nut-own-kcal': 's', 'nut-macros': 's', 'nut-macro-pct': 'x', 'nut-protein-detail': 's',
   'nut-health': 's', 'nut-history': 's', 'nut-trend-detail': 's', 'nut-measured': 'x', 'nut-train-q': 's', 'nut-explain': 's',
@@ -518,7 +518,7 @@ function lastEntry(name) {
   const k = nameKey(name);
   for (const s of sessionsNewestFirst()) {
     const e = s.entries.find(en => nameKey(en.name) === k);
-    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets, result: e.result, deload: !!s.deload };
+    if (e) return { date: s.date, dayName: s.dayName, sets: e.sets, result: e.result, deload: !!s.deload, ss: !!e.ss };
   }
   return null;
 }
@@ -1630,13 +1630,141 @@ function estDuration(day, week, plan = activePlan(), deload = false) {
   const bw = data.cycle.buildWeeks || 4;
   const w = Math.min(Math.max(1, week), bw);
   const auto = autoSetsForDay(day, deload ? bw : w, deload, plan.volume || {});
-  let t = 0, rest = 0;
-  for (const ex of exs) {
-    const n = auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw);
-    rest = REST_MIN[kindOf(ex)] || 3;
-    t += n * (1 + rest);
+  const items = exs.map(ex => ({
+    n: auto.has(ex.id) ? auto.get(ex.id) : deload ? deloadSets(setsForWeek(ex, bw, bw)) : setsForWeek(ex, w, bw),
+    rest: REST_MIN[kindOf(ex)] || 3,
+  }));
+  return seqMinutes(items, dayPairs(exs, ssOn(plan)));  // Supersätze (v210): kürzere Pausen im Wechsel
+}
+
+/* ---------- Supersätze (v210, User-Wunsch 2026-11-11) ----------
+   Zwei Übungen im Wechsel: A1 → B1 → A2 → B2 …, nach jedem einzelnen Satz SS_REST Minuten Pause (statt 2–4 min je Übungsart).
+   Erlaubt: Gegenspieler (Brust/Rücken, Bizeps/Trizeps …) und Muskelgruppen, die nichts miteinander zu tun haben (z. B. Bauch
+   und Waden) – nie zwei aus derselben Arbeitsgruppe (SS_CLUSTERS) und keine schweren Grundübungen der Beine.
+   Im Plan stehen beide Übungen direkt hintereinander und tragen denselben Schlüssel ex.ss; ex.ssRest = Pause in Minuten
+   (2, nach „Pausen zu kurz“ 3). Nur Standard/Experte und nicht im eigenen Plan – sonst laufen die Übungen einzeln.
+   Automatisch gekoppelt wird nur nach Rückfrage (Assistent, „Supersätze vorschlagen“, „Wenig Zeit?“) und nur, wenn es Zeit spart. */
+const SS_REST = 2, SS_REST_ASSIST = 1.5;  // Pause nach jedem Satz; zwei Assistenzübungen: 90 s (User 2026-11-11)
+const ssDefRest = (a, b) => kindOf(a) === 'assist' && kindOf(b) === 'assist' ? SS_REST_ASSIST : SS_REST;
+const ssRestText = r => r % 1 ? `${Math.round(r * 60)} s` : `${r} min`;
+const SS_CLUSTERS = [
+  ['brust', 'trizeps', 'schulter_vorne'],                    // Drücken
+  ['lat', 'trapez', 'bizeps', 'unterarme'],                  // Ziehen
+  ['schulter_vorne', 'schulter_seite', 'schulter_hinten'],   // Schulter
+  ['quadrizeps', 'gesaess', 'adduktoren'],                   // Beine vorn
+  ['beinbeuger', 'gesaess', 'ruecken_unten'],                // Beine hinten
+];
+const SS_ANTAG = [['brust', 'lat'], ['brust', 'trapez'], ['schulter_vorne', 'lat'], ['bizeps', 'trizeps'],
+  ['quadrizeps', 'beinbeuger'], ['schulter_vorne', 'schulter_hinten'], ['adduktoren', 'abduktoren']];
+const SS_LEG_HEAVY = ['quadrizeps', 'beinbeuger', 'gesaess', 'ruecken_unten'];  // Grundübungen dieser Gruppen: nie im Supersatz
+const ssOn = (plan = activePlan()) => feat('supersets') && !(plan && plan.own);
+function ssExOk(ex) {
+  const g = groupOf(ex);
+  return !!g && !!MUSCLES[g] && g !== 'ganzkoerper' && g !== 'ausdauer' && !(kindOf(ex) === 'compound' && SS_LEG_HEAVY.includes(g));
+}
+function ssPairOk(a, b) {
+  if (!ssExOk(a) || !ssExOk(b)) return false;
+  const ga = groupOf(a), gb = groupOf(b);
+  return ga !== gb && !SS_CLUSTERS.some(c => c.includes(ga) && c.includes(gb));
+}
+const ssAntag = (a, b) => { const ga = groupOf(a), gb = groupOf(b); return SS_ANTAG.some(([x, y]) => (x === ga && y === gb) || (x === gb && y === ga)); };
+// Ersparnis je Runde (ein Satz A + ein Satz B) in Minuten gegenüber einzeln
+const ssSaves = (a, b, rest = ssDefRest(a, b)) => Math.max(0, (REST_MIN[kindOf(a)] || 3) + (REST_MIN[kindOf(b)] || 3) - 2 * rest);
+// Paare einer Übungsliste: Index → { i (A), j (B), role 'A'|'B', rest }. Gilt nur, wenn beide direkt hintereinander stehen.
+function dayPairs(exs, on = ssOn()) {
+  const m = new Map();
+  if (!on) return m;
+  for (let i = 0; i + 1 < exs.length; i++) {
+    const a = exs[i], b = exs[i + 1];
+    if (!a.ss || a.ss !== b.ss || !ssPairOk(a, b)) continue;
+    const rest = a.ssRest || ssDefRest(a, b);
+    m.set(i, { i, j: i + 1, role: 'A', rest });
+    m.set(i + 1, { i, j: i + 1, role: 'B', rest });
+    i++;
   }
-  return t - rest;
+  return m;
+}
+// Minuten für eine Folge: items = [{ n Sätze, rest Pause }] in Trainingsreihenfolge. Satz = 1 min + Pause; im Supersatz
+// SS-Pause nach jedem Satz, solange beide Übungen noch Sätze haben; nach dem letzten Satz des Trainings keine Pause.
+function seqMinutes(items, pairs = new Map()) {
+  let t = 0, last = 0;
+  const add = (n, rest) => { if (n > 0) { t += n * (1 + rest); last = rest; } };
+  for (let i = 0; i < items.length; i++) {
+    const p = pairs.get(i);
+    if (p && p.role === 'A' && items[i + 1]) {
+      const a = items[i], b = items[i + 1], r = Math.min(a.n, b.n);
+      add(2 * r, p.rest); add(a.n - r, a.rest); add(b.n - r, b.rest);
+      i++;
+    } else add(items[i].n, items[i].rest);
+  }
+  return t - last;
+}
+// Paare im laufenden Training (Übungen aus dem Plan, Schlüssel en.ss; „Heute einzeln“ = draft.ssSolo)
+function entryPairs(entries, withSolo = false) {
+  if (!draft || draft.own || !ssOn()) return new Map();
+  const solo = withSolo ? [] : draft.ssSolo || [];
+  return dayPairs(entries.map(en => ({ ...(planExercise(en.name) || { name: en.name }), name: en.name,
+    ss: en.ss && !solo.includes(en.ss) ? en.ss : null, ssRest: en.ssRest })));
+}
+const draftPairs = () => entryPairs(draft ? draft.entries : []);
+// Sätze im Supersatz der Reihe nach: A1, B1, A2, B2 … (übrige Sätze der längeren Übung am Ende)
+function ssOrder(p) {
+  const a = draft.entries[p.i], b = draft.entries[p.j], out = [];
+  for (let k = 0; k < Math.max(a.sets.length, b.sets.length); k++) {
+    if (k < a.sets.length) out.push([p.i, k]);
+    if (k < b.sets.length) out.push([p.j, k]);
+  }
+  return out;
+}
+const ssNext = p => ssOrder(p).find(([ei, si]) => !isDone(draft.entries[ei].sets[si])) || null;
+function ssRoundText(p) {
+  const nx = ssNext(p), rounds = Math.max(draft.entries[p.i].sets.length, draft.entries[p.j].sets.length);
+  return `${nx ? `Runde ${nx[1] + 1} von ${rounds}` : 'erledigt ✓'} · Pause je ${ssRestText(p.rest)}`;
+}
+// Automatisch koppeln: zuerst Gegenspieler, dann unabhängige Muskelgruppen – nur Paare, die Zeit sparen. Jede Übung höchstens
+// einmal; bestehende Paare bleiben. Liefert [[i, j], …] (Indizes in exs, i < j).
+function ssAutoPairs(exs) {
+  const taken = new Set();
+  dayPairs(exs, true).forEach((p, i) => taken.add(i));
+  const free = exs.map((e, i) => i).filter(i => (exs[i].name || '').trim() && !taken.has(i));
+  const pairs = [];
+  for (const anta of [true, false]) {
+    for (const i of free) {
+      if (taken.has(i)) continue;
+      let best = null;
+      for (const j of free) {
+        if (j <= i || taken.has(j)) continue;
+        const a = exs[i], b = exs[j];
+        if (!ssPairOk(a, b) || ssAntag(a, b) !== anta || !ssSaves(a, b)) continue;
+        // Reihenfolge Grund- → normale → Isolationsübung bleibt: eine Isolationsübung rückt nie vor eine größere Übung
+        if (kindOf(b) === 'assist' && exs.slice(i + 1, j).some(e => kindOf(e) !== 'assist')) continue;
+        if (best == null || ssSaves(a, b) > ssSaves(a, exs[best])) best = j;
+      }
+      if (best != null) { taken.add(i); taken.add(best); pairs.push([i, best]); }
+    }
+  }
+  return pairs.sort((x, y) => x[0] - y[0]);
+}
+// Paare anwenden: Partner rückt direkt hinter die erste Übung, beide bekommen denselben Schlüssel. Liefert die neue Liste.
+function ssApply(exs, pairs) {
+  const partner = new Map(pairs.map(([i, j]) => [i, j])), moved = new Set(pairs.map(([, j]) => j));
+  const out = [];
+  exs.forEach((ex, i) => {
+    if (moved.has(i)) return;
+    out.push(ex);
+    if (partner.has(i)) {
+      const b = exs[partner.get(i)], key = uid(), rest = ssDefRest(ex, b);
+      Object.assign(ex, { ss: key, ssRest: rest });
+      Object.assign(b, { ss: key, ssRest: rest });
+      out.push(b);
+    }
+  });
+  return out;
+}
+// Schlüssel ohne direkten Partner entfernen (nach Löschen, Verschieben, Ersetzen)
+function ssClean(exs) {
+  const ok = dayPairs(exs, true);
+  exs.forEach((ex, i) => { if (ex.ss && !ok.has(i)) { delete ex.ss; delete ex.ssRest; } });
 }
 // „ca. 55 min“ bzw. „ca. 45–60 min“ (auf 5 min gerundet)
 function estText(lo, hi = lo) {
@@ -1658,7 +1786,8 @@ function trimToTime(entries, limit) {
     const ex = planExercise(en.name) || { name: en.name }, kind = kindOf(ex);
     return { en, i, rank: KIND_RANK[kind] != null ? KIND_RANK[kind] : 1, rest: REST_MIN[kind] || 3, group: groupOf(ex), max: en.sets.length, n: 0 };
   });
-  const time = () => { let t = 0, last = 0; for (const x of info) if (x.n) { t += x.n * (1 + x.rest); last = x.rest; } return t - last; };
+  const pairs = entryPairs(entries);  // Supersätze (v210): kürzere Pausen im Wechsel
+  const time = () => seqMinutes(info.map(x => ({ n: x.n, rest: x.rest })), pairs);
   info.forEach(x => { x.n = x.max; });
   const before = time();
   if (before <= limit) return null;
@@ -2385,8 +2514,10 @@ function restStart(ei) {
   if (restCfg().off || !draft) return;
   if (trProgress().cur < 0) { delete draft.rest; return; }
   const en = draft.entries[ei];
-  const min = REST_MIN[kindOf(planExercise(en.name) || { name: en.name })] || 3;
-  draft.rest = { ei, end: Date.now() + min * 60000, total: min * 60000 };
+  // Supersatz (v210): Pause je Satz, solange als Nächstes die andere Übung dran ist (danach normale Pause)
+  const p = draftPairs().get(ei), nx = p && ssNext(p);
+  const min = nx && nx[0] !== ei ? p.rest : REST_MIN[kindOf(planExercise(en.name) || { name: en.name })] || 3;
+  draft.rest = { ei, end: Date.now() + min * 60000, total: min * 60000, ...(nx ? { next: nx } : {}) };
   if (restCfg().sound) restAudio(true);  // im Tipp freischalten – das iPhone spielt Töne sonst später nicht ab
 }
 function restTick() {
@@ -2410,12 +2541,19 @@ function restHtml() {
   if (left <= -REST_LINGER) return '';
   if (left <= 0) {
     return `<div class="trh-rest over"><span class="trh-rest-t">Pause vorbei – weiter geht’s 💪</span>
-      <button data-action="rest-skip">OK</button></div>`;
+      <button data-action="rest-skip">OK</button></div>${restNextHtml(r)}`;
   }
   return `<div class="trh-rest"><span class="trh-rest-t">Pause <b id="tr-rest-left">${fmtClock(Math.ceil(left / 1000) * 1000)}</b></span>
       <button data-action="rest-add" data-s="-30">−30 s</button><button data-action="rest-add" data-s="30">+30 s</button>
       <button data-action="rest-skip">Weiter</button></div>
-    <div class="trh-bar rest"><i id="tr-rest-bar" style="width:${Math.round(left / r.total * 100)}%"></i></div>`;
+    <div class="trh-bar rest"><i id="tr-rest-bar" style="width:${Math.round(left / r.total * 100)}%"></i></div>${restNextHtml(r)}`;
+}
+// Supersatz (v210): welcher Satz als Nächstes dran ist, z. B. „Danach: B2 · Rudern am Kabel“
+function restNextHtml(r) {
+  if (!r.next) return '';
+  const [ei, si] = r.next, en = draft.entries[ei], p = draftPairs().get(ei);
+  if (!en || !p || isDone(en.sets[si] || {})) return '';
+  return `<button class="trh-next" data-action="tr-jump">Danach: <b>${p.role}${si + 1} · ${esc(en.name)}</b></button>`;
 }
 // Signal am Ende: Vibration (nur Android – iPhone erlaubt Web-Apps keine Vibration) und/oder Ton
 function restSignal() {
@@ -2467,7 +2605,7 @@ function restCard() {
       <h2>Pausen-Timer</h2>
       ${seg('off', !c.off, 'An', 'Aus')}
       <p class="hint explain">Nach jedem erledigten Satz läuft oben im Training die Pause: Grundübungen 4, normale Übungen 3, Isolationsübungen
-        2 Minuten. Mit −30 s und +30 s passt du sie an, „Weiter“ beendet sie. Die Gesamtzeit läuft immer mit.</p>
+        2 Minuten${ssOn() ? ', im Supersatz 2 Minuten bzw. 90 Sekunden bei zwei Isolationsübungen' : ''}. Mit −30 s und +30 s passt du sie an, „Weiter“ beendet sie. Die Gesamtzeit läuft immer mit.</p>
       ${c.off ? '' : `<p class="lbl">Vibration am Ende</p>${seg('vib', c.vib, 'An', 'Aus')}
       <p class="lbl">Ton am Ende</p>${seg('sound', c.sound, 'An', 'Aus')}
       ${c.sound ? `<div class="variants rest-tones">${Object.entries(REST_TONES).map(([k, l]) =>
@@ -2484,7 +2622,15 @@ let trMenuOpen = false;
 function trProgress() {
   let all = 0, done = 0;
   for (const en of draft.entries) { all += en.sets.length; done += en.sets.filter(isDone).length; }
-  return { all, done, cur: draft.entries.findIndex(en => en.sets.some(s => !isDone(s))) };
+  // Supersatz (v210): dran ist der nächste offene Satz in der Reihenfolge A1, B1, A2 …
+  const pairs = draftPairs();
+  let cur = -1;
+  for (let i = 0; i < draft.entries.length && cur < 0; i++) {
+    const p = pairs.get(i);
+    if (p && p.role === 'A') { const nx = ssNext(p); if (nx) cur = nx[0]; i++; continue; }
+    if (draft.entries[i].sets.some(s => !isDone(s))) cur = i;
+  }
+  return { all, done, cur };
 }
 function trHeadHtml() {
   const { all, done, cur } = trProgress();
@@ -2530,7 +2676,124 @@ function markSets(ei) {
     const no = $view.querySelector(`[data-setno="${ei}-${si}"]`);
     if (no) no.classList.toggle('done', st === 'done');
   });
+  ssSyncNow();
   if (!$trHead.hidden) $trHead.innerHTML = trHeadHtml();
+}
+// Supersatz (v210): nächsten Satz markieren und „Runde x von y“ nachziehen, ohne alles neu zu zeichnen
+function ssSyncNow() {
+  const pairs = draftPairs();
+  $view.querySelectorAll('.setno.now').forEach(x => x.classList.remove('now'));
+  pairs.forEach((p, i) => {
+    if (p.role !== 'A') return;
+    const nx = ssNext(p);
+    const no = nx && $view.querySelector(`[data-setno="${nx[0]}-${nx[1]}"]`);
+    if (no) no.classList.add('now');
+    const rd = $view.querySelector(`[data-ss-round="${i}"]`);
+    if (rd) rd.textContent = ssRoundText(p);
+  });
+}
+// Kopf des Paars im Training
+function ssHeadHtml(p, first = true) {
+  return `<div class="ss-head"><span class="ss-title">🔗 Supersatz<small data-ss-round="${p.i}">${ssRoundText(p)}</small></span>
+      <button class="btn small outline" data-action="ss-solo" data-ei="${p.i}">Heute einzeln</button></div>` + (first
+    ? `<p class="hint explain ss-how">Immer im Wechsel: Satz A, Pause, Satz B, Pause, dann wieder A. Der nächste Satz ist markiert,
+      der Pausen-Timer zeigt, was danach dran ist. Ist ein Gerät besetzt: „Heute einzeln“.</p>` : '');
+}
+// Paar heute einzeln (z. B. Gerät besetzt): normale Pausen, der Plan bleibt
+function ssSoloHtml(p, hidden) {
+  const a = draft.entries[p.i], b = draft.entries[p.j];
+  return `<div class="ss-solo"${hidden ? ' hidden' : ''}><span>🔗 Supersatz heute aus – ${esc(a.name)} und ${esc(b.name)} einzeln mit normalen Pausen</span>
+    <button class="btn small" data-action="ss-unsolo" data-ei="${p.i}">Wieder koppeln</button></div>`;
+}
+
+// Tagesplan: mögliche Partner einer Übung (erlaubt, noch ohne Paar) – Gegenspieler zuerst, dann die größte Ersparnis
+var ssPick = null;  // { day, i }: offene Auswahl „Als Supersatz koppeln“
+function ssCandidates(day, i) {
+  const exs = day.exercises, pairs = dayPairs(exs), ex = exs[i];
+  return exs.map((e, j) => j).filter(j => j !== i && exs[j].name.trim() && !pairs.has(j) && ssPairOk(ex, exs[j]))
+    .sort((x, y) => ssAntag(ex, exs[y]) - ssAntag(ex, exs[x]) || ssSaves(ex, exs[y]) - ssSaves(ex, exs[x]) || Math.abs(x - i) - Math.abs(y - i));
+}
+const ssSaveText = (a, b, rest) => { const v = ssSaves(a, b, rest); return v ? `spart ca. ${fmtNum(v)} min je Runde` : 'spart keine Zeit'; };
+function ssPlanHead(day, p) {
+  const a = day.exercises[p.i], b = day.exercises[p.j];
+  return `<div class="ss-head"><span class="ss-title">🔗 Supersatz<small>${ssAntag(a, b) ? 'Gegenspieler' : 'Unabhängige Muskelgruppen'}
+      · Pause je ${ssRestText(p.rest)} · ${ssSaveText(a, b, p.rest)}</small></span>
+    <button class="btn small outline" data-action="ss-unpair" data-i="${p.i}">Lösen</button></div>`;
+}
+function ssPickHtml(day, i) {
+  const ex = day.exercises[i], c = ssCandidates(day, i);
+  return `<div class="replace ss-pick"><p class="lbl">„${esc(ex.name)}“ im Wechsel mit …</p>
+      ${c.length ? `<div class="quick-picks">${c.map(j => { const b = day.exercises[j];
+        return `<button class="vchip" data-action="ss-pair" data-i="${i}" data-j="${j}">${esc(b.name)}<small>${ssAntag(ex, b) ? 'Gegenspieler · ' : ''}${ssSaveText(ex, b)}</small></button>`; }).join('')}</div>`
+        : '<p class="hint">An diesem Tag passt keine Übung dazu.</p>'}
+      <p class="hint">Erlaubt sind Gegenspieler (z. B. Brust und Rücken) und Muskelgruppen, die nichts miteinander zu tun haben
+        (z. B. Bauch und Waden) – nicht zwei Drück- oder zwei Zugübungen und keine schweren Grundübungen der Beine. Pause nach jedem
+        Satz: 2 min, bei zwei Isolationsübungen 90 s. Die zweite Übung rückt direkt hinter die erste.</p>
+      <div class="row"><button class="btn" data-action="ss-pick-cancel">Abbrechen</button></div>
+    </div>`;
+}
+function ssCouple(day, i, j) {
+  const exs = day.exercises, a = exs[i], b = exs[j];
+  exs.splice(j, 1);
+  exs.splice(exs.indexOf(a) + 1, 0, b);
+  const key = uid(), rest = ssDefRest(a, b);
+  Object.assign(a, { ss: key, ssRest: rest });
+  Object.assign(b, { ss: key, ssRest: rest });
+  day.ssRuns = 0; day.ssAsked = false;  // Nachfrage nach dem 2. Training mit Supersatz
+}
+// Vorschlag für einen ganzen Tag (Kopie, ändert nichts): { pairs: [[A, B] …], list, save (Minuten pro Training) }
+function ssAutoPreview(day, plan = activePlan()) {
+  if (!ssOn(plan)) return null;
+  const copy = day.exercises.map(e => ({ ...e }));
+  const pairs = ssAutoPairs(copy);
+  if (!pairs.length) return null;
+  const named = pairs.map(([i, j]) => [copy[i].name.trim(), copy[j].name.trim()]);
+  const list = ssApply(copy, pairs), ci = cycleInfo();
+  const save = estDuration(day, ci.week, plan, ci.deload) - estDuration({ ...day, exercises: list }, ci.week, plan, ci.deload);
+  return { pairs: named, list, save };
+}
+// „Wenig Zeit?“ mit Supersätzen: passt das Training nicht in die Zeit, koppelt die App heute zusätzlich passende Übungen
+// (nur dieses Training, en.ssToday) – trimToTime kürzt danach nur noch, was dann immer noch zu viel ist
+function ssForTime(limit) {
+  if (!ssOn() || draft.own) return;
+  const items = () => draft.entries.map(en => ({ n: en.sets.length, rest: REST_MIN[kindOf(planExercise(en.name) || { name: en.name })] || 3 }));
+  if (seqMinutes(items(), draftPairs()) <= limit) return;
+  const mk = () => draft.entries.map(en => ({ ...(planExercise(en.name) || { name: en.name }), name: en.name, ss: en.ss, ssRest: en.ssRest, en }));
+  let exs = mk();
+  // nur so viele Paare wie nötig – die mit der größten Ersparnis zuerst
+  const all = ssAutoPairs(exs).sort(([i, j], [k, l]) =>
+    Math.min(draft.entries[k].sets.length, draft.entries[l].sets.length) * ssSaves(exs[k], exs[l])
+    - Math.min(draft.entries[i].sets.length, draft.entries[j].sets.length) * ssSaves(exs[i], exs[j]));
+  if (!all.length) return;
+  let pairs = all;
+  for (let k = 1; k <= all.length; k++) {
+    const pick = all.slice(0, k).sort((x, y) => x[0] - y[0]), list = ssApply(mk(), pick);
+    const t = seqMinutes(list.map(x => ({ n: x.en.sets.length, rest: REST_MIN[kindOf(x)] || 3 })), dayPairs(list));
+    pairs = pick;
+    if (t <= limit) break;
+  }
+  exs = mk();
+  draft.ssToday = pairs.map(([i, j]) => [exs[i].name, exs[j].name]);
+  draft.entries = ssApply(exs, pairs).map(x => {
+    if (x.ss && x.ss !== x.en.ss) Object.assign(x.en, { ss: x.ss, ssRest: x.ssRest, ssToday: true });
+    return x.en;
+  });
+}
+// Nach dem 2. Training mit Supersätzen aus dem Plan einmal fragen, ob die Pausen gepasst haben (User-Wunsch 2026-11-11)
+function ssCheckCard(s) {
+  const day = findDay(s.dayId);
+  if (!day || day.ssAsked || (day.ssRuns || 0) < 2 || !s.entries.some(e => e.ss) || !dayPairs(day.exercises).size) return '';
+  const est = estDuration(day, s.week || 1, activePlan(), !!s.deload);
+  const b = (v, t) => `<button class="btn ${v === 'ok' ? 'primary' : 'outline'}" data-action="ss-check" data-day="${day.id}" data-v="${v}">${t}</button>`;
+  return `<div class="card hints ss-check"><p><b>🔗 Supersätze: Haben die Pausen gepasst?</b></p>
+      <p class="hint">Geplant waren für „${esc(day.name)}“ ca. ${fmtDur(est)}${s.duration ? `, gebraucht hast du ${fmtDur(s.duration)}` : ''}.</p>
+      <div class="ss-check-btns">${b('ok', '✔ Passt')}${b('longer', 'Pausen zu kurz – länger')}${b('solo', 'Lieber wieder einzeln')}</div></div>`;
+}
+function ssAutoBtnHtml(day) {
+  const pv = ssAutoPreview(day);
+  if (!pv || pv.save < 1) return '';
+  return `<button class="btn outline nav ss-auto-btn" data-action="ss-auto">🔗 Supersätze vorschlagen
+    <small>${pv.pairs.length} Paar${pv.pairs.length === 1 ? '' : 'e'} möglich · spart ca. ${pv.save} min pro Training</small></button>`;
 }
 // Übungsname: Zusatz in Klammern kleiner und grau, z. B. „Bankdrücken Flachbank (Langhantel)“
 function exTitleHtml(name) {
@@ -3591,6 +3854,10 @@ function timeLimitHtml() {
           data-field="time-min" value="${esc(timeEdit.min)}" placeholder="45"></label>
         <div class="seg two"><button class="${timeEdit.once ? 'on' : ''}" data-action="time-once" data-v="1">Nur nächstes Training</button>
           <button class="${timeEdit.once ? '' : 'on'}" data-action="time-once" data-v="0">Bis ich es ändere</button></div>
+        ${ssOn() ? `<p class="lbl">🔗 Supersätze</p><div class="seg two"><button class="${timeEdit.ss !== false ? 'on' : ''}" data-action="time-ss" data-v="1">Erst Supersätze</button>
+          <button class="${timeEdit.ss === false ? 'on' : ''}" data-action="time-ss" data-v="0">Ohne</button></div>
+          <p class="hint">Reicht die Zeit nicht, koppelt die App zuerst passende Übungen im Wechsel – das spart Pausen. Erst wenn es dann
+          immer noch nicht passt, fallen Sätze weg.</p>` : ''}
         <p class="hint">Die App kürzt das Training passend: Jede geplante Muskelgruppe bekommt zuerst 1–2 Sätze – mit einer
           Grundübung, wenn es eine gibt –, dann folgen die übrigen Sätze der Grundübungen, danach normale Übungen und zuletzt
           Isolationsübungen. Gerechnet wird mit 1 Minute pro Satz plus Pause (Grundübung 4, normale Übung 3, Isolation 2 Minuten).</p>
@@ -3599,7 +3866,7 @@ function timeLimitHtml() {
       </div>`;
   }
   if (tl && tl.min) {
-    return `<div class="time-strip"><span>⏱ <b>Zeitlimit ${tl.min} min</b> · ${tl.once ? 'nur nächstes Training' : 'bis du es änderst'}</span>
+    return `<div class="time-strip"><span>⏱ <b>Zeitlimit ${tl.min} min</b> · ${tl.once ? 'nur nächstes Training' : 'bis du es änderst'}${tl.ss && ssOn() ? ' · 🔗 erst Supersätze' : ''}</span>
         <button class="btn small" data-action="time-open">Ändern</button><button class="btn small" data-action="time-off">Aus</button></div>`;
   }
   return `<button class="btn outline time-btn" data-action="time-open">⏱ Wenig Zeit?<small>Training kürzen</small></button>`;
@@ -3733,10 +4000,12 @@ function setRows(cols, head = false) {
 function timeCutNote() {
   const c = draft.timeCut;
   if (!draft.timeLimit) return '';
+  const ss = (draft.ssToday || []).length ? `<br><small>🔗 Heute im Supersatz: ${draft.ssToday.map(([a, b]) => `${esc(a)} + ${esc(b)}`).join(' · ')}</small>` : '';
+  if (ss && !c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min – mit Supersätzen passt das Training ohne Kürzen.${ss}</p>`;
   if (!c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min – das Training passt schon so, nichts gekürzt.</p>`;
   return `<p class="intro-note time-note">⏱ Auf ca. ${fmtDur(c.after)} gekürzt (Zeitlimit ${c.limit} min, sonst ca. ${fmtDur(c.before)}).
     ${c.cut.length ? `<br><small>Weniger Sätze: ${c.cut.map(x => `${esc(x.name)} ${x.from} → ${x.to}`).join(' · ')}</small>` : ''}
-    ${c.dropped.length ? `<br><small>Heute ausgelassen: ${c.dropped.map(esc).join(' · ')}</small>` : ''}</p>`;
+    ${c.dropped.length ? `<br><small>Heute ausgelassen: ${c.dropped.map(esc).join(' · ')}</small>` : ''}${ss}</p>`;
 }
 
 function renderTraining() {
@@ -3777,13 +4046,19 @@ function renderTraining() {
   if (swipe) h += swipeNavHtml(cur);
 
   const stalls = stagnationHints();
+  // Supersätze (v210): Paar in einem Rahmen, Kopf mit Runde und „Heute einzeln“; beim Wischen beide auf einem Bildschirm
+  const pairs = draftPairs(), raw = entryPairs(draft.entries, true);
+  const vis = i => { if (!swipe) return true; const p = pairs.get(i); return p ? cur === p.i || cur === p.j : i === cur; };
   draft.entries.forEach((en, ei) => {
     const last = lastEntry(en.name);
     const det = detOpen(en);
     const hasComment = feat('tr-comment') && !!(en.comment || '').trim();
-    h += `<section class="card ex-card tint-${ei % 4}${swipe && ei === cur && draft.slide ? ` slide-${draft.slide}` : ''}" data-ei="${ei}"${swipe && ei !== cur ? ' hidden' : ''}>
+    const pr = pairs.get(ei), ssNx = pr && ssNext(pr);
+    if (pr && pr.role === 'A') h += `<div class="ss-wrap"${vis(ei) ? '' : ' hidden'}>${ssHeadHtml(pr, swipe || pr.i === [...pairs.keys()][0])}`;
+    else if (!pr && raw.get(ei) && raw.get(ei).role === 'A') h += ssSoloHtml(raw.get(ei), !vis(ei));
+    h += `<section class="card ex-card tint-${ei % 4}${pr ? ' ss-card' : ''}${swipe && ei === cur && draft.slide ? ` slide-${draft.slide}` : ''}" data-ei="${ei}"${vis(ei) ? '' : ' hidden'}>
       <div class="ex-head">
-        <h2>${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
+        <h2>${pr ? `<span class="ss-badge" aria-label="Übung ${pr.role} im Supersatz">${pr.role}</span>` : ''}${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${exTitleHtml(en.name)} <span class="info-dot">i</span></button>` : exTitleHtml(en.name)}</h2>
         <button class="det-btn" data-action="ex-details" data-ei="${ei}" aria-expanded="${det}">Details${hasComment && !det ? ' · 💬' : ''}
           <span class="chev" aria-hidden="true">▾</span></button>
@@ -3821,6 +4096,7 @@ function renderTraining() {
           data-name="${esc(en.name)}" aria-label="Hinweis ausblenden">✕</button></div>`;
     }
     if (en.replacedFrom) h += `<p class="last">statt ${esc(en.replacedFrom)}</p>`;
+    if (last && (last.ss || pr) && last.ss !== !!pr) h += `<p class="last ss-last">🔗 Letztes Mal ${last.ss ? 'im Supersatz' : 'einzeln'} trainiert</p>`;
     if (en.replacing) h += renderReplace(en, ei);
     const bandEx = body && en.target && en.target.band;
     if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen – ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
@@ -3918,11 +4194,12 @@ function renderTraining() {
     en.sets.forEach((s, si) => {
       const v = variantOf(s);
       const st = setState(s);  // v200: erledigt = grün, unberührter Vorschlag = grau
+      const nowC = ssNx && ssNx[0] === ei && ssNx[1] === si ? ' now' : '';  // v210: nächster Satz im Supersatz
       const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`
         + `<span class="pb-star fpb" data-fpb="${ei}-${si}" title="Vorermüdungs-PB"${fpb[si] ? '' : ' hidden'}>💪 PB</span>`;
-      h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''} ${st}" data-action="set-variant" data-ei="${ei}" data-si="${si}" data-setno="${ei}-${si}"
-          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
-          : `<span class="setno ${st}" data-setno="${ei}-${si}">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
+      h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''} ${st}${nowC}" data-action="set-variant" data-ei="${ei}" data-si="${si}" data-setno="${ei}-${si}"
+          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${pr ? pr.role : ''}${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
+          : `<span class="setno ${st}${nowC}" data-setno="${ei}-${si}">${pr ? pr.role : ''}${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
         ${body ? (en.target && en.target.band ? `<span class="bw-cell">Band<small>${BAND_LEVELS[en.target.band]}</small></span>`
           : `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`)
         : `<input type="text" inputmode="decimal" autocomplete="off" placeholder="–" class="${st}"
@@ -3942,7 +4219,8 @@ function renderTraining() {
       ${feat('tr-sets') ? `<div class="row set-btns">
         <button class="btn" data-action="tr-del-set" data-ei="${ei}">− Satz</button>
         <button class="btn" data-action="tr-add-set" data-ei="${ei}">+ Satz</button>
-      </div>` : ''}${swipe ? swipeNextHtml(ei) : ''}</section>`;
+      </div>` : ''}${swipe && !(pr && pr.role === 'A') ? swipeNextHtml(ei) : ''}</section>`;
+    if (pr && pr.role === 'B') h += '</div>';
   });
   if (feat('tr-add')) h += draft.adding ? renderAddExercise()
     : '<button class="btn center" data-action="add-open">+ Übung hinzufügen</button>';
@@ -4160,7 +4438,7 @@ function renderPlan() {
   if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
     h += `<p class="hint explain">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
-      Isolationsübungen 2 Minuten (ohne Aufwärmen).</p>`;
+      Isolationsübungen 2 Minuten (ohne Aufwärmen)${ssOn() ? '; im Supersatz 2 Minuten nach jedem Satz, bei zwei Isolationsübungen 90 Sekunden' : ''}.</p>`;
   }
   if (active.own) {
     return h + `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
@@ -4419,9 +4697,12 @@ let planSwap = null;  // { day, i } – geöffnetes „Ersetzen“ im Trainingst
 function planSwapHtml(day, ex, i) {
   if (!planSwap || planSwap.day !== day.id || planSwap.i !== i) {
     if (ex.name.trim() && exRename === ex.name) return renameFormHtml(ex.name);
+    const ssBtn = ex.name.trim() && ssOn() && !dayPairs(day.exercises).has(i) && ssCandidates(day, i).length
+      && !(ssPick && ssPick.day === day.id && ssPick.i === i);
     return ex.name.trim() ? `<div class="row plan-ex-btns">
         <button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Ersetzen</button>
-        <button class="btn outline plan-swap-btn" data-action="ex-rename-open" data-name="${esc(ex.name)}">✎ Umbenennen</button></div>`
+        <button class="btn outline plan-swap-btn" data-action="ex-rename-open" data-name="${esc(ex.name)}">✎ Umbenennen</button></div>
+        ${ssBtn ? `<button class="btn outline plan-swap-btn ss-btn" data-action="ss-pick-open" data-i="${i}">🔗 Als Supersatz koppeln</button>` : ''}`
       : `<button class="btn outline plan-swap-btn" data-action="plan-swap-open" data-i="${i}">⇄ Übung ersetzen</button>`;
   }
   // die zuletzt ersetzte Übung immer als Erstes (zum schnellen Zurücktauschen)
@@ -4512,8 +4793,10 @@ function planReplaceExercise(day, i, name) {
   // unbekannte Übung: Muskelgruppe der alten behalten, damit das Wochenvolumen stimmt
   ex.group = EXERCISE_GROUPS.has(nameKey(name)) ? null : oldGroup;
   planSwap = null;
+  const hadSs = !!ex.ss;
+  ssClean(day.exercises);  // Supersatz (v210): passt die neue Übung nicht mehr als Paar, wird es gelöst
   saveData();
-  toast(`Ersetzt durch „${name}“ ✔`);
+  toast(hadSs && !ex.ss ? `Ersetzt durch „${name}“ – der Supersatz ist gelöst, weil die Übungen nicht als Paar passen` : `Ersetzt durch „${name}“ ✔`);
   return true;
 }
 
@@ -4551,12 +4834,12 @@ function dayReorderHtml(day) {
   if (n < 2) return '';
   if (dayReorder !== day.id) return '<button class="btn outline" data-action="day-reorder">⇅ Reihenfolge ändern</button>';
   return `<div class="card"><h2>Reihenfolge</h2><ul class="list reorder">${day.exercises.map((ex, i) => `<li class="bw-row">
-        <span>${i + 1}. ${esc(ex.name.trim() || 'Neue Übung')}</span>
+        <span>${i + 1}. ${dayPairs(day.exercises, true).has(i) ? '🔗 ' : ''}${esc(ex.name.trim() || 'Neue Übung')}</span>
         <button class="icon-btn" data-action="ex-up" data-i="${i}" aria-label="Nach oben" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten" ${i === n - 1 ? 'disabled' : ''}>↓</button>
       </li>`).join('')}</ul>
     <button class="btn primary" data-action="day-reorder">✔ Fertig</button>
-    <p class="hint">Die Reihenfolge bleibt im Plan, bis du sie wieder änderst – in allen kommenden Trainings dieses Tages.
+    <p class="hint">Die Reihenfolge bleibt im Plan, bis du sie wieder änderst – in allen kommenden Trainings dieses Tages.${dayPairs(day.exercises, true).size ? ' 🔗 Supersätze wandern als Paar.' : ''}
       Ein schon begonnenes Training behält seine Reihenfolge.</p></div>`;
 }
 
@@ -4591,10 +4874,13 @@ function renderDay({ id }) {
   const bw = data.cycle.buildWeeks;
   const autoWeeks = Array.from({ length: bw }, (_, w) => autoSetsForDay(day, w + 1, false));
   const autoDeload = autoSetsForDay(day, 0, true);
+  const pairs = dayPairs(day.exercises);  // Supersätze (v210)
   day.exercises.forEach((ex, i) => {
     const isAuto = autoDeload.has(ex.id);
-    h += `<div class="card">
-      <div class="ex-name-row">
+    const pr = pairs.get(i);
+    if (pr && pr.role === 'A') h += `<div class="ss-wrap plan">${ssPlanHead(day, pr)}`;
+    h += `<div class="card${pr ? ' ss-card' : ''}">
+      <div class="ex-name-row">${pr ? `<span class="ss-badge">${pr.role}</span>` : ''}
         ${feat('plan-add-ex') || !ex.name.trim() ? `<input class="inp" type="text" data-field="ex-name" data-i="${i}"
           autocomplete="off" autocorrect="off" spellcheck="false"
           value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">` : `<h3 class="plan-ex-name">${esc(ex.name)}</h3>`}
@@ -4603,6 +4889,7 @@ function renderDay({ id }) {
       </div>
       <div class="suggest" hidden></div>
       ${planSwapHtml(day, ex, i)}
+      ${ssPick && ssPick.day === day.id && ssPick.i === i ? ssPickHtml(day, i) : ''}
       ${feat('tr-compare') ? planCompare(ex, day) : ''}
       ${feat('ex-kind-group') ? `<label class="row"><span>Muskelgruppe</span>
         <select class="inp sel" data-field="ex-group" data-i="${i}">
@@ -4641,8 +4928,9 @@ function renderDay({ id }) {
         <button class="icon-btn danger" data-action="ex-del" data-i="${i}">Entfernen</button>
       </div>
     </div>`;
+    if (pr && pr.role === 'B') h += '</div>';
   });
-  h += `${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
+  h += `${ssAutoBtnHtml(day)}${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
     <p class="hint explain">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
       : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
@@ -5102,7 +5390,7 @@ function renderSession({ id, fresh, edit, week }) {
   const won = fresh || [];
   const top = (fresh ? motivAfterHtml(s) : '') + (won.length ? `<div class="card award-new">${won.map(a =>
       `<div class="award-row"><span class="award-icon">${a.icon}</span><div><b>Neuer Erfolg: ${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join('')}</div>` : '') +
-    (fresh ? backupAfterTrainingCard() : '') +
+    (fresh ? backupAfterTrainingCard() + ssCheckCard(s) : '') +
     `<div class="stats two"><div class="stat"><span>Bewegt (Tonnage)</span><b>${fmtTons(sessionTonnage(s))}</b></div>
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>
     <button class="btn ${fresh ? 'primary' : 'outline'} share-btn" data-action="share-open" data-id="${s.id}">📤 Ergebnis teilen</button>`;
@@ -5118,7 +5406,7 @@ function renderSession({ id, fresh, edit, week }) {
     const comment = e.comment ? `<div class="comment-text">💬 ${esc(e.comment)}</div>` : '';
     const warm = e.warmup && e.warmup.length
       ? `<div class="warm-line">🔥 Aufwärmen: ${e.warmup.map(fmtSet).join(' · ')}</div>` : '';
-    h += `<li><div class="date">${esc(e.name)}${instead}</div>${warm}
+    h += `<li><div class="date">${esc(e.name)}${instead}${e.ss ? ' <small class="ss-tag">🔗 Supersatz</small>' : ''}</div>${warm}
       <div class="sets">${sessionPbHtml(s, e)}</div>${comment}${res}</li>`;
   }
   return h + `</ul><button class="btn danger" data-action="del-session" data-id="${s.id}">Dieses Training löschen</button>`;
@@ -5492,6 +5780,11 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 210, date: '2026-11-11', items: [
+    ['🔗 Supersätze: Zwei Übungen im Wechsel mit kurzer Pause – im Tagesplan „Als Supersatz koppeln“ oder „Supersätze vorschlagen“.', 'supersets'],
+    ['Die geschätzte Trainingsdauer rechnet Supersätze mit ein, und „Wenig Zeit?“ koppelt auf Wunsch erst Übungen, bevor Sätze wegfallen.', 'supersets'],
+    ['Im Training stehen beide Übungen in einem Rahmen, der nächste Satz ist markiert. Gerät besetzt? „Heute einzeln“.', 'supersets'],
+  ] },
   { v: 209, date: '2026-11-11', items: [
     ['Beschwerde-Tagebuch: Stärke von 0 bis 10, Seite und Notiz je Stelle – mit Verlaufslinie (Verlauf → Beschwerden).'],
     ['„🩹 Zwickt“ im Training: Bei jeder Übung festhalten, wo und wie stark es zwickt. So siehst du, welche Übungen sich melden.'],
@@ -5794,6 +6087,7 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   const tl = data.timeLimit;
   if (tl && tl.min) {
     draft.timeLimit = tl.min;
+    if (tl.ss) ssForTime(tl.min);  // Supersätze (v210): erst Pausen sparen, dann Sätze kürzen
     draft.timeCut = trimToTime(draft.entries, tl.min);
     refreshPrefat();
     if (tl.once) { delete data.timeLimit; saveData(); }
@@ -5820,7 +6114,7 @@ function draftEntries(day) {
   const exs = day.exercises.filter(e => e.name.trim());
   const nList = exs.map(x => ({ name: x.name.trim(), n: auto.has(x.id) ? auto.get(x.id) : setsForWeek(x, draft.deload ? bw : setsWeek, bw, adapt) }));
   return exs.map((ex, xi) => {
-    const en = { name: ex.name.trim() };
+    const en = { name: ex.name.trim(), ...(ex.ss ? { ss: ex.ss, ssRest: ex.ssRest } : {}) };  // Supersatz (v210)
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
     const week = draft.deload ? bw : draft.week;
     const [lo, hi] = rirRange(kindOf(ex), week, bw, groupOf(ex)).map(x => Math.max(0, x - (adapt ? 1 : 0)));
@@ -6247,9 +6541,11 @@ const setPlanMax10 = (name, max10) => {
 };
 
 function saveTraining() {
+  const ssNow = draftPairs();  // Supersätze (v210): im Verlauf markieren
   const entries = draft.entries
-    .map(en => ({
+    .map((en, i) => ({
       name: en.name,
+      ...(ssNow.has(i) ? { ss: en.ss } : {}),
       ...(en.replacedFrom ? { replacedFrom: en.replacedFrom } : {}),
       target: en.target,
       planned: en.planned,
@@ -6315,6 +6611,9 @@ function saveTraining() {
     setRound(draft.cycleStart, draft.week, draft.cycleNo || data.cycle.no);  // ab jetzt gilt dieser Durchlauf
   }
   // Trainingsdauer in Minuten (über 10 Stunden = vermutlich vergessen zu speichern -> nicht werten)
+  // Supersätze aus dem Plan: nach dem 2. Training damit einmal nachfragen, ob die Pausen gepasst haben (ssCheckCard)
+  const sday = findDay(draft.dayId);
+  if (sday && [...ssNow.values()].some(p => !draft.entries[p.i].ssToday)) sday.ssRuns = (sday.ssRuns || 0) + 1;
   const minutes = Math.round((Date.now() - Date.parse(draft.date)) / 60000);
   if (minutes > 0 && minutes < 600) session.duration = minutes;
   const fresh = withAwards(() => data.sessions.push(session));  // neue Erfolge als Mitteilung
@@ -6546,10 +6845,14 @@ function applyTrainingMax(el) {
   saveDraft(); render();
 }
 
+// Supersatz (v210): ein Paar bewegt sich als Ganzes
 function moveExercise(day, i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= day.exercises.length) return;
-  [day.exercises[i], day.exercises[j]] = [day.exercises[j], day.exercises[i]];
+  const exs = day.exercises, pairs = dayPairs(exs, true);
+  const unit = k => { const p = pairs.get(k); return p ? [p.i, p.j] : [k, k]; };
+  const [a, b] = unit(i), nb = dir < 0 ? a - 1 : b + 1;
+  if (nb < 0 || nb >= exs.length) return;
+  const [c, d] = unit(nb), mine = exs.slice(a, b + 1), other = exs.slice(c, d + 1);
+  exs.splice(Math.min(a, c), mine.length + other.length, ...(dir < 0 ? [...mine, ...other] : [...other, ...mine]));
 }
 
 const actions = {
@@ -6637,16 +6940,17 @@ const actions = {
   'start-day': el => beginCheck(el.dataset.id),
   'time-open': () => {
     const tl = data.timeLimit;
-    timeEdit = { min: tl && tl.min ? String(tl.min) : '45', once: tl ? !!tl.once : true };
+    timeEdit = { min: tl && tl.min ? String(tl.min) : '45', once: tl ? !!tl.once : true, ss: tl ? tl.ss !== false : true };
     render();
   },
   'time-chip': el => { timeEdit.min = el.dataset.m; render(); },
   'time-once': el => { timeEdit.once = el.dataset.v === '1'; render(); },
+  'time-ss': el => { timeEdit.ss = el.dataset.v === '1'; render(); },
   'time-cancel': () => { timeEdit = null; render(); },
   'time-save': () => {
     const m = Math.round(parseNum(timeEdit.min));
     if (!(m >= 10 && m <= 240)) { alert('Bitte eine Zeit zwischen 10 und 240 Minuten eintragen.'); return; }
-    data.timeLimit = { min: m, once: timeEdit.once };
+    data.timeLimit = { min: m, once: timeEdit.once, ss: timeEdit.ss !== false };
     timeEdit = null;
     saveData();
     toast(`⏱ Zeitlimit ${m} min – ${data.timeLimit.once ? 'gilt für das nächste Training' : 'gilt, bis du es änderst'}`);
@@ -6775,7 +7079,7 @@ const actions = {
     saveData(); render();
   },
   'tr-go': el => trGo(Number(el.dataset.d)),
-  'tr-go-to': el => trGo(Number(el.dataset.i) - trCur()),
+  'tr-go-to': el => trGo(0, Number(el.dataset.i)),
   'tr-to-save': () => { const b = $view.querySelector('[data-action="tr-save"]'); if (b) b.scrollIntoView({ block: 'center', behavior: 'smooth' }); },
   'reorder-toggle': () => {
     draft.reorder = !draft.reorder;
@@ -6855,7 +7159,7 @@ const actions = {
     const { cur } = trProgress();
     if (cur < 0) { actions['tr-to-save'](); return; }
     if (draft.reorder) return;
-    if (trSwipeOn()) { trGo(cur - trCur()); return; }
+    if (trSwipeOn()) { trGo(0, cur); return; }
     const card = $view.querySelector(`section.ex-card[data-ei="${cur}"]`);
     if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - document.querySelector('header').offsetHeight - 8, behavior: 'smooth' });
   },
@@ -7123,6 +7427,7 @@ const actions = {
     const ex = day.exercises[el.dataset.i];
     if (ex.name.trim() && !confirm(`„${ex.name}“ aus dem Plan entfernen?`)) return;
     day.exercises.splice(el.dataset.i, 1);
+    ssClean(day.exercises);  // Partner eines Supersatzes läuft wieder einzeln
     saveData(); render();
   },
   'day-reorder': () => { dayReorder = dayReorder === current.params.id ? null : current.params.id; render(); },
@@ -7688,10 +7993,14 @@ document.addEventListener('click', e => {
 // Kalender (Verlauf, Cardio): nach links wischen = nächster Monat.
 const trSwipeOn = () => !!(data.profile && data.profile.swipe);
 const trCur = () => Math.min(Math.max(0, draft.cur || 0), Math.max(0, draft.entries.length - 1));
-function trGo(d) {
-  const n = draft.entries.length, to = Math.min(n - 1, Math.max(0, trCur() + d));
-  if (to === trCur()) return;
-  draft.slide = to > trCur() ? 'l' : 'r';
+// Supersatz (v210): beide Übungen stehen auf einem Bildschirm – das Paar zählt beim Weiterwischen als eine Station
+function trGo(d, abs = null) {
+  const n = draft.entries.length, pairs = draftPairs(), now = trCur(), pn = pairs.get(now);
+  const nowA = pn ? pn.i : now;
+  let to = Math.min(n - 1, Math.max(0, abs != null ? abs : (pn ? (d > 0 ? pn.j : pn.i) : now) + d));
+  if (pairs.get(to)) to = pairs.get(to).i;
+  if (to === nowA) return;
+  draft.slide = to > nowA ? 'l' : 'r';
   draft.cur = to;
   saveDraft(); render();
   draft.slide = null;
@@ -7700,13 +8009,14 @@ function trGo(d) {
 }
 // Kopf: Pfeile, „Übung 2 von 7“, Punkte (✓ = alle Sätze erledigt)
 function swipeNavHtml(cur) {
-  const n = draft.entries.length;
-  const dots = draft.entries.map((en, i) => `<button class="swipe-dot ${i === cur ? 'now' : ''} ${en.sets.length && en.sets.every(isDone) ? 'done' : ''}"
+  const n = draft.entries.length, p = draftPairs().get(cur);
+  const a = p ? p.i : cur, b = p ? p.j : cur;  // Supersatz: beide Übungen auf einem Bildschirm
+  const dots = draft.entries.map((en, i) => `<button class="swipe-dot ${i >= a && i <= b ? 'now' : ''} ${en.sets.length && en.sets.every(isDone) ? 'done' : ''}"
     data-action="tr-go-to" data-i="${i}" aria-label="Übung ${i + 1}: ${esc(en.name)}"></button>`).join('');
   return `<div class="swipe-nav">
-    <button class="icon-btn" data-action="tr-go" data-d="-1" ${cur === 0 ? 'disabled' : ''} aria-label="Vorige Übung">‹</button>
-    <div><b>Übung ${cur + 1} von ${n}</b><div class="swipe-dots">${dots}</div></div>
-    <button class="icon-btn" data-action="tr-go" data-d="1" ${cur >= n - 1 ? 'disabled' : ''} aria-label="Nächste Übung">›</button>
+    <button class="icon-btn" data-action="tr-go" data-d="-1" ${a === 0 ? 'disabled' : ''} aria-label="Vorige Übung">‹</button>
+    <div><b>${p ? `Übung ${a + 1} + ${b + 1}` : `Übung ${cur + 1}`} von ${n}</b><div class="swipe-dots">${dots}</div></div>
+    <button class="icon-btn" data-action="tr-go" data-d="1" ${b >= n - 1 ? 'disabled' : ''} aria-label="Nächste Übung">›</button>
   </div>${data.profile && data.profile.swipeKnown ? '' : '<p class="hint swipe-hint">Wischen: nach links = nächste Übung, nach rechts = vorige</p>'}`;
 }
 function swipeNextHtml(ei) {
@@ -8191,6 +8501,60 @@ actions['color-hint'] = el => {
   if (el.dataset.go) go('opt', { sec: 'look' }); else render();
 };
 actions['opt-open'] = el => go('opt', { sec: el.dataset.sec });
+
+// Supersätze (v210)
+actions['ss-pick-open'] = el => { planSwap = null; exRename = null; ssPick = { day: current.params.id, i: +el.dataset.i }; render(); };
+actions['ss-pick-cancel'] = () => { ssPick = null; render(); };
+actions['ss-pair'] = el => {
+  const day = findDay(current.params.id), a = day.exercises[+el.dataset.i], b = day.exercises[+el.dataset.j];
+  ssCouple(day, +el.dataset.i, +el.dataset.j);
+  ssPick = null;
+  saveData(); render();
+  toast(`🔗 Supersatz: ${a.name.trim()} + ${b.name.trim()}`);
+};
+actions['ss-unpair'] = el => {
+  const day = findDay(current.params.id);
+  for (const x of day.exercises.slice(+el.dataset.i, +el.dataset.i + 2)) { delete x.ss; delete x.ssRest; }
+  saveData(); render();
+  toast('Supersatz gelöst – die Übungen laufen wieder einzeln');
+};
+actions['ss-auto'] = () => {
+  const day = findDay(current.params.id), pv = ssAutoPreview(day);
+  if (!pv) return;
+  if (!confirm(`Diese Übungen als Supersatz koppeln?\n\n${pv.pairs.map(([a, b]) => `• ${a} + ${b}`).join('\n')}\n\nSpart ca. ${pv.save} min pro Training. `
+    + 'Die zweite Übung rückt jeweils direkt hinter die erste. Jedes Paar lässt sich jederzeit wieder lösen.')) return;
+  day.exercises = pv.list;
+  day.ssRuns = 0; day.ssAsked = false;
+  saveData(); render();
+  toast(`🔗 ${pv.pairs.length} Supersatz-Paar${pv.pairs.length === 1 ? '' : 'e'} angelegt`);
+};
+actions['ss-solo'] = el => {
+  const en = draft.entries[+el.dataset.ei];
+  draft.ssSolo = [...(draft.ssSolo || []), en.ss];
+  saveDraft(); render();
+  toast('Heute einzeln – normale Pausen, der Plan bleibt');
+};
+actions['ss-unsolo'] = el => {
+  const en = draft.entries[+el.dataset.ei];
+  draft.ssSolo = (draft.ssSolo || []).filter(k => k !== en.ss);
+  saveDraft(); render();
+};
+actions['ss-check'] = el => {
+  const day = findDay(el.dataset.day), v = el.dataset.v;
+  if (!day) return;
+  if (v === 'longer') {
+    dayPairs(day.exercises, true).forEach(p => {
+      if (p.role !== 'A') return;
+      const r = p.rest + (p.rest < SS_REST ? 0.5 : 1);  // 90 s → 2 min, 2 min → 3 min
+      day.exercises[p.i].ssRest = day.exercises[p.j].ssRest = r;
+    });
+  }
+  if (v === 'solo') day.exercises.forEach(x => { delete x.ss; delete x.ssRest; });
+  day.ssAsked = true;
+  saveData(); render();
+  toast(v === 'ok' ? 'Danke – die Supersätze bleiben, wie sie sind' : v === 'longer' ? 'Pausen im Supersatz verlängert'
+    : 'Supersätze gelöst – die Übungen laufen wieder einzeln');
+};
 // Beschwerden-Verlauf (v208)
 actions['compl-open'] = el => { complEdit = null; go('complaints', { from: el.dataset.from || current.view }); };
 actions['compl-pick'] = el => {

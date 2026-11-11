@@ -2778,3 +2778,33 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .rep-weeks { margin-bottom: 14px; }
 .share-img.rep-img { width: 100%; aspect-ratio: auto; object-fit: contain; border-radius: 14px; background: #fff; }
 .pain-quick .gchip:not(.on), .compl-detail .gchip:not(.on) { background: var(--card); }
+
+/* ---------- v210: Supersätze ---------- */
+.ss-wrap { margin: 14px 0; padding: 8px; border: 2px solid var(--accent); border-radius: calc(var(--radius) + 6px);
+  background: var(--accent-soft); }
+.ss-wrap > .card, .ss-wrap > section.card { margin: 8px 0 0; }
+.ss-head { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
+.ss-title { flex: 1; min-width: 0; font-weight: 800; color: var(--accent-text); }
+.ss-title small { display: block; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.ss-head .btn { width: auto; flex: none; min-height: 38px; margin: 0; padding: 0 12px; font-size: 14px; }
+.ss-how { margin: 4px 4px 0; }
+.ss-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; margin-right: 8px;
+  border-radius: 50%; background: var(--accent); color: #fff; font-size: 14px; font-weight: 800; vertical-align: middle; }
+.ex-name-row .ss-badge { margin-right: 2px; }
+.setno.now { box-shadow: 0 0 0 3px var(--accent); }
+.trh-next { display: block; width: 100%; margin: 4px 0 0; padding: 2px 12px; border: 0; background: none; color: var(--accent-text);
+  font: inherit; font-size: 14px; text-align: left; }
+.ss-solo { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; padding: 10px 12px; border: 2px dashed var(--line-strong);
+  border-radius: var(--radius); font-size: 14.5px; color: var(--muted); }
+.ss-solo span { flex: 1; min-width: 0; }
+.ss-solo .btn { width: auto; flex: none; margin: 0; }
+.ss-tag { color: var(--accent-text); font-weight: 700; }
+.ss-last { font-size: 14px; }
+.ss-btn { width: 100%; margin-top: 8px; }
+.ss-pick .vchip small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ss-auto-btn { margin-top: 4px; }
+.ss-check-btns { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.ss-check-btns .btn { margin: 0; }
+.wiz-ex.ss { border-left: 4px solid var(--accent); padding-left: 10px; }
+.wiz-ex.ss-A { margin-top: 6px; }
+.wiz-ss { margin-top: 12px; }

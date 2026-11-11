@@ -149,6 +149,10 @@ const SESSION_CAP = 25;  // höchstens so viele Sätze pro Training – in jeder
 // TIME_CAPS = ungefähre Sätze, nur für die Anzeige.
 const TIME_CAPS = { 90: '20–25', 75: '17–21', 60: '13–17', 45: '10–12' };  // im Studio eher die kleinere Zahl (längere Pausen)
 const SET_MIN_BIG = 4.5, SET_MIN_ASSIST = 3;
+// Mit Supersätzen (v210, Schritt „Trainingsdauer“): grob die Hälfte der Sätze läuft im Wechsel mit kürzerer Pause
+// (Satz 1 min + 2 min bzw. bei zwei Isolationsübungen 1,5 min) – genau rechnet danach estDuration mit den echten Paaren
+const SET_MIN_BIG_SS = 3.75, SET_MIN_ASSIST_SS = 2.75;
+const wizSetMin = g => ASSIST_GROUPS.includes(g) ? (wiz && wiz.ss ? SET_MIN_ASSIST_SS : SET_MIN_ASSIST) : (wiz && wiz.ss ? SET_MIN_BIG_SS : SET_MIN_BIG);
 
 // Volumen-Variante (direkt nach der Aufteilung gefragt): vol = Faktor auf die Sätze, rir = Verschiebung des Tank-Ziels
 // (vom User festgelegt: mehr Volumen = Tank wie bisher, weniger Volumen = etwa 1 Wdh. weniger im Tank, nie unter 0)
@@ -452,7 +456,7 @@ function templateVolume(groups) {
 
 // Passen alle Trainingstage des Entwurfs in jeder Woche in die gewählte Zeit (Minuten wie capSessions)?
 function volFits(vol) {
-  const mins = g => ASSIST_GROUPS.includes(g) ? SET_MIN_ASSIST : SET_MIN_BIG;
+  const mins = wizSetMin;
   return wiz.days.every(d => [0, 1, 2, 3].every(w => d.groups.reduce((a, g) => a + (vol[g] ? vol[g][w] * mins(g) : 0), 0) <= sessionCap()));
 }
 
@@ -461,7 +465,7 @@ function volFits(vol) {
 // Ein Faktor für alle Wochen (der Anstieg über den Zyklus bleibt), Schwerpunkt-Gruppen bleiben verschont. raw = Sätze pro
 // Training ungerundet; Rundungsreste kürzt danach capSessions.
 function fitVolume(raw) {
-  const mins = g => ASSIST_GROUPS.includes(g) ? SET_MIN_ASSIST : SET_MIN_BIG;
+  const mins = wizSetMin;
   let f = 1;
   for (const d of wiz.days) for (let w = 0; w < 4; w++) {
     const load = gs => gs.reduce((a, g) => a + (raw[g] ? raw[g][w] * mins(g) : 0), 0);
@@ -484,7 +488,7 @@ const ASSIST_FLOOR = 0.5; // bis auf diesen Anteil werden Assistenzgruppen gekü
 function capSessions(vol) {
   const orig = Object.fromEntries(Object.keys(vol).map(g => [g, vol[g].slice()]));
   const isAssist = g => ASSIST_GROUPS.includes(g);
-  const mins = g => isAssist(g) ? SET_MIN_ASSIST : SET_MIN_BIG;  // Minuten pro Satz
+  const mins = wizSetMin;  // Minuten pro Satz
   const factor = Object.fromEntries(Object.keys(vol).map(g => [g, 1]));
   for (const d of wiz.days) {
     const free = d.groups.filter(g => vol[g] && !wiz.prio.includes(g));
@@ -534,7 +538,7 @@ function syncGroups() {
   const groups = wizGroups();
   const tv = templateVolume(groups);
   for (const g of groups) {
-    const key = `${daysWith(g)}|${focusAdj(g)}|${wiz.style}|${wiz.timeMax}`;
+    const key = `${daysWith(g)}|${focusAdj(g)}|${wiz.style}|${wiz.timeMax}|${wiz.ss ? 1 : 0}`;
     if (!wiz.volume[g] || wiz.volKey[g] !== key) {
       wiz.volume[g] = tv[g];
       wiz.volKey[g] = key;
@@ -622,6 +626,10 @@ function wizAltPick(g, pick, k, list) {
   return null;
 }
 
+// Supersätze (v210): nach Rückfrage im Schritt „Trainingsdauer“ koppelt der Assistent passende Übungen (ssAutoPairs in app.js)
+const wizSsAsk = () => feat('supersets') && wiz && wiz.mode !== 'own';
+const wizPairUp = exs => wizSsAsk() && wiz.ss ? ssApply(exs, ssAutoPairs(exs)) : exs;
+
 function buildPlanDays() {
   const ints = wizDayIntensities(), names = wizDayNames();
   const compUse = {};  // gleiche Tage: Grundübung -> Wdh.-Bereiche, an denen sie schon steht; Zähler der Ersatz-Tage
@@ -669,7 +677,7 @@ function buildPlanDays() {
       name: names[di],
       intensity: ints[di],
       groups: [...d.groups],
-      exercises: list.map(([name, g]) => withDefaults({ id: uid(), name, group: g, max10: knownMax10(name) })),
+      exercises: wizPairUp(list.map(([name, g]) => withDefaults({ id: uid(), name, group: g, max10: knownMax10(name) }))),
     };
   });
 }
@@ -1091,6 +1099,12 @@ function renderWizTime() {
     `<button class="split-opt freq-opt ${wiz.timeMax === 0 ? 'on' : ''}" data-action="wiz-time" data-m="0">
       <b>Die Zeit spielt keine Rolle</b><small>Jede Muskelgruppe bekommt ihre vorgesehenen Sätze. Am Ende des Zyklus kann ein Training dann deutlich über 90 Minuten dauern, höchstens aber etwa ${TIME_NO_LIMIT / 60} Stunden.</small></button>`,
     true,
+    (wizSsAsk() ? `<div class="card wiz-ss"><p><b>🔗 Supersätze nutzen, um Zeit zu sparen?</b></p>
+      <p class="hint">Bei einem Supersatz trainierst du zwei Übungen im Wechsel – z. B. Brust und Rücken oder Bauch und Waden – mit
+        2 Minuten Pause nach jedem Satz (zwei Isolationsübungen: 90 Sekunden) statt 2 bis 4 Minuten. So passen mehr Sätze in die
+        gleiche Zeit. Dafür müssen beide Geräte gleichzeitig frei sein; im Training geht es jederzeit auch „heute einzeln“.</p>
+      <div class="seg two"><button class="${wiz.ss ? 'on' : ''}" data-action="wiz-ss" data-v="1">Ja, wo es Zeit spart</button>
+        <button class="${wiz.ss ? '' : 'on'}" data-action="wiz-ss" data-v="0">Nein, alles einzeln</button></div></div>` : '') +
     `<p class="hint">Gekürzt werden zuerst die kleinen Muskelgruppen, dein Schwerpunkt zuletzt. Hast du an einem Tag einmal weniger Zeit,
       hilft „⏱ Wenig Zeit?“ auf der Startseite.</p>${wizNext() ? '' : '<button class="btn primary" data-action="wiz-quick">Plan erstellen</button>'}`);
 }
@@ -1459,6 +1473,7 @@ function renderWizard() {
     h += `<div class="variants wiz-pdays">${all.map((d, i) => `<button class="vchip ${i === pdi ? 'on' : ''}" data-action="wiz-pday" data-i="${i}">${i + 1}. ${esc(d.name)}</button>`).join('')}</div>
       <p class="sub wiz-pday-pos">Trainingstag ${pdi + 1} von ${all.length}</p>`;
   }
+  const pmemo = new Map(), pairsOf = d => pmemo.get(d) || pmemo.set(d, dayPairs(d.exercises, wizSsAsk())).get(d);
   for (const [di, day] of all.entries()) {
     if (di !== pdi) continue;
     const weeks = [1, 2, 3, 4].map(w => autoSetsForDay(day, w, false, wiz.volume));
@@ -1466,13 +1481,15 @@ function renderWizard() {
     const open = e => wiz.swapOpen && wiz.swapOpen.d === di && nameKey(wiz.swapOpen.n) === nameKey(e.name);
     h += `<div class="card"><h2>${esc(day.name)}</h2>
       <p class="hint">Sätze: Intro · W2 · W3 · W4 · Deload</p>
-      <ul class="list reorder">${day.exercises.map(e => `<li class="wiz-ex"><div><b>${esc(e.name)}</b><br>
+      <ul class="list reorder">${day.exercises.map((e, ei) => `<li class="wiz-ex${pairsOf(day).has(ei) ? ` ss ss-${pairsOf(day).get(ei).role}` : ''}"><div>${pairsOf(day).has(ei)
+        ? `<small class="ss-tag">🔗 Supersatz ${pairsOf(day).get(ei).role} · mit ${esc(day.exercises[ei + (pairsOf(day).get(ei).role === 'A' ? 1 : -1)].name)}</small><br>` : ''}<b>${esc(e.name)}</b><br>
         <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
         ${libInfoBtn(e.name)}
         <button class="icon-btn swap" data-action="wiz-swap-open" data-d="${di}" data-n="${esc(e.name)}" aria-label="${esc(e.name)} ersetzen">⇄<small>Ersetzen</small></button></li>
         ${open(e) ? `<li class="wiz-swap">${wizSwapPanel(e.name, day)}</li>` : ''}`).join('') ||
         '<li class="hint">Keine Übungen</li>'}</ul>
-      <p class="hint">Summe pro Training: ${weeks.map(m => [...m.values()].reduce((a, b) => a + b, 0)).join(' · ')}</p>
+      <p class="hint">Summe pro Training: ${weeks.map(m => [...m.values()].reduce((a, b) => a + b, 0)).join(' · ')}
+        · Dauer am Ende des Zyklus ${estText(estDuration(day, 4, { volume: wiz.volume }))}${pairsOf(day).size ? ' mit Supersätzen' : ''}</p>
     </div>`;
   }
   const empty = groups.filter(g => !(wiz.picks[g] || []).length);
@@ -1733,6 +1750,11 @@ Object.assign(actions, {
   // Vorlage wählen: Tage neu setzen, Volumen/RIR/Übungen werden danach neu vorgeschlagen
   // Volumen-Variante: Volumen und Tank werden danach neu vorgeschlagen
   'wiz-quick': () => wizQuick(),  // Einfach-Modus: Plan direkt fertigstellen
+  'wiz-ss': el => {
+    const v = el.dataset.v === '1';
+    if (!!wiz.ss !== v) { wiz.ss = v; wiz.volKey = {}; }
+    render();
+  },
   'wiz-time': el => {
     const m = Number(el.dataset.m);
     if (wiz.timeMax !== m) { wiz.timeMax = m; wiz.volKey = {}; }
