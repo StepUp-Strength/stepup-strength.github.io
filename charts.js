@@ -12,8 +12,9 @@ const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1J', 365], ['Alle', 0]];
 // withDeload: Übungen – Trainings aus Deload-Wochen mitzeigen (sonst verzerren sie den Verlauf)
 const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', withDeload: false, tonBy: 'session', range: 91, end: null, sel: null };
 let chartGeo = null;  // Geometrie der zuletzt gezeichneten Grafik (für Antippen und Ziehen)
-// Das Körpergewicht wird im Ernährungs-Reiter gezeichnet, alles andere unter „Diagramme“
-const chartMode = () => current.view === 'nutrition' ? 'bw' : chartState.mode;
+// Das Körpergewicht wird im Ernährungs-Reiter gezeichnet, eine Übung auf ihrer Seite (exercise), alles andere im Verlauf
+// (seit v203 kein eigener Reiter „Diagramme“ mehr)
+const chartMode = () => current.view === 'nutrition' ? 'bw' : current.view === 'exercise' ? 'ex' : chartState.mode;
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE');  // JJJJ-MM-TT
 const round1 = x => Math.round(x * 10) / 10;
@@ -565,7 +566,7 @@ function tonnageStats() {
     <div class="stat"><span>Dieser Monat</span><b>${fmtTons(thisMonth)}</b></div>
     <div class="stat"><span>Rekord-Training</span><b>${fmtTons(Math.max(0, ...all))}</b></div>
   </div>
-  <button class="btn center" data-action="chart-mode" data-mode="awards">🏆 Erfolge ansehen</button>`;
+  <button class="btn center" data-action="hist-sec" data-k="awards">🏆 Erfolge ansehen</button>`;
 }
 
 // Kennzahlen zu den Schritten (unabhängig vom Zeitfenster)
@@ -600,10 +601,7 @@ function chartStats(vis, unit) {
     <div class="stat"><span>Veränderung</span><b>${sign}${fmtNum(Math.abs(diff))}</b><small>${sign}${Math.abs(pct)} %</small></div>
     ${best}
   </div>`;
-  if (chartMode() === 'ex') {
-    h += `<button class="btn center" data-action="open-exercise" data-name="${esc(chartState.name)}">Alle Einträge als Liste</button>`;
-  }
-  return h;
+  return h;  // Übung: die Liste aller Einträge steht seit v203 direkt unter dem Diagramm
 }
 
 function updateRangeControls(win) {
@@ -817,18 +815,85 @@ function bwCard() {
     </div>`;
 }
 
+/* ---------- Verlauf mit vier Bereichen (v203, User-Wunsch 2026-11-11) ---------- */
+// Früher eigener Reiter „Diagramme“. Jetzt oben im Verlauf: Kalender (views.history) | Übungen | Statistik | Erfolge
+// (views.charts mit chartState.mode 'ex' / 'ton'|'steps'|'cardio' / 'awards'). Eine Übung öffnet views.exercise:
+// Diagramm oben, alle Sätze darunter. Der zuletzt offene Bereich steht in profile.histTab.
+const HIST_SECS = [['cal', 'Kalender'], ['ex', 'Übungen'], ['stats', 'Statistik'], ['awards', 'Erfolge']];
+const histSecOf = mode => mode === 'ex' ? 'ex' : mode === 'awards' ? 'awards' : 'stats';
+const histSegHtml = active => `<div class="seg hist-seg">${HIST_SECS.map(([k, l]) =>
+  `<button class="${active === k ? 'on' : ''}" data-action="hist-sec" data-k="${k}">${l}</button>`).join('')}</div>`;
+// Statistik: Tonnage nur Experte, Schritte ab Standard, Cardio immer
+const statTabs = () => [feat('chart-detail') && ['ton', 'Tonnage'], feat('steps') && ['steps', 'Schritte'],
+  typeof renderCardioStats === 'function' && ['cardio', 'Cardio']].filter(Boolean);
+function goHist(sec) {
+  const s = HIST_SECS.some(([k]) => k === sec) ? sec : 'cal';
+  data.profile = data.profile || {};
+  if (data.profile.histTab !== s) { data.profile.histTab = s; saveData(); }
+  Object.assign(chartState, { sel: null, end: null });
+  if (s === 'cal') { go('history'); return; }
+  if (s === 'stats') { if (!statTabs().some(([m]) => m === chartState.mode)) chartState.mode = (statTabs()[0] || ['cardio'])[0]; }
+  else chartState.mode = s;
+  go('charts');
+}
+let histExQ = '';  // Suchtext im Bereich „Übungen“
+// Bereich „Übungen“: alle trainierten Übungen, zuletzt trainierte zuerst; Suche filtert ohne Neuzeichnen
+function histExListHtml() {
+  const map = new Map();
+  for (const s of sessionsNewestFirst()) {
+    for (const e of s.entries) {
+      const k = nameKey(e.name);
+      if (!map.has(k)) map.set(k, { name: e.name, count: 0, last: s.date });
+      map.get(k).count++;
+    }
+  }
+  const list = [...map.values()];
+  if (!list.length) return '<p class="hint">Sobald du Trainings gespeichert hast, findest du hier jede Übung mit Diagramm und allen Sätzen.</p>';
+  const q = norm(histExQ.trim());
+  return `<input class="inp hist-ex-q" type="search" data-field="hist-ex-q" autocomplete="off" autocorrect="off" spellcheck="false"
+      placeholder="Übung suchen …" value="${esc(histExQ)}">
+    <p class="lbl chips-title">${list.length} Übung${list.length === 1 ? '' : 'en'} · zuletzt trainierte zuerst</p>
+    <div id="hist-ex-list">${list.map(x => `<button class="btn nav" data-action="chart-pick" data-name="${esc(x.name)}" data-q="${esc(norm(x.name))}"
+      ${q && !norm(x.name).includes(q) ? 'hidden' : ''}>${esc(x.name)}<small>${x.count}× trainiert · zuletzt ${fmtDate(x.last)}</small></button>`).join('')}</div>
+    <p class="hint" id="hist-ex-none" ${q && !list.some(x => norm(x.name).includes(q)) ? '' : 'hidden'}>Keine Übung gefunden.</p>`;
+}
+// Seite einer Übung: Schalter (Experte), Zeitraum, Diagramm, Kennzahlen – gezeichnet von drawChart (views.exercise.after)
+function exChartHtml(name) {
+  const s = chartState;
+  if (nameKey(s.name) !== nameKey(name)) Object.assign(s, { name, variant: '', sel: null, end: null });
+  if (!feat('chart-detail')) { s.metric = 'weight'; s.variant = ''; s.withDeload = false; }
+  let h = '';
+  if (feat('chart-detail')) h += `<div class="seg small">
+      <button class="${s.metric === 'weight' ? 'on' : ''}" data-action="chart-metric" data-metric="weight">Gewicht</button>
+      <button class="${s.metric === 'max10' ? 'on' : ''}" data-action="chart-metric" data-metric="max10">Max. bei 10 Wdh.</button>
+    </div>`;
+  // Ausführungsvarianten nur anbieten, wenn es für diese Übung welche gibt
+  const used = new Set();
+  for (const ses of data.sessions) {
+    for (const e of ses.entries) if (nameKey(e.name) === nameKey(name)) e.sets.forEach(x => used.add(variantOf(x)));
+  }
+  if ([...used].some(v => v) && feat('chart-detail')) {
+    h += `<div class="seg small">${Object.entries(VARIANTS).filter(([v]) => v === '' || used.has(v)).map(([v, label]) =>
+      `<button class="${s.variant === v ? 'on' : ''}" data-action="chart-variant" data-v="${v}">${label}</button>`).join('')}
+    </div>`;
+  }
+  if (feat('chart-detail')) h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
+    ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
+  return h + rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>'
+    + `<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
+      ? 'Hohle Punkte = Deload-Woche.' : 'Deload-Wochen sind ausgeblendet.'}</p>`;
+}
+
 function renderCharts() {
   const s = chartState;
-  // Modi: Tonnage und Detail-Schalter nur für Experten, Schritte ab Standard
-  if ((s.mode === 'ton' && !feat('chart-detail')) || (s.mode === 'steps' && !feat('steps'))) s.mode = 'ex';
-  if (!feat('chart-detail')) { s.metric = 'weight'; s.variant = ''; s.withDeload = false; }
-  const tabs = [['ex', 'Übungen'], feat('chart-detail') && ['ton', 'Tonnage'], feat('steps') && ['steps', 'Schritte'],
-    typeof renderCardioStats === 'function' && ['cardio', '🏃 Cardio'], ['awards', '🏆 Erfolge']].filter(Boolean);
-  let h = `<div class="seg grid two">${tabs.map(([m, l]) =>
-    `<button class="${s.mode === m ? 'on' : ''}" data-action="chart-mode" data-mode="${m}">${l}</button>`).join('')}
-  </div>`;
-
+  if (!['ex', 'awards'].includes(s.mode) && !statTabs().some(([m]) => m === s.mode)) s.mode = (statTabs()[0] || ['cardio'])[0];
+  let h = histSegHtml(histSecOf(s.mode));
   if (s.mode === 'awards') return h + renderAwards();
+  if (s.mode === 'ex') return h + histExListHtml();
+  // Statistik: Unterauswahl Tonnage | Schritte | Cardio (je nach Modus)
+  const tabs = statTabs();
+  if (tabs.length > 1) h += `<div class="seg small stat-seg">${tabs.map(([m, l]) =>
+    `<button class="${s.mode === m ? 'on' : ''}" data-action="chart-mode" data-mode="${m}">${l}</button>`).join('')}</div>`;
   if (s.mode === 'cardio') return h + renderCardioStats();  // cardio.js
 
   if (s.mode === 'steps') {
@@ -844,53 +909,21 @@ function renderCharts() {
     return h + stepsList();
   }
 
-  if (s.mode === 'ton') {
-    h += `<div class="seg small">
+  // Tonnage
+  h += `<div class="seg small">
       <button class="${s.tonBy === 'session' ? 'on' : ''}" data-action="ton-by" data-by="session">pro Training</button>
       <button class="${s.tonBy === 'week' ? 'on' : ''}" data-action="ton-by" data-by="week">pro Woche</button>
     </div>`;
-  } else if (s.mode === 'ex') {
-    const names = historyNames();
-    if (!names.length) {
-      return h + '<p class="hint">Sobald du Trainings gespeichert hast, siehst du hier deine Entwicklung pro Übung.</p>';
-    }
-    h += `<input class="inp" type="text" data-field="chart-name" autocomplete="off" autocorrect="off"
-        spellcheck="false" placeholder="Übung eintippen …" value="${esc(s.name)}">
-      <div class="suggest" hidden></div>`;
-    if (!s.name) {
-      return h + '<p class="lbl chips-title">Zuletzt trainiert</p>' + names.slice(0, 8).map(n =>
-        `<button class="btn nav" data-action="chart-pick" data-name="${esc(n)}">${esc(n)}</button>`).join('');
-    }
-    if (feat('chart-detail')) h += `<div class="seg small">
-      <button class="${s.metric === 'weight' ? 'on' : ''}" data-action="chart-metric" data-metric="weight">Gewicht</button>
-      <button class="${s.metric === 'max10' ? 'on' : ''}" data-action="chart-metric" data-metric="max10">Max. bei 10 Wdh.</button>
-    </div>`;
-    // Ausführungsvarianten nur anbieten, wenn es für diese Übung welche gibt
-    const used = new Set();
-    for (const ses of data.sessions) {
-      for (const e of ses.entries) if (nameKey(e.name) === nameKey(s.name)) e.sets.forEach(x => used.add(variantOf(x)));
-    }
-    if ([...used].some(v => v) && feat('chart-detail')) {
-      h += `<div class="seg small">${Object.entries(VARIANTS).filter(([v]) => v === '' || used.has(v)).map(([v, label]) =>
-        `<button class="${s.variant === v ? 'on' : ''}" data-action="chart-variant" data-v="${v}">${label}</button>`).join('')}
-      </div>`;
-    }
-    if (feat('chart-detail')) h += `<div class="variants chart-opts"><button class="vchip ${s.withDeload ? 'on' : ''}" data-action="chart-deload">
-      ${s.withDeload ? '✓ ' : ''}Deload einbeziehen</button></div>`;
-  }
-
   h += rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
-  if (s.mode === 'ton') h += '<p class="hint">Tonnage = Gewicht × Wiederholungen aller Sätze. Sätze ohne Gewicht zählen nicht mit.</p>';
-  else h += `<p class="hint">Punkt antippen für Details. Zum Verschieben des Zeitraums seitlich wischen. ${s.withDeload
-    ? 'Hohle Punkte = Deload-Woche.' : 'Deload-Wochen sind ausgeblendet.'}</p>`;
-  return h;
+  return h + '<p class="hint">Tonnage = Gewicht × Wiederholungen aller Sätze. Sätze ohne Gewicht zählen nicht mit.</p>';
 }
 
-views.charts = { title: 'Diagramme', tab: 'charts', render: renderCharts, after: drawChart };
+views.charts = { title: 'Verlauf', tab: 'history', render: renderCharts, after: drawChart };
 
 Object.assign(actions, {
+  'hist-sec': el => goHist(el.dataset.k),
   'chart-mode': el => { Object.assign(chartState, { mode: el.dataset.mode, sel: null, end: null }); render(); },
-  'chart-pick': el => showChartFor(el.dataset.name),
+  'chart-pick': el => go('exercise', { name: el.dataset.name, from: 'charts', fromParams: {} }),
   'ton-by': el => { Object.assign(chartState, { tonBy: el.dataset.by, sel: null, end: null }); render(); },
   'chart-variant': el => { Object.assign(chartState, { variant: el.dataset.v, sel: null }); render(); },
   'chart-metric': el => { Object.assign(chartState, { metric: el.dataset.metric, sel: null }); render(); },
@@ -942,11 +975,13 @@ Object.assign(actions, {
   },
 });
 
-fields['chart-name'] = el => {
-  const names = historyNames();
-  showSuggestions(el, names);
-  const match = names.find(n => nameKey(n) === nameKey(el.value));
-  if (match && nameKey(match) !== nameKey(chartState.name)) showChartFor(match);
+fields['hist-ex-q'] = el => {
+  histExQ = el.value;
+  const q = norm(el.value.trim());
+  let n = 0;
+  document.querySelectorAll('#hist-ex-list [data-q]').forEach(b => { const on = !q || b.dataset.q.includes(q); b.hidden = !on; if (on) n++; });
+  const none = document.getElementById('hist-ex-none');
+  if (none) none.hidden = n > 0;
 };
 
 /* Antippen = Punkt auswählen, seitlich ziehen = Zeitraum verschieben */
@@ -996,7 +1031,7 @@ function selectNearest(clientX) {
   drawChart();
 }
 
-window.addEventListener('resize', () => { if (current.view === 'charts' || current.view === 'nutrition') queueDraw(); });
+window.addEventListener('resize', () => { if (['charts', 'nutrition', 'exercise'].includes(current.view)) queueDraw(); });
 
 /* ---------- Zyklus-Rückblick (v189, User-Wunsch 2026-11-09) ---------- */
 // Sobald die Deload-Woche ansteht (letzte Aufbauwoche geschafft, noch kein Deload-Training), zeigt die Startseite eine Karte

@@ -515,8 +515,7 @@ function nextNotify() {
   el.addEventListener('click', () => {
     close();
     notifyQueue.length = 0;  // alle anzeigen lassen sich in der Übersicht
-    chartState.mode = 'awards';
-    go('charts');
+    goHist('awards');
   });
   let y0 = null;
   el.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
@@ -2300,13 +2299,120 @@ function lastDuration(dayId) {
 let trTimer = null;
 function startTrainingTimer() {
   clearInterval(trTimer);
+  // läuft weiter, solange ein Training offen ist – auch in anderen Ansichten (z. B. Übung nachschlagen), damit das
+  // Pausen-Signal trotzdem kommt (v202)
   const tick = () => {
+    if (!draft) { clearInterval(trTimer); return; }
     const el = document.getElementById('tr-timer');
-    if (!el || !draft) { clearInterval(trTimer); return; }
-    el.textContent = fmtClock(Date.now() - Date.parse(draft.date));
+    if (el) el.textContent = fmtClock(Date.now() - Date.parse(draft.date));
+    restTick();
   };
   tick();
   trTimer = setInterval(tick, 1000);
+}
+
+/* ---------- Pausen-Timer (v202, User-Wunsch 2026-11-11) ---------- */
+// Nach jedem erledigten Satz (offen → erledigt) läuft oben im Training eine Pause nach Übungsart (REST_MIN wie bei der
+// Dauerschätzung); die Gesamtzeit läuft weiter. Nach dem letzten Satz des Trainings keine Pause.
+// draft.rest = { ei, end (ms), total (ms), signaled }. Einstellungen: profile.rest = { off, vib, sound, tone } – alles optional.
+const REST_LINGER = 6000;  // so lange steht „Pause vorbei“ noch da
+const REST_TONES = { beep: 'Piepen', gong: 'Gong', bell: 'Glocke', fanfare: 'Fanfare' };
+const restCfg = () => ({ off: false, vib: true, sound: false, tone: 'beep', ...((data.profile || {}).rest || {}) });
+function restStart(ei) {
+  if (restCfg().off || !draft) return;
+  if (trProgress().cur < 0) { delete draft.rest; return; }
+  const en = draft.entries[ei];
+  const min = REST_MIN[kindOf(planExercise(en.name) || { name: en.name })] || 3;
+  draft.rest = { ei, end: Date.now() + min * 60000, total: min * 60000 };
+  if (restCfg().sound) restAudio(true);  // im Tipp freischalten – das iPhone spielt Töne sonst später nicht ab
+}
+function restTick() {
+  const r = draft && draft.rest;
+  if (!r) return;
+  const left = r.end - Date.now();
+  // lange vorbei (z. B. App war im Hintergrund): still entfernen, kein verspätetes Signal
+  if (left <= -REST_LINGER) { delete draft.rest; saveDraft(); syncTrHead(); return; }
+  if (left <= 0) {
+    if (!r.signaled) { r.signaled = true; saveDraft(); restSignal(); syncTrHead(); }
+    return;
+  }
+  const t = document.getElementById('tr-rest-left'), b = document.getElementById('tr-rest-bar');
+  if (t) t.textContent = fmtClock(Math.ceil(left / 1000) * 1000);
+  if (b) b.style.width = Math.round(left / r.total * 100) + '%';
+}
+function restHtml() {
+  const r = draft && draft.rest;
+  if (!r) return '';
+  const left = r.end - Date.now();
+  if (left <= -REST_LINGER) return '';
+  if (left <= 0) {
+    return `<div class="trh-rest over"><span class="trh-rest-t">Pause vorbei – weiter geht’s 💪</span>
+      <button data-action="rest-skip">OK</button></div>`;
+  }
+  return `<div class="trh-rest"><span class="trh-rest-t">Pause <b id="tr-rest-left">${fmtClock(Math.ceil(left / 1000) * 1000)}</b></span>
+      <button data-action="rest-add" data-s="-30">−30 s</button><button data-action="rest-add" data-s="30">+30 s</button>
+      <button data-action="rest-skip">Weiter</button></div>
+    <div class="trh-bar rest"><i id="tr-rest-bar" style="width:${Math.round(left / r.total * 100)}%"></i></div>`;
+}
+// Signal am Ende: Vibration (nur Android – iPhone erlaubt Web-Apps keine Vibration) und/oder Ton
+function restSignal() {
+  const c = restCfg();
+  if (c.vib && navigator.vibrate) { try { navigator.vibrate([250, 120, 250]); } catch (e) { /* ohne */ } }
+  if (c.sound) restPlay(c.tone);
+}
+let restCtx = null;
+function restAudio(unlock) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!restCtx) restCtx = new AC();
+    if (restCtx.state === 'suspended') restCtx.resume();
+    if (unlock) {  // unhörbarer Mini-Ton im Tipp: schaltet die Wiedergabe frei
+      const o = restCtx.createOscillator(), g = restCtx.createGain();
+      g.gain.value = 0; o.connect(g); g.connect(restCtx.destination); o.start(); o.stop(restCtx.currentTime + 0.01);
+    }
+    return restCtx;
+  } catch (e) { return null; }
+}
+// Töne werden erzeugt (keine Dateien): je Ton eine Folge von Noten [Start s, Frequenz Hz, Dauer s, Wellenform, Lautstärke]
+function restPlay(tone) {
+  const c = restAudio();
+  if (!c) return;
+  const notes = {
+    beep: [[0, 880, .16, 'sine', .35], [.25, 880, .16, 'sine', .35], [.5, 1175, .3, 'sine', .35]],
+    gong: [[0, 196, 2.2, 'sine', .45], [0, 392, 1.6, 'sine', .25], [0, 588, 1.1, 'triangle', .12], [0, 987, .7, 'sine', .06]],
+    bell: [[0, 1318, 1.3, 'sine', .3], [0, 2637, .8, 'sine', .1], [.45, 1318, 1.3, 'sine', .3], [.45, 2637, .8, 'sine', .1]],
+    fanfare: [[0, 523, .14, 'square', .1], [.15, 659, .14, 'square', .1], [.3, 784, .14, 'square', .1], [.45, 1047, .45, 'square', .1]],
+  }[tone] || [];
+  const now = c.currentTime + .03;
+  for (const [t, f, d, type, vol] of notes) {
+    const o = c.createOscillator(), g = c.createGain(), s = now + t;
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(.0001, s);
+    g.gain.exponentialRampToValueAtTime(vol, s + .015);
+    g.gain.exponentialRampToValueAtTime(.0001, s + d);
+    o.connect(g); g.connect(c.destination);
+    o.start(s); o.stop(s + d + .05);
+  }
+}
+// Optionen: eigene Karte nach „Aussehen“
+function restCard() {
+  const c = restCfg();
+  const seg = (k, on, a, b) => `<div class="seg two"><button class="${on ? 'on' : ''}" data-action="rest-set" data-k="${k}" data-v="${k === 'off' ? 0 : 1}">${a}</button>
+    <button class="${on ? '' : 'on'}" data-action="rest-set" data-k="${k}" data-v="${k === 'off' ? 1 : 0}">${b}</button></div>`;
+  return `<div class="card rest-card">
+      <h2>Pausen-Timer</h2>
+      ${seg('off', !c.off, 'An', 'Aus')}
+      <p class="hint">Nach jedem erledigten Satz läuft oben im Training die Pause: Grundübungen 4, normale Übungen 3, Isolationsübungen
+        2 Minuten. Mit −30 s und +30 s passt du sie an, „Weiter“ beendet sie. Die Gesamtzeit läuft immer mit.</p>
+      ${c.off ? '' : `<p class="lbl">Vibration am Ende</p>${seg('vib', c.vib, 'An', 'Aus')}
+      <p class="lbl">Ton am Ende</p>${seg('sound', c.sound, 'An', 'Aus')}
+      ${c.sound ? `<div class="variants rest-tones">${Object.entries(REST_TONES).map(([k, l]) =>
+        `<button class="vchip ${c.tone === k ? 'on' : ''}" data-action="rest-tone" data-k="${k}">${l}</button>`).join('')}</div>
+        <p class="hint">Antippen spielt den Ton zur Probe. Lautstärke wie bei anderen Tönen am Handy – im Lautlos-Modus bleibt das iPhone stumm.</p>` : ''}
+      <p class="hint">Vibration gibt es nur auf Android – das iPhone erlaubt sie Web-Apps nicht. Ton und Vibration kommen, solange die App
+        geöffnet und der Bildschirm an ist.</p>`}
+    </div>`;
 }
 
 // Kopfleiste im Training (v200, User-Wunsch 2026-11-10): „Übung x von y · a von b Sätzen“, Balken, Uhr und Menü „⋯“.
@@ -2327,7 +2433,7 @@ function trHeadHtml() {
       <button class="trh-menu-btn" data-action="tr-menu" aria-label="Mehr" aria-expanded="${trMenuOpen}">⋯</button>
     </div>
     <div class="trh-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
-    ${trMenuOpen ? trMenuHtml() : ''}`;
+    ${restHtml()}${trMenuOpen ? trMenuHtml() : ''}`;
 }
 function trMenuHtml() {
   const lastDur = lastDuration(draft.dayId);
@@ -2602,7 +2708,8 @@ const views = {
   plan:     { title: 'Trainingsplan', tab: 'plan',    render: renderPlan },
   day:      { title: 'Trainingstag',  tab: 'plan',    back: 'plan', render: renderDay },
   history:  { title: 'Verlauf',       tab: 'history', render: renderHistory },
-  exercise: { title: p => p.name,     tab: 'history', back: p => [p.from || 'history', p.fromParams || {}], render: renderExercise },
+  exercise: { title: p => p.name,     tab: 'history', back: p => [p.from || 'history', p.fromParams || {}], render: renderExercise,
+    after: () => drawChart() },  // v203: Diagramm der Übung oben (charts.js)
   week:     { title: 'Trainingswoche', tab: 'start',  back: 'start', render: renderWeek },
   library:  { title: 'Übungsbibliothek', tab: 'plan', back: 'plan', render: renderLibrary },
   homeeq:   { title: 'Deine Ausrüstung', tab: 'plan', back: 'plan', render: () => renderHomeEq() },  // steht in wizard.js (später geladen)
@@ -2765,17 +2872,24 @@ function cycleCard(ci) {
         : 'Die App schlägt dir passende Werte vor.';
   const wp = weekProgression(roundKey(ci.cycleStart, ci.week));
   const off = ci.deload ? '' : progOffText({ ...wp, volume: wp.volume || ci.week === 1 });
-  return `<div class="card cycle ${ci.deload ? 'is-deload' : ''}">
-    <h2>${head}</h2>${cyclePills(ci, 'week-open')}
-    <p class="round-status">🔄 ${roundStatus(ci)}</p>
-    <p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()} – egal, wie viele Tage du dafür brauchst.</p>
+  // v201 (User-Wunsch 2026-11-11): zugeklappt nur Kopf, Wochen und Stand; Erklärung, offene Tage und „Zyklus anpassen“
+  // nach Antippen des Kopfes (profile.cycOpen wird gemerkt). Deload-Knopf und Progressions-Hinweis bleiben immer sichtbar.
+  const open = cycOpen();
+  const status = roundStatus(ci);
+  return `<div class="card cycle ${ci.deload ? 'is-deload' : ''} ${open ? 'open' : 'compact'}">
+    <div class="cyc-head" data-action="cyc-toggle" role="button" tabindex="0" aria-expanded="${open}">
+      <h2>${head}</h2><span class="chev" aria-hidden="true">▾</span></div>
+    ${cyclePills(ci, 'week-open')}
+    <p class="round-status">🔄 ${open ? status : status.split(' · offen: ')[0]}</p>
+    ${open ? `<p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()} – egal, wie viele Tage du dafür brauchst.</p>` : ''}
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
-      <p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>` : ''}
-    <p class="tap-hint">Woche antippen: Trainings ansehen – künftige Wochen zeigen, was geplant ist</p>
-    ${cycleAdjustHtml(ci)}
+      ${open ? '<p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>' : ''}` : ''}
+    ${open ? `<p class="tap-hint">Woche antippen: Trainings ansehen – künftige Wochen zeigen, was geplant ist</p>
+    ${cycleAdjustHtml(ci)}` : ''}
   </div>`;
 }
+const cycOpen = () => !!(data.profile && data.profile.cycOpen) || cycAdjustOpen;
 
 // Start-Bildschirm: Stillstand-Hinweise und Beschwerden dieses Zyklus
 function hintsCard() {
@@ -2933,7 +3047,7 @@ function timeLimitHtml() {
     return `<div class="time-strip"><span>⏱ <b>Zeitlimit ${tl.min} min</b> · ${tl.once ? 'nur nächstes Training' : 'bis du es änderst'}</span>
         <button class="btn small" data-action="time-open">Ändern</button><button class="btn small" data-action="time-off">Aus</button></div>`;
   }
-  return `<button class="btn outline time-btn" data-action="time-open">⏱ Wenig Zeit?<small>Training auf deine verfügbare Zeit kürzen</small></button>`;
+  return `<button class="btn outline time-btn" data-action="time-open">⏱ Wenig Zeit?<small>Training kürzen</small></button>`;
 }
 
 // Tage auslassen (ungeplante Pause): Auswahl der Tage, die in dieser Woche ohne Training als erledigt zählen.
@@ -2945,8 +3059,8 @@ function skipHtml(ci) {
   const cands = activeDays().filter(d => done.filter(s => s.dayId === d.id).length < dayTimes(d, ci.week));
   if (!cands.length) return '';
   if (!skipPick) {
-    return `<button class="btn outline skip-btn" data-action="skip-open">⏭ Tage auslassen
-      <small>Nach einer ungeplanten Pause mit einem anderen Tag weitermachen</small></button>`;
+    return `<button class="btn outline skip-btn" data-action="skip-open"><span class="ico">⏭</span> Tage auslassen
+      <small>nach einer Pause</small></button>`;
   }
   return `<div class="card skip-panel">
       <p><b>Welche Tage lässt du in dieser Woche aus?</b></p>
@@ -2960,8 +3074,21 @@ function skipHtml(ci) {
     </div>`;
 }
 
+// Startseite (v201, User-Wunsch 2026-11-11): höchstens EINE Hinweis-Karte gleichzeitig, die wichtigste zuerst –
+// die übrigen kommen nach Erledigen bzw. „Später“ der Reihe nach dran
+function startHintCard() {
+  for (const f of [storageWarnCard, iosMoveCard, backupCard, installCard, colorHintCard, modeUpCard]) {
+    const h = f();
+    if (h) return h;
+  }
+  return '';
+}
+
+// Reihenfolge (v201): Begrüßung → laufendes Training bzw. nächster Trainingstag → Zeitlimit (falls aktiv) → eine Hinweis-Karte →
+// Zyklus (zugeklappt) → Rückblick/Hinweise → Ernährung → weitere Trainingstage → „Wenig Zeit?“ und „Tage auslassen“ → Cardio
 function renderStart() {
-  let h = greeting() + storageWarnCard() + iosMoveCard() + installCard() + colorHintCard() + modeUpCard() + backupCard() + (hasActivePlan() ? cycleCard(cycleInfo()) : '') + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
+  const hint = startHintCard();
+  let h = greeting();
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -2970,7 +3097,7 @@ function renderStart() {
     </div>`;
   }
   if (!hasActivePlan()) {
-    return h + `<div class="card no-plan">
+    return h + hint + `<div class="card no-plan">
         <div class="check-emoji" aria-hidden="true">🏁</div>
         <h2>${data.plans.length ? 'Kein Plan aktiv' : 'Noch kein Plan'}</h2>
         <p class="hint">${data.plans.length ? 'Erstelle einen neuen Plan oder aktiviere einen bisherigen im Reiter „Plan“. Deine Trainings und Erfolge bleiben erhalten.'
@@ -2980,12 +3107,9 @@ function renderStart() {
       </div>`;
   }
   if (!data.days.length) {
-    return h + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
+    return h + hint + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
       <button class="btn primary" data-action="tab" data-tab="plan">Trainingsplan anlegen</button>`;
   }
-  h += nutStartLine();  // Ernährungsphase kurz anzeigen (nutrition.js)
-  h += `<h2>Welcher Trainingstag? <small class="hint">· ${esc(activePlan().name)}</small></h2>`;
-  if (!draft) h += timeLimitHtml();
   const limit = data.timeLimit && data.timeLimit.min;
   const sessions = sessionsNewestFirst();
   // als Nächstes dran: der nächste noch offene Tag des Durchlaufs, gezählt ab dem zuletzt trainierten Tag
@@ -2996,12 +3120,11 @@ function renderStart() {
   const order = data.days.map((_, i) => data.days[(from + i) % data.days.length]);
   const nextDay = !draft ? order.find(d => open.has(d.id)) : null;
   const skippedIds = roundSkipped(ci.cycleStart, ci.week);
-  data.days.forEach((day, i) => {
+  const dayBtn = (day, i) => {
     // noch nicht erstellter Tag (User-Wunsch 2026-11-10): Hinweis statt Training, antippen = Übungen eintragen
     if (!day.exercises.some(e => e.name.trim())) {
-      h += `<button class="btn nav day-btn pending" data-action="own-resume" data-id="${day.id}">
+      return `<button class="btn nav day-btn pending" data-action="own-resume" data-id="${day.id}">
         <span class="day-no">⏳</span><span class="day-txt">${esc(day.name)}<small>Noch nicht erstellt – antippen, um die Übungen einzutragen</small></span></button>`;
-      return;
     }
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
@@ -3014,12 +3137,31 @@ function renderStart() {
     const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (estTxt ? ` · ${estTxt}` : '') +
       (last ? ` · zuletzt ${fmtDate(last.date)}` : '') + (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     const next = day === nextDay;
-    h += `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''} ${skipped ? 'skipped' : ''}" data-action="start-day" data-id="${day.id}">
+    return `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''} ${skipped ? 'skipped' : ''}" data-action="start-day" data-id="${day.id}">
       <span class="day-no">${skipped ? '⏭' : done ? '✓' : i + 1}</span>
       <span class="day-txt">${next ? '<span class="badge next-badge">▶ Steht als Nächstes an</span>' : ''}${esc(day.name)}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
         : done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
-  });
-  if (!draft) h += skipHtml(ci);
+  };
+  // 1. nächster Tag ganz oben (bei laufendem Training steht dort die Karte „Fortsetzen“)
+  if (nextDay) h += dayBtn(nextDay, data.days.indexOf(nextDay));
+  // Zeitlimit: aktiv bzw. in Bearbeitung direkt unter dem nächsten Tag, sonst als kleiner Knopf unten
+  const tlShown = !draft && (timeEdit || limit);
+  if (tlShown) h += timeLimitHtml();
+  // 2. eine Hinweis-Karte, 3. Zyklus und Co.
+  h += hint + cycleCard(ci) + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
+  h += nutStartLine();  // Ernährungsphase kurz anzeigen (nutrition.js)
+  // 4. übrige Tage
+  const rest = data.days.filter(d => d !== nextDay);
+  if (rest.length) {
+    h += `<h2 class="start-days-h">${nextDay ? 'Weitere Trainingstage' : 'Welcher Trainingstag?'} <small class="hint">· ${esc(activePlan().name)}</small></h2>`
+      + rest.map(d => dayBtn(d, data.days.indexOf(d))).join('');
+  }
+  // 5. kleine Knöpfe „Wenig Zeit?“ und „Tage auslassen“ nebeneinander (aufgeklappte Auswahl darunter in voller Breite)
+  if (!draft) {
+    const tb = tlShown ? '' : timeLimitHtml(), sk = skipHtml(ci);
+    if (skipPick) h += (tb ? `<div class="start-mini">${tb}</div>` : '') + sk;
+    else if (tb || sk) h += `<div class="start-mini">${tb}${sk}</div>`;
+  }
   if (typeof cardioStartHtml === 'function') h += `<h2>Cardio</h2>${cardioStartHtml()}`;
   return h;
 }
@@ -3983,8 +4125,9 @@ const sessionBtn = s => `<button class="btn nav" data-action="open-session" data
 function renderHistory() {
   const cardio = typeof cardioStartHtml === 'function' ? cardioStartHtml() : '';
   const cardioList = typeof data.cardio !== 'undefined' ? data.cardio : [];
+  const seg = typeof histSegHtml === 'function' ? histSegHtml('cal') : '';  // v203: Kalender | Übungen | Statistik | Erfolge
   if (!data.sessions.length && !cardioList.length) {
-    return cardio + '<p class="hint">Noch keine Trainings gespeichert.</p>';
+    return seg + cardio + '<p class="hint">Noch keine Trainings gespeichert.</p>';
   }
   const byDay = new Map();
   for (const s of sessionsNewestFirst()) {
@@ -3994,7 +4137,7 @@ function renderHistory() {
   }
   const icon = c => (typeof CARDIO_TYPES !== 'undefined' && (CARDIO_TYPES[c.type] || CARDIO_TYPES.other).icon) || '🏃';
   const st = calGet('hist');
-  let h = calendarHtml('hist', iso => {
+  let h = seg + calendarHtml('hist', iso => {
     const ss = byDay.get(iso) || [], cs = cardioList.filter(c => c.date === iso);
     if (!ss.length && !cs.length) return null;
     return { cls: ss.length ? (ss.every(s => s.deload) ? 'tr dl' : 'tr') : 'cd', sub: cs.length ? icon(cs[0]) : '' };
@@ -4015,23 +4158,8 @@ function renderHistory() {
   h += `<h2>${MONTHS_DE[m - 1]}: ${inMonth.length} Training${inMonth.length === 1 ? '' : 's'}${cdMonth.length ? ` · ${cdMonth.length}× Cardio` : ''}</h2>`;
   h += inMonth.length ? inMonth.map(sessionBtn).join('') : '<p class="hint">In diesem Monat keine Trainings.</p>';
   h += `<h2>Cardio</h2>${cardio}`;
-
-  // Übungen nach Namen zusammenfassen
-  const map = new Map();
-  for (const s of sessionsNewestFirst()) {
-    for (const e of s.entries) {
-      const k = nameKey(e.name);
-      if (!map.has(k)) map.set(k, { name: e.name, count: 0, last: s.date });
-      map.get(k).count++;
-    }
-  }
-  const exercises = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
   h += typeof reviewHistoryHtml === 'function' ? reviewHistoryHtml() : '';  // Zyklus-Rückblicke (charts.js)
-  if (feat('ex-history') && exercises.length) h += '<h2>Übungen</h2>';
-  for (const ex of feat('ex-history') ? exercises : []) {
-    h += `<button class="btn nav" data-action="open-exercise" data-name="${esc(ex.name)}">
-      ${esc(ex.name)}<small>${ex.count}× trainiert · zuletzt ${fmtDate(ex.last)}</small></button>`;
-  }
+  // die Übungsliste steht seit v203 im Bereich „Übungen“ (charts.js, histExListHtml)
   return h;
 }
 
@@ -4049,15 +4177,19 @@ function renderExercise({ name }) {
     ? `<p class="sub">Höchstes Gewicht: <b>${fmtNum(Math.max(...weights))} kg</b> · ${rows.length} Trainings</p>`
     : '';
   if (libEntry(name)) h += `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(name)}">ⓘ Ausführung ansehen</button>`;
-  h += exRename === name ? renameFormHtml(name)
-    : `<button class="btn outline" data-action="ex-rename-open" data-name="${esc(name)}">✎ Übung umbenennen</button>`;
+  // v203: Diagramm oben, darunter alle Einträge (früher zwei getrennte Seiten)
+  if (weights.length && typeof exChartHtml === 'function') h += exChartHtml(name);
+  h += `<h2 class="ex-list-h">Alle Einträge</h2>`;
   h += '<ul class="list">';
   for (const r of rows) {
     h += `<li><div class="date">${fmtDate(r.session.date)} <small>${esc(r.session.dayName)}</small></div>
       <div class="sets">${sessionPbHtml(r.session, r.entry)}</div>
       ${r.comment ? `<div class="comment-text">💬 ${esc(r.comment)}</div>` : ''}</li>`;
   }
-  return h + '</ul>';
+  h += '</ul>';
+  // Umbenennen selten gebraucht -> ans Ende (v203)
+  return h + (exRename === name ? renameFormHtml(name)
+    : `<button class="btn outline" data-action="ex-rename-open" data-name="${esc(name)}">✎ Übung umbenennen</button>`);
 }
 
 /* ---------- Übungsbibliothek ---------- */
@@ -4592,7 +4724,7 @@ function prefatHelpHtml() {
 }
 
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + restCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -5576,7 +5708,12 @@ function moveExercise(day, i, dir) {
 
 const actions = {
   // Reiterwechsel: Zeitfenster und Auswahl im Diagramm zurücksetzen (Diagramme und Ernährung teilen sie sich)
-  tab: el => { Object.assign(chartState, { end: null, sel: null }); go(el.dataset.tab); },
+  tab: el => {
+    Object.assign(chartState, { end: null, sel: null });
+    // Verlauf: zuletzt offener Bereich (Kalender, Übungen, Statistik, Erfolge – v203)
+    if (el.dataset.tab === 'history' && typeof goHist === 'function') { goHist((data.profile || {}).histTab); return; }
+    go(el.dataset.tab);
+  },
   // back: Name der Ansicht oder Funktion (params) => [Ansicht, params]
   cancel: () => {
     const c = viewCancel();
@@ -5801,6 +5938,29 @@ const actions = {
   },
   // Kopfleiste im Training (v200)
   'tr-menu': () => { trMenuOpen = !trMenuOpen; syncTrHead(); },
+  // Pausen-Timer (v202)
+  'rest-add': el => {
+    const r = draft && draft.rest;
+    if (!r) return;
+    r.end += Number(el.dataset.s) * 1000;
+    if (r.end <= Date.now()) delete draft.rest;  // auf 0 gekürzt = Pause beenden, ohne Signal
+    else r.total = Math.max(r.total, r.end - Date.now());
+    saveDraft(); syncTrHead();
+  },
+  'rest-skip': () => { if (draft) { delete draft.rest; saveDraft(); syncTrHead(); } },
+  'rest-set': el => {
+    const r = { ...restCfg(), [el.dataset.k]: el.dataset.v === '1' };
+    data.profile = { ...(data.profile || {}), rest: r };
+    if (el.dataset.k === 'sound' && r.sound) { restAudio(true); restPlay(r.tone); }
+    if (el.dataset.k === 'vib' && r.vib && navigator.vibrate) { try { navigator.vibrate(200); } catch (e) { /* ohne */ } }
+    if (r.off && draft) { delete draft.rest; saveDraft(); }
+    saveData(); render();
+  },
+  'rest-tone': el => {
+    data.profile = { ...(data.profile || {}), rest: { ...restCfg(), tone: el.dataset.k } };
+    restAudio(true); restPlay(el.dataset.k);
+    saveData(); render();
+  },
   'tr-jump': () => {
     const { cur } = trProgress();
     if (cur < 0) { actions['tr-to-save'](); return; }
@@ -6164,6 +6324,13 @@ const actions = {
   'cycle-weeks': el => applyCycleLen(data.cycle.defWeeks + Number(el.dataset.delta)),
   // Laufenden Zyklus anpassen (Urlaub …): verlängern / verkürzen / beenden
   'cyc-adjust-open': () => { cycAdjustOpen = !cycAdjustOpen; cycEndAsk = false; cycLenScope = null; render(); },
+  // Zyklus-Karte auf dem Start auf-/zuklappen (v201), Stand wird gemerkt
+  'cyc-toggle': () => {
+    const open = !cycOpen();
+    data.profile = data.profile || {}; data.profile.cycOpen = open;
+    if (!open) { cycAdjustOpen = false; cycEndAsk = false; }
+    saveData(); render();
+  },
   'cyc-adj': el => {
     const d = Number(el.dataset.d);
     if (el.dataset.scope === 'all') {
@@ -6569,9 +6736,11 @@ const fields = {
   'tr-reps': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     if (s.refR === undefined) s.refR = s.reps;
+    const was = isDone(s);
     s.reps = el.value;
     s.auto = false;  // selbst geändert -> nicht mehr automatisch überschreiben
     s.touched = true;
+    if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
     saveDraft();
   },
@@ -6603,9 +6772,11 @@ const fields = {
   'time-min': el => { if (timeEdit) timeEdit.min = el.value; },
   'tr-rir': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
+    const was = isDone(s);
     s.rir = el.value;
     delete s.open;
     s.touched = true;
+    if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
     saveDraft();
   },
@@ -6704,8 +6875,9 @@ function swipeView(dir, click) {
     if (i >= 0 && to) go('day', { id: to.id });
     return;
   }
-  if (v === 'charts') {
-    const tabs = [...$view.querySelectorAll('.seg.grid.two [data-action="chart-mode"]')];
+  // Verlauf (v203): zwischen Kalender, Übungen, Statistik und Erfolge wischen
+  if (v === 'charts' || v === 'history') {
+    const tabs = [...$view.querySelectorAll('.hist-seg [data-action="hist-sec"]')];
     const i = tabs.findIndex(b => b.classList.contains('on')), to = tabs[i + dir];
     if (to) to.click();
     return;

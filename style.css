@@ -2618,3 +2618,43 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .setno.done { background: var(--success-soft); color: var(--success); }
 [data-look="plain"] .det-btn, [data-look="plain"] .trh-time b { color: var(--text); }
 [data-look="plain"] .det-btn { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+/* ---------- Startseite (v201): Zyklus-Karte zuklappbar, kleine Knöpfe nebeneinander ---------- */
+.cyc-head { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; cursor: pointer; }
+.card.cycle .cyc-head h2 { margin: 0; }
+.cyc-head .chev { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(255, 255, 255, .2);
+  font-size: 15px; transition: transform .2s; }
+.card.cycle.open .cyc-head .chev { transform: rotate(180deg); }
+.card.cycle.compact { padding: 16px 18px 14px; }
+.card.cycle.compact .round-status { margin: 0; }
+.card.cycle.compact .pills { margin-bottom: 10px; }
+.start-days-h { margin-top: 18px; }
+.start-mini { display: flex; gap: 8px; margin: 6px 0 14px; }
+.start-mini .btn { flex: 1; min-width: 0; margin: 0; min-height: 56px; padding: 8px 10px; font-size: 16px; }
+.start-mini .btn small { font-size: 12.5px; }
+[data-look="plain"] .start-mini .ico { display: none; }
+
+/* ---------- Pausen-Timer (v202): Zusatzzeile in der Kopfleiste ---------- */
+.trh-rest { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 6px 6px 12px; border-radius: 14px; background: var(--accent-soft); }
+.trh-rest-t { flex: 1; min-width: 0; font-size: 15px; font-weight: 650; color: var(--accent-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trh-rest-t b { font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.trh-rest button { flex: none; min-height: 36px; padding: 0 10px; border: 0; border-radius: 10px; background: var(--card); color: var(--text);
+  font: inherit; font-size: 14px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.trh-rest button[data-action="rest-skip"] { background: var(--accent); color: #fff; }
+.trh-rest.over { background: var(--success-soft); animation: rest-pop .5s ease-out; }
+.trh-rest.over .trh-rest-t { color: var(--success); }
+.trh-rest.over button { background: var(--success); color: #fff; }
+.trh-bar.rest { height: 4px; margin-top: 5px; }
+.trh-bar.rest i { background: var(--accent); transition: width 1s linear; }
+@keyframes rest-pop { 0% { transform: scale(.96); } 60% { transform: scale(1.02); } 100% { transform: scale(1); } }
+.rest-card .lbl { margin-top: 14px; }
+.rest-tones { margin: 10px 0 4px; }
+.rest-tones .vchip { flex: 1 1 40%; }
+[data-look="plain"] .trh-rest { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+[data-look="plain"] .trh-rest-t, [data-look="plain"] .trh-rest.over .trh-rest-t { color: var(--text); }
+[data-look="plain"] .trh-rest button { box-shadow: inset 0 0 0 1px var(--line); }
+/* ---------- Verlauf mit vier Bereichen (v203) ---------- */
+.hist-seg button { min-height: 42px; padding: 0 2px; font-size: 15px; white-space: nowrap; }
+.hist-seg button.on::before { content: none; }
+.stat-seg { margin-top: 0; }
+.hist-ex-q { margin-bottom: 4px; }
+.ex-list-h { margin-top: 22px; }
