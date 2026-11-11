@@ -2658,3 +2658,16 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .stat-seg { margin-top: 0; }
 .hist-ex-q { margin-bottom: 4px; }
 .ex-list-h { margin-top: 22px; }
+/* ---------- Scheiben-Rechner, Körpermaße, Was ist neu (v204) ---------- */
+.plates-line { margin: -2px 0 10px; padding: 6px 10px; border-radius: 10px; background: var(--fill); font-size: 14.5px; line-height: 1.35; color: var(--muted); }
+.plates-line b { color: var(--text); font-weight: 700; }
+.plate-chips .vchip { flex: 1 1 20%; min-width: 0; padding: 0 6px; }
+.plate-chips .vchip.on::before { content: none; }
+.plates-card .lbl, .rest-card .lbl { margin-top: 14px; }
+.meas-form .row span small { display: block; font-size: 13px; font-weight: 500; color: var(--muted); }
+.meas-pick { margin: 0 0 4px; }
+.meas-row span { flex: 1; min-width: 0; }
+.meas-row span small { display: block; margin-top: 2px; font-size: 14px; color: var(--muted); }
+.wn-list { margin: 6px 0 12px; padding-left: 20px; font-size: 16px; line-height: 1.45; }
+.wn-list li { margin: 0 0 8px; }
+.wn-opt .wn-v { margin: 14px 0 2px; }

@@ -122,6 +122,7 @@ function upgradeData(d) {
 
   if (!Array.isArray(d.bodyweight)) d.bodyweight = [];  // [{ id, date, kg }]
   if (!Array.isArray(d.steps)) d.steps = [];            // [{ date: JJJJ-MM-TT, steps }]
+  if (!Array.isArray(d.measures)) d.measures = [];      // Körpermaße (v204): [{ id, date: JJJJ-MM-TT, v: { waist, hip, … } }] in cm
   if (!Array.isArray(d.complaints)) d.complaints = [];  // [{ cycleStart, date, areas: [...] }], einmal pro Zyklus
   if (!d.hintsDismissed) d.hintsDismissed = {};         // Übung -> Zyklus, in dem der Stillstand-Hinweis weggeklickt wurde
   if (!d.cycleShift) d.cycleShift = {};
@@ -2653,7 +2654,7 @@ function warmupBlock(en, ei) {
     </div>`;
   if (kind === 'barbell' && work) {
     h += `<div class="warm-row work"><b>Arbeitssatz ${fmtNum(work)} kg</b><span>${platesPerSide(work)}</span></div>
-      <small>Rechts: Scheiben pro Seite (Stange ${BAR_KG} kg)</small>`;
+      <small>Rechts: Scheiben pro Seite (Stange ${barKg()} kg)</small>`;
   } else {
     h += `<small>Zählt nicht als Arbeitssatz. Änderungen merkt sich die App fürs nächste Mal.</small>`;
   }
@@ -2667,9 +2668,10 @@ const warmupForSession = en => en.warmup
 
 // Stange, dann +20 kg, bis der Abstand zum Arbeitssatz unter 20 kg liegt, dann noch einmal +10 kg
 function warmupSets(work) {
-  if (!work || work <= BAR_KG) return [];
-  const list = [BAR_KG];
-  let w = BAR_KG;
+  const bar = barKg();
+  if (!work || work <= bar) return [];
+  const list = [bar];
+  let w = bar;
   while (work - w >= 20 && w + 20 < work) { w += 20; list.push(w); }
   if (w + 10 < work) list.push(w + 10);
   return list;
@@ -2677,17 +2679,53 @@ function warmupSets(work) {
 
 // Wiederholungen beim Aufwärmen: Stange 10, danach weniger, je näher am Arbeitsgewicht
 function warmupReps(w, work) {
-  if (w <= BAR_KG) return 10;
+  if (w <= barKg()) return 10;
   const p = w / work;
   return p <= 0.5 ? 8 : p <= 0.7 ? 5 : p <= 0.85 ? 3 : 2;
 }
 
+// Scheiben-Rechner (v204, User-Wunsch 2026-11-11): Stange und vorhandene Scheiben einstellbar (profile.plates = { bar, have })
+const PLATE_ALL = [25, 20, 15, 10, 5, 2.5, 1.25, 0.5];
+const BAR_OPTS = [20, 15, 10];
+const barKg = () => { const b = ((data.profile || {}).plates || {}).bar; return BAR_OPTS.includes(b) ? b : BAR_KG; };
+const platesHave = () => {
+  const h = ((data.profile || {}).plates || {}).have;
+  return Array.isArray(h) && h.length ? PLATE_ALL.filter(p => h.includes(p)) : PLATES;
+};
+const isBarbellEx = en => /langhantel/.test(norm(en.name));
+// Zeile im Training: Scheiben für den nächsten offenen Satz (alle erledigt: letzter Satz)
+function platesLineText(en) {
+  const s = en.sets.find(x => !isDone(x)) || en.sets[en.sets.length - 1];
+  const w = s && parseNum(s.weight);
+  return w ? `🏋️ Scheiben je Seite (${fmtNum(w)} kg): <b>${platesPerSide(w)}</b>` : '';
+}
+function platesSync(ei) {
+  const el = $view.querySelector(`[data-plates-line="${ei}"]`);
+  if (!el) return;
+  const t = platesLineText(draft.entries[ei]);
+  el.innerHTML = t;
+  el.hidden = !t;
+}
+// Optionen: Stange und Scheiben
+function platesCard() {
+  const bar = barKg(), have = platesHave();
+  return `<div class="card plates-card">
+      <h2>Langhantel</h2>
+      <p class="lbl">Stange</p>
+      <div class="seg three">${BAR_OPTS.map(b => `<button class="${bar === b ? 'on' : ''}" data-action="plates-bar" data-v="${b}">${b} kg</button>`).join('')}</div>
+      <p class="lbl">Deine Scheiben</p>
+      <div class="variants plate-chips">${PLATE_ALL.map(p => `<button class="vchip ${have.includes(p) ? 'on' : ''}" data-action="plates-toggle" data-v="${p}">${fmtNum(p)}</button>`).join('')}</div>
+      <p class="hint">Danach rechnet die App bei Langhantel-Übungen aus, welche Scheiben auf jede Seite gehören – im Training und beim Aufwärmen.
+        Passt es nicht genau, steht der Rest in Klammern.</p>
+    </div>`;
+}
+
 // Scheiben pro Seite, z. B. 80 kg -> „25 + 5“
 function platesPerSide(total) {
-  let rest = Math.round((total - BAR_KG) / 2 * 100) / 100;
+  let rest = Math.round((total - barKg()) / 2 * 100) / 100;
   if (rest <= 0) return 'nur Stange';
   const out = [];
-  for (const p of PLATES) {
+  for (const p of platesHave()) {
     while (rest >= p - 1e-9) { out.push(p); rest = Math.round((rest - p) * 100) / 100; }
   }
   return out.map(fmtNum).join(' + ') + (rest > 0 ? ` (+ ${fmtNum(rest)})` : '');
@@ -3077,7 +3115,7 @@ function skipHtml(ci) {
 // Startseite (v201, User-Wunsch 2026-11-11): höchstens EINE Hinweis-Karte gleichzeitig, die wichtigste zuerst –
 // die übrigen kommen nach Erledigen bzw. „Später“ der Reihe nach dran
 function startHintCard() {
-  for (const f of [storageWarnCard, iosMoveCard, backupCard, installCard, colorHintCard, modeUpCard]) {
+  for (const f of [storageWarnCard, iosMoveCard, whatsNewCard, backupCard, installCard, colorHintCard, modeUpCard]) {
     const h = f();
     if (h) return h;
   }
@@ -3283,6 +3321,11 @@ function renderTraining() {
         const parts = [pi.same ? `${pi.same} ${pi.same === 1 ? 'Satz' : 'Sätze'} ${MUSCLES[pi.g] || ''}` : '', pi.help ? `${pi.help} ${pi.help === 1 ? 'Satz' : 'Sätze'} für Hilfsmuskeln` : ''].filter(Boolean);
         h += `<p class="prefat-note">💤 Vorermüdet: ${parts.join(' und ')} vorher – die App rechnet mit etwa ${Math.round(t.fat * 100)} % weniger Kraft als frisch.</p>`;
       }
+    }
+    // Scheiben-Rechner (v204): bei Langhantel-Übungen immer sichtbar, rechnet beim Eintippen mit (platesSync)
+    if (!body && isBarbellEx(en)) {
+      const pt = platesLineText(en);
+      h += `<p class="plates-line" data-plates-line="${ei}"${pt ? '' : ' hidden'}>${pt}</p>`;
     }
     // Max. bei 10 Wdh., Steigerung und Ausführung kompakt nebeneinander; die Auswahl klappt darunter auf
     const t = en.target;
@@ -4724,7 +4767,7 @@ function prefatHelpHtml() {
 }
 
 function renderData() {
-  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + restCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
+  return modeCard() + (typeof tourCard === 'function' ? tourCard() : '') + hintOffCard() + appearanceCard() + restCard() + platesCard() + profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : '') + `<div class="card">
       <h2>Deine Daten</h2>
       <p>${data.days.length} Trainingstage · ${data.sessions.length} gespeicherte Trainings</p>
       <p class="hint">Alles wird nur auf diesem Gerät gespeichert. Mach regelmäßig eine Sicherung, z. B. in der Dateien-App oder iCloud Drive.</p>
@@ -4747,10 +4790,72 @@ function renderData() {
     <h2>Daten löschen</h2>
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
-    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht, Körpermaße und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    ${whatsNewOptionsCard()}
     <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>
 `;
+}
+
+/* ---------- Was ist neu (v204, User-Wunsch 2026-11-11) ---------- */
+// Je Version mit sichtbarer Änderung ein Eintrag OBEN ergänzen (v = CACHE-Nummer in sw.js), Alltagssprache, kurz.
+// Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
+// data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
+const CHANGES = [
+  { v: 204, date: '2026-11-11', items: [
+    ['Scheiben-Rechner: Bei Langhantel-Übungen steht im Training, welche Scheiben auf jede Seite gehören. Stange und deine Scheiben stellst du unter Optionen → Langhantel ein.'],
+    ['Körpermaße: Unter Ernährung trägst du Taille, Hüfte, Brust und mehr ein – mit Verlauf.'],
+  ] },
+  { v: 203, date: '2026-11-11', items: [
+    ['Diagramme, Statistik und Erfolge stehen jetzt im Verlauf. Eine Übung zeigt Diagramm und alle Sätze auf einer Seite – unten sind es nur noch fünf Reiter.'],
+  ] },
+  { v: 202, date: '2026-11-11', items: [
+    ['Pausen-Timer: Nach jedem Satz läuft oben die Pause – auf Wunsch mit Vibration oder Ton (Optionen → Pausen-Timer).'],
+  ] },
+  { v: 201, date: '2026-11-11', items: [
+    ['Startseite aufgeräumt: Der nächste Trainingstag steht ganz oben, die Zyklus-Karte klappt auf, wenn du sie antippst.'],
+  ] },
+  { v: 200, date: '2026-11-10', items: [
+    ['Training kompakter: Oben siehst du, bei welcher Übung du bist. Mehr zu jeder Übung steht unter „Details“, erledigte Sätze werden grün.'],
+  ] },
+  { v: 199, date: '2026-11-10', items: [
+    ['Tank-Vorgaben je Satz als ganze Zahlen, von Satz zu Satz absteigend (z. B. 2 · 2 · 1). Alle Pläne gehen dabei etwas näher ans Muskelversagen.', 'tr-rir-input'],
+    ['Die Sätze gehen jetzt etwas näher an „ging nichts mehr“ – die letzten Sätze einer Übung dürfen richtig hart sein.', '!tr-rir-input'],
+  ] },
+  { v: 198, date: '2026-11-10', items: [
+    ['Neuer Hinweis „Zum Home-Bildschirm“: Als App auf dem Home-Bildschirm bleiben deine Daten auf dem iPhone sicher gespeichert.'],
+  ] },
+  { v: 197, date: '2026-11-10', items: [
+    ['Sicherungen lassen sich freiwillig mit einem Passwort verschlüsseln (Optionen → Deine Daten).'],
+  ] },
+];
+const APP_V = CHANGES[0].v;
+const WN_BASE = 196;  // letzte Version ohne „Was ist neu“
+const wnShow = f => !f || (f[0] === '!' ? !feat(f.slice(1)) : feat(f));
+const whatsNewItems = from => CHANGES.filter(c => c.v > from).flatMap(c => c.items.filter(([, f]) => wnShow(f)).map(([t]) => t));
+function whatsNewInit() {
+  if (data.seenV != null) return;
+  data.seenV = hasOwnData() ? WN_BASE : APP_V;
+  saveData();
+}
+// Startseite: einmal nach einem Update (Teil der Hinweis-Karten, eine gleichzeitig)
+function whatsNewCard() {
+  if (data.seenV == null || data.seenV >= APP_V) return '';
+  const items = whatsNewItems(data.seenV);
+  if (!items.length) return '';
+  const show = items.slice(0, 5);
+  return `<div class="card hints whats-new"><p><b>✨ Neu in der App</b></p>
+      <ul class="wn-list">${show.map(t => `<li>${t}</li>`).join('')}</ul>
+      ${items.length > show.length ? `<p class="hint">… und ${items.length - show.length} weitere – alle unter Optionen → „Was ist neu“.</p>` : ''}
+      <button class="btn primary" data-action="wn-ok">Alles klar</button></div>`;
+}
+// Optionen: alle Neuerungen zum Nachlesen
+function whatsNewOptionsCard() {
+  return `<details class="card about-sec wn-opt"><summary><b>✨ Was ist neu</b></summary>
+      ${CHANGES.map(c => {
+        const items = c.items.filter(([, f]) => wnShow(f));
+        return items.length ? `<p class="lbl wn-v">Version ${c.v} · ${fmtDate(c.date + 'T12:00:00')}</p><ul class="wn-list">${items.map(([t]) => `<li>${t}</li>`).join('')}</ul>` : '';
+      }).join('')}</details>`;
 }
 
 // App-Version = Name des Offline-Speichers (CACHE in sw.js), z. B. „Version 82“ – zum Prüfen, ob ein Update angekommen ist
@@ -5601,6 +5706,7 @@ function importData(file) {
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
       cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV, rirV: d.rirV,
+      measures: Array.isArray(d.measures) ? d.measures : [],
     });
     registerCustomExercises();
     prefatMigrate();  // ältere Sicherung: Max.-Werte auf frisch umrechnen
@@ -5954,6 +6060,19 @@ const actions = {
     if (el.dataset.k === 'sound' && r.sound) { restAudio(true); restPlay(r.tone); }
     if (el.dataset.k === 'vib' && r.vib && navigator.vibrate) { try { navigator.vibrate(200); } catch (e) { /* ohne */ } }
     if (r.off && draft) { delete draft.rest; saveDraft(); }
+    saveData(); render();
+  },
+  'wn-ok': () => { data.seenV = APP_V; saveData(); render(); },
+  // Scheiben-Rechner (v204)
+  'plates-bar': el => {
+    data.profile = { ...(data.profile || {}), plates: { have: platesHave(), ...((data.profile || {}).plates || {}), bar: Number(el.dataset.v) } };
+    saveData(); render();
+  },
+  'plates-toggle': el => {
+    const p = Number(el.dataset.v), have = platesHave();
+    const next = have.includes(p) ? have.filter(x => x !== p) : [...have, p];
+    if (!next.length) { toast('Mindestens eine Scheibe muss ausgewählt sein'); return; }
+    data.profile = { ...(data.profile || {}), plates: { bar: barKg(), have: PLATE_ALL.filter(x => next.includes(x)) } };
     saveData(); render();
   },
   'rest-tone': el => {
@@ -6615,7 +6734,7 @@ const actions = {
   'reset-trainings': () => {
     if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
     if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
-    Object.assign(data, { sessions: [], bodyweight: [], steps: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
+    Object.assign(data, { sessions: [], bodyweight: [], steps: [], measures: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
     setRound(todayISO(), 1, 1);
@@ -6731,6 +6850,7 @@ const fields = {
     s.manualWeight = true;  // selbst gewähltes Gewicht -> nur noch Wdh. anpassen
     s.touched = true;
     recalcSets(+el.dataset.ei);
+    platesSync(+el.dataset.ei);
     saveDraft();
   },
   'tr-reps': el => {
@@ -6742,6 +6862,7 @@ const fields = {
     s.touched = true;
     if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
+    platesSync(+el.dataset.ei);
     saveDraft();
   },
   // Aufwärmsätze: selbst geändert -> folgt nicht mehr automatisch dem Arbeitssatz, wird gemerkt
@@ -6778,6 +6899,7 @@ const fields = {
     s.touched = true;
     if (!was && isDone(s)) restStart(+el.dataset.ei);  // Satz gerade erledigt -> Pause (v202)
     recalcSets(+el.dataset.ei);
+    platesSync(+el.dataset.ei);
     saveDraft();
   },
 };
@@ -7327,6 +7449,7 @@ async function boot() {
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
   prefatMigrate();
   rirMigrate();  // v199: Tank-Ziele bestehender Pläne −0,5
+  whatsNewInit();  // v204: „Was ist neu“ – neue Nutzer ohne Karte, bisherige ab v197
   render();
   showWelcome();
 }

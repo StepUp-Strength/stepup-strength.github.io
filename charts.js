@@ -14,7 +14,8 @@ const chartState = { mode: 'ex', name: '', metric: 'weight', variant: '', withDe
 let chartGeo = null;  // Geometrie der zuletzt gezeichneten Grafik (für Antippen und Ziehen)
 // Das Körpergewicht wird im Ernährungs-Reiter gezeichnet, eine Übung auf ihrer Seite (exercise), alles andere im Verlauf
 // (seit v203 kein eigener Reiter „Diagramme“ mehr)
-const chartMode = () => current.view === 'nutrition' ? 'bw' : current.view === 'exercise' ? 'ex' : chartState.mode;
+const chartMode = () => current.view === 'nutrition' ? 'bw' : current.view === 'exercise' ? 'ex'
+  : current.view === 'measures' ? 'meas' : chartState.mode;
 
 const todayISO = () => new Date().toLocaleDateString('sv-SE');  // JJJJ-MM-TT
 const round1 = x => Math.round(x * 10) / 10;
@@ -361,6 +362,12 @@ function chartPoints() {
       .map(b => ({ t: Date.parse(b.date), v: b.kg, unit: 'kg' }))
       .sort((a, b) => a.t - b.t);
   }
+  if (chartMode() === 'meas') {
+    const k = chartState.meas;
+    return data.measures.filter(m => m.v && m.v[k] != null)
+      .map(m => ({ t: Date.parse(m.date + 'T12:00:00'), v: m.v[k], unit: 'cm' }))
+      .sort((a, b) => a.t - b.t);
+  }
   const k = nameKey(chartState.name);
   if (!k) return [];
   const pts = [];
@@ -438,6 +445,7 @@ function drawChart() {
       ? 'Noch kein Körpergewicht eingetragen.'
       : chartMode() === 'ton' ? 'Noch keine Trainings gespeichert.'
       : chartMode() === 'steps' ? 'Noch keine Schritte eingetragen.'
+      : chartMode() === 'meas' ? 'Für dieses Maß gibt es noch keine Werte.'
       : 'Für diese Übung gibt es noch keine Trainings mit Werten.'}</p>`;
     extra.innerHTML = '';
     updateRangeControls(null);
@@ -463,7 +471,7 @@ function drawChart() {
   const Y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
 
   let svg = `<svg class="chart-svg" width="${W}" height="${H}" role="img"
-    aria-label="Verlauf ${esc(chartMode() === 'bw' ? 'Körpergewicht' : chartState.name)}">
+    aria-label="Verlauf ${esc(chartMode() === 'bw' ? 'Körpergewicht' : chartMode() === 'meas' ? measLabel(chartState.meas) : chartState.name)}">
     <defs><clipPath id="plot-clip"><rect x="${L - 6}" y="0" width="${pw + 12}" height="${H}"/></clipPath></defs>`;
 
   // Raster und y-Achse
@@ -593,7 +601,7 @@ function chartStats(vis, unit) {
   const diff = round1(last - first);
   const pct = first ? Math.round(diff / first * 100) : 0;
   const sign = diff > 0 ? '+' : diff < 0 ? '−' : '±';
-  const best = chartMode() === 'bw'
+  const best = chartMode() === 'bw' || chartMode() === 'meas'
     ? `<div class="stat"><span>Spanne</span><b>${fmtNum(Math.min(...vis.map(p => p.v)))}–${fmtNum(Math.max(...vis.map(p => p.v)))}</b></div>`
     : `<div class="stat"><span>Bestwert</span><b>${fmtNum(Math.max(...vis.map(p => p.v)))} ${unit}</b></div>`;
   let h = `<div class="stats">
@@ -815,6 +823,81 @@ function bwCard() {
     </div>`;
 }
 
+/* ---------- Körpermaße (v204, User-Wunsch 2026-11-11) ---------- */
+// Ernährung → „Körpermaße“: alle Felder freiwillig, gleicher Tag = Werte ergänzen/überschreiben. data.measures (cm)
+const MEASURES = [['waist', 'Taille'], ['hip', 'Hüfte'], ['chest', 'Brust'], ['arm', 'Oberarm'], ['thigh', 'Oberschenkel'], ['calf', 'Wade']];
+const measLabel = k => (MEASURES.find(([x]) => x === k) || [k, k])[1];
+let measForm = null;  // { date, v: { key: Text } } solange die Seite offen ist
+// je Maß der jüngste Wert
+function lastMeasures() {
+  const out = {};
+  for (const m of [...data.measures].sort((a, b) => b.date.localeCompare(a.date))) {
+    for (const [k] of MEASURES) if (out[k] == null && m.v && m.v[k] != null) out[k] = { v: m.v[k], date: m.date };
+  }
+  return out;
+}
+// Knopf im Ernährungs-Reiter
+function measBtnHtml() {
+  const last = lastMeasures(), keys = MEASURES.filter(([k]) => last[k]);
+  const sub = keys.length ? keys.slice(0, 3).map(([k, l]) => `${l} ${fmtNum(last[k].v)} cm`).join(' · ')
+    + ` · zuletzt ${fmtDate(keys.map(([k]) => last[k].date).sort().pop() + 'T12:00:00')}` : 'Taille, Hüfte, Brust … – freiwillig, mit Verlauf';
+  return `<button class="btn nav meas-btn" data-action="meas-open">📏 Körpermaße<small>${sub}</small></button>`;
+}
+function renderMeasures() {
+  if (!measForm) measForm = { date: todayISO(), v: {} };
+  const last = lastMeasures();
+  let h = `<p class="hint">Miss immer an derselben Stelle, am besten morgens – das Maßband liegt an, schnürt aber nicht ein.
+      Trag nur ein, was du messen möchtest.</p>
+    <div class="card meas-form">${MEASURES.map(([k, l]) => `<label class="row"><span>${l}${last[k] ? `<small>zuletzt ${fmtNum(last[k].v)} cm</small>` : ''}</span>
+        <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" placeholder="cm" data-field="meas-in" data-k="${k}" value="${esc(measForm.v[k] || '')}"></label>`).join('')}
+      <label class="row"><span>Datum</span>
+        <input class="inp date" type="date" data-field="meas-date" value="${esc(measForm.date)}" max="${todayISO()}"></label>
+      <div class="row"><button class="btn primary" data-action="meas-save">Speichern</button></div>
+    </div>`;
+  const used = MEASURES.filter(([k]) => last[k]);
+  if (!used.length) return h;
+  if (!used.some(([k]) => k === chartState.meas)) chartState.meas = used[0][0];
+  h += `<h2>Verlauf</h2><div class="variants meas-pick">${used.map(([k, l]) =>
+    `<button class="vchip ${chartState.meas === k ? 'on' : ''}" data-action="meas-pick" data-k="${k}">${l}</button>`).join('')}</div>`
+    + rangeRow() + '<div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>';
+  h += '<h2>Einträge</h2><ul class="list">' + [...data.measures].sort((a, b) => b.date.localeCompare(a.date)).map(m => `<li class="bw-row meas-row">
+      <span><b>${fmtDate(m.date + 'T12:00:00')}</b><small>${MEASURES.filter(([k]) => m.v && m.v[k] != null).map(([k, l]) => `${l} ${fmtNum(m.v[k])}`).join(' · ')} cm</small></span>
+      <button class="icon-btn danger" data-action="meas-del" data-id="${esc(m.id)}" aria-label="Löschen">✕</button></li>`).join('') + '</ul>';
+  return h;
+}
+views.measures = { title: 'Körpermaße', tab: 'nutrition', back: 'nutrition', render: renderMeasures, after: () => drawChart() };
+Object.assign(actions, {
+  'meas-open': () => { measForm = null; Object.assign(chartState, { sel: null, end: null }); go('measures'); },
+  'meas-pick': el => { Object.assign(chartState, { meas: el.dataset.k, sel: null, end: null }); render(); },
+  'meas-save': () => {
+    const last = lastMeasures(), v = {}, odd = [];
+    for (const [k, l] of MEASURES) {
+      const t = measForm.v[k];
+      if (t == null || !String(t).trim()) continue;
+      const n = parseNum(t);
+      if (n == null || n < 10 || n > 250) { alert(`${l}: Bitte einen Wert zwischen 10 und 250 cm eintragen.`); return; }
+      if (last[k] && Math.abs(n - last[k].v) / last[k].v > 0.1) odd.push(`${l} ${fmtNum(n)} cm (zuletzt ${fmtNum(last[k].v)})`);
+      v[k] = n;
+    }
+    if (!Object.keys(v).length) { alert('Bitte mindestens ein Maß eintragen.'); return; }
+    if (odd.length && !confirm(`Stimmt das?\n\n${odd.join('\n')}\n\nOK = so speichern, Abbrechen = zurück`)) return;
+    const date = measForm.date || todayISO();
+    const same = data.measures.find(m => m.date === date);
+    if (same) Object.assign(same.v, v); else data.measures.push({ id: uid(), date, v });
+    saveData();
+    measForm = null;
+    toast('Körpermaße gespeichert ✔');
+    render();
+  },
+  'meas-del': el => {
+    if (!confirm('Diesen Eintrag löschen?')) return;
+    data.measures = data.measures.filter(m => m.id !== el.dataset.id);
+    saveData(); render();
+  },
+});
+fields['meas-in'] = el => { measForm.v[el.dataset.k] = el.value; };
+fields['meas-date'] = el => { measForm.date = el.value; };
+
 /* ---------- Verlauf mit vier Bereichen (v203, User-Wunsch 2026-11-11) ---------- */
 // Früher eigener Reiter „Diagramme“. Jetzt oben im Verlauf: Kalender (views.history) | Übungen | Statistik | Erfolge
 // (views.charts mit chartState.mode 'ex' / 'ton'|'steps'|'cardio' / 'awards'). Eine Übung öffnet views.exercise:
@@ -1031,7 +1114,7 @@ function selectNearest(clientX) {
   drawChart();
 }
 
-window.addEventListener('resize', () => { if (['charts', 'nutrition', 'exercise'].includes(current.view)) queueDraw(); });
+window.addEventListener('resize', () => { if (['charts', 'nutrition', 'exercise', 'measures'].includes(current.view)) queueDraw(); });
 
 /* ---------- Zyklus-Rückblick (v189, User-Wunsch 2026-11-09) ---------- */
 // Sobald die Deload-Woche ansteht (letzte Aufbauwoche geschafft, noch kein Deload-Training), zeigt die Startseite eine Karte

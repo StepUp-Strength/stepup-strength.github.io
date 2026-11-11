@@ -1249,7 +1249,7 @@ function renderNutrition() {
   // Nur ein Health-Knopf: steht in „Heute gegessen“; ohne diese Karte (Ernährung nicht eingerichtet) hier beim Gewicht
   const intakeShown = !paused && (planOn || (n && nutReady(n) && kg != null));
   h += `<h2>Körpergewicht</h2>${intakeShown ? '<p class="hint nut-small">Wiege dich 3–4× pro Woche, am besten morgens nach dem Aufstehen. Die App braucht das für ihre Kalorienvorschläge.</p>' : ''}${bwCard()}${feat('nut-health') && !intakeShown ? healthCard() : ''}${rangeRow()}
-    <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${bwList()}`;
+    <div id="chart-area" class="chart-area"></div><div id="chart-extra"></div>${typeof measBtnHtml === 'function' ? measBtnHtml() : ''}${bwList()}`;
   return h;
 }
 
