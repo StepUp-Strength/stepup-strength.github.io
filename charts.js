@@ -1240,6 +1240,7 @@ function renderCycleReview({ cs }) {
     more.push(`Pro Woche hast du <b>${fmtNum(round1(Math.abs(r.vsPrev)))} % ${r.vsPrev > 0 ? 'mehr' : 'weniger'}</b> Gewicht bewegt als im Zyklus davor.`);
   }
   if (more.length) h += `<div class="card"><h2>🔍 Im Vergleich</h2>${more.map(t => `<p>${t}</p>`).join('')}</div>`;
+  if (typeof photoReviewCard === 'function') h += photoReviewCard();  // nur wenn Fotos „eingerichtet“ sind (v213)
   const ci = hasActivePlan() ? cycleInfo() : null;
   if (ci && ci.deload && ci.cycleStart === cs && !data.sessions.some(s => s.cycleStart === cs && s.deload)) {
     h += `<div class="card deload-note"><p><b>😮‍💨 Jetzt kommt die Deload-Woche.</b> Halbe Sätze und etwas leichter – dein Körper

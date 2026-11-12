@@ -40,7 +40,7 @@ const TOURS = {
       text: 'Tipp auf den Namen mit dem „i“: Dann siehst du die Übung als Animation mit Anleitung.' },
     { id: 'tr-details', sel: 'section.card .det-btn', title: 'Details',
       text: () => {
-        const a = [feat('tr-comment') ? 'Kommentar' : '', 'Ersetzen', feat('tr-max') ? 'Max. bei 10 Wdh.' : '',
+        const a = [feat('tr-comment') ? 'Kommentar' : '', 'Ersetzen', 'Technik-Video', feat('tr-max') ? 'Max. bei 10 Wdh.' : '',
           feat('tr-step') ? 'Steigerung' : '', feat('tr-variants') ? 'Ausführung' : ''].filter(Boolean);
         const list = a.length > 1 ? `${a.slice(0, -1).join(', ')} und ${a[a.length - 1]}` : a[0];
         return `Hier klappst du mehr zur Übung auf: ${list}. Die App merkt sich, ob du die Details lieber offen oder zu hast.`;
@@ -48,6 +48,8 @@ const TOURS = {
     { id: 'tr-tools', sel: 'section.card .ex-tools', title: 'Kommentar und Ersetzen',
       text: () => (feat('tr-comment') ? '„Kommentar“: eine Notiz zur Übung, z. B. die Sitzhöhe – sie erscheint beim nächsten Mal wieder. ' : '')
         + '„Ersetzen“: die Übung heute gegen eine ähnliche tauschen, z. B. wenn das Gerät besetzt ist. Der Plan bleibt, wie er ist.' },
+    { id: 'tr-video', sel: 'section.card [data-action="vid-open-list"]', title: '🎥 Technik-Video',
+      text: 'Film einen Satz und schau ihn dir in Zeitlupe an – oder vergleiche ihn mit deinem letzten Video dieser Übung.' },
     { id: 'tr-ss', sel: '.ss-wrap .ss-head', title: '🔗 Supersatz',
       text: 'Diese beiden Übungen machst du im Wechsel: Satz A, kurze Pause, Satz B, kurze Pause, dann wieder A. Der nächste Satz ist umrandet, der Pausen-Timer oben zeigt, was danach dran ist. Gerät besetzt? „Heute einzeln“ – dann gelten die normalen Pausen.' },
     { id: 'tr-pain', sel: 'section.card .pain-btn, section.card .pain-link', title: '🩹 Zwickt',
@@ -195,6 +197,17 @@ const TOURS = {
       text: 'Isst du etwas öfter? Mit 💾 speicherst du die ganze Mahlzeit – beim nächsten Mal reicht ein Tipp.' },
     { id: 'food-close', sel: '[data-action="food-close-ask"]|[data-action="food-close"]', title: 'Tag abschließen',
       text: 'Am Abend den Tag abschließen. Fehlt noch etwas, kann die App den Rest mit deinem Tagesziel auffüllen – so bleibt die Rechnung genau.' },
+    { id: 'food-micro', sel: '.mic-btn', feat: 'nut-micro', title: '🔬 Vitamine & Mineralstoffe',
+      text: 'Hier siehst du, wie viele Vitamine, Mineralstoffe und Fette in dem steckt, was du eingetragen hast – mit den Richtwerten der DGE.' },
+  ],
+  // v214: Mikronährstoffe
+  micro: [
+    { id: 'mic-seg', sel: '.mic-seg', title: 'Woche oder Tag',
+      text: 'Mikros schwanken von Tag zu Tag stark. Aussagekräftig ist der Durchschnitt über 7 Tage – einzelne Tage siehst du über „Heute“.' },
+    { id: 'mic-cov', sel: '.mic-cov', title: 'Wie vollständig?',
+      text: 'Für gescannte Markenprodukte kennt die App oft nur Fett, Zucker und Salz. Hier steht, für welchen Anteil deiner Kalorien sie die Mikros kennt.' },
+    { id: 'mic-row', sel: '.mic-row > summary', title: 'Antippen für mehr',
+      text: 'Der Balken zeigt den Anteil am Richtwert – neutral, ohne Bewertung. Antippen zeigt, wofür der Nährstoff gut ist und woher er bei dir kommt.' },
   ],
   data: [
     { id: 'opt-mode', sel: '.mode-card', title: 'Modus',
@@ -234,6 +247,29 @@ const TOURS = {
       text: 'Die App malt aus deinem Training ein Bild für Story oder Status – ohne Körpergewicht und Gesundheitsdaten.' },
     { id: 'share-send', sel: '[data-action="share-send"]', title: 'Teilen',
       text: 'Öffnet das Teilen-Menü deines Handys, z. B. für WhatsApp oder Instagram. Mit „Bild speichern“ landet es in deinen Fotos bzw. Downloads.' },
+  ],
+  // v213: Fortschrittsfotos und Technik-Videos (media.js)
+  photos: [
+    { id: 'ph-slots', sel: '.ph-slots', title: 'Fotos aufnehmen',
+      text: 'Tipp auf ＋ für vorne, seitlich oder hinten – aufnehmen oder aus der Galerie wählen. Jede Ansicht ist freiwillig. Für ältere Fotos stellst du darunter das Datum um.' },
+    { id: 'ph-cmp', sel: '.ph-cmp-row', title: 'Vergleichen',
+      text: 'Wähle zwei Termine und eine Ansicht – darunter siehst du, wie sich dein Körpergewicht in der Zeit verändert hat.' },
+    { id: 'ph-backup', sel: '[data-action="ph-import"]', title: 'Eigene Sicherung',
+      text: 'Fotos sind nicht in der normalen Sicherung. Mit „Fotos sichern“ bekommst du eine eigene Datei, die du hier auch wieder laden kannst.' },
+  ],
+  videos: [
+    { id: 'vid-pick', sel: '[data-action="vid-pick"]', title: 'Video hinzufügen',
+      text: 'Am sichersten filmst du mit der normalen Kamera-App und wählst das Video hier aus – dann liegt es schon in deinen Fotos.' },
+    { id: 'vid-help', sel: '[data-action="vid-help"]', title: 'Damit nichts verloren geht',
+      text: 'Hier steht Schritt für Schritt, wie du Videos auf iPhone und Android in deine Fotos speicherst – und wie du gut filmst.' },
+  ],
+  video: [
+    { id: 'vid-ctl', sel: '.vid-ctl', title: 'Genau hinsehen',
+      text: 'Tipp aufs Video zum Abspielen oder Anhalten. ‹ und › springen ein einzelnes Bild zurück oder vor, der Regler darüber an jede Stelle.' },
+    { id: 'vid-speed', sel: '.vid-speed', title: 'Zeitlupe',
+      text: 'Halbe oder Viertel-Geschwindigkeit – so siehst du auch schnelle Bewegungen genau.' },
+    { id: 'vid-line', sel: '[data-action="vid-line"]', title: 'Hilfslinien',
+      text: 'Zeichne Linien ins Video, z. B. senkrecht neben die Hantel oder waagerecht auf Kniehöhe. Sie bleiben beim Video gespeichert.' },
   ],
   // v212: bisher ohne Einführung
   cyclereview: [

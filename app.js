@@ -462,7 +462,7 @@ const FEATURE_MODE = {
   'plan-cycle-settings': 'x', 'plan-week-jump': 's', 'cycle-len': 's', 'cycle-adjust': 's', 'plan-week-prog': 'x', 'plan-volume': 'x', 'plan-rir': 'x', 'custom-ex': 's',
   'day-templates': 's', 'supersets': 's',
   // Ernährung
-  'nut-minicut': 's', 'nut-pace': 's', 'nut-own-kcal': 's', 'nut-macros': 's', 'nut-macro-pct': 'x', 'nut-protein-detail': 's',
+  'nut-minicut': 's', 'nut-pace': 's', 'nut-own-kcal': 's', 'nut-macros': 's', 'nut-micro': 's', 'nut-macro-pct': 'x', 'nut-protein-detail': 's',
   'nut-health': 's', 'nut-history': 's', 'nut-trend-detail': 's', 'nut-measured': 'x', 'nut-train-q': 's', 'nut-explain': 's',
 };
 // Bestehende Nutzer ohne Wahl: Experte (so fehlt nach dem Update nichts); neue wählen bei der Begrüßung
@@ -4274,6 +4274,7 @@ function renderTraining() {
             data-ei="${ei}" aria-label="Kommentar">💬 Kommentar</button>` : ''}
           <button class="icon-btn swap" data-action="rep-open" data-ei="${ei}">⇄ Ersetzen</button>
           <button class="icon-btn pain-btn" data-action="pain-open" data-ei="${ei}">🩹 Zwickt</button>
+          <button class="icon-btn vid-btn" data-action="vid-open-list" data-name="${esc(en.name)}">🎥 Video</button>
         </div>` : ''}
       </div>`;
     if (en.added) {
@@ -5244,6 +5245,7 @@ function renderExercise({ name }) {
     ? `<p class="sub">Höchstes Gewicht: <b>${fmtNum(Math.max(...weights))} kg</b> · ${rows.length} Trainings</p>`
     : '';
   if (libEntry(name)) h += `<button class="link-btn lib-small" data-action="lib-open" data-name="${esc(name)}">ⓘ Ausführung ansehen</button>`;
+  h += `<button class="link-btn lib-small" data-action="vid-open-list" data-name="${esc(name)}">🎥 Technik-Videos</button>`;  // v213 (media.js)
   // v203: Diagramm oben, darunter alle Einträge (früher zwei getrennte Seiten)
   if (weights.length && typeof exChartHtml === 'function') h += exChartHtml(name);
   h += `<h2 class="ex-list-h">Alle Einträge</h2>`;
@@ -5990,6 +5992,16 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 214, date: '2026-11-11', items: [
+    ['🔬 Vitamine & Mineralstoffe im Ernährungstagebuch: 29 Nährstoffe mit den Richtwerten der DGE – als Durchschnitt über 7 Tage oder je Tag.', 'nut-micro'],
+    ['💊 Nahrungsergänzung eintragen oder scannen – gespeichert wie ein Lebensmittel, gezählt in Stück.', 'nut-micro'],
+    ['Eigene Lebensmittel können jetzt auch Vitamine und Mineralstoffe haben (freiwillig).', 'nut-micro'],
+  ] },
+  { v: 213, date: '2026-11-11', items: [
+    ['📷 Fortschrittsfotos: vorne, seitlich und hinten – mit Vergleich zweier Termine. Zu finden im Reiter Ernährung beim Körpergewicht.'],
+    ['🎥 Technik-Videos je Übung: in Zeitlupe, Bild für Bild und mit Hilfslinien ansehen oder zwei Videos vergleichen (im Training unter „Details“ → „Video“).'],
+    ['Fotos und Videos bleiben nur auf deinem Handy. Eine Anleitung zeigt, wie du sie in deiner Galerie sicherst.'],
+  ] },
   { v: 212, date: '2026-11-11', items: [
     ['⏱ Sätze je Muskelgruppe selbst eintragen: Darunter steht jetzt, wie lange deine Trainingstage damit etwa dauern.', 'plan-volume'],
     ['Die Einführung erklärt jetzt auch Zyklus-Rückblick, Cardio, Zykluskalender und den Beschwerde-Bericht.'],
@@ -6972,6 +6984,7 @@ function importData(file) {
       customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV, rirV: d.rirV,
       measures: Array.isArray(d.measures) ? d.measures : [],
       painLog: Array.isArray(d.painLog) ? d.painLog : [],
+      photoCfg: d.photoCfg && typeof d.photoCfg === 'object' ? d.photoCfg : undefined,  // nur Einstellungen – Fotos selbst haben eine eigene Sicherung
     });
     registerCustomExercises();
     prefatMigrate();  // ältere Sicherung: Max.-Werte auf frisch umrechnen
@@ -8047,9 +8060,10 @@ const actions = {
     go('plan');
   },
   'reset-all': () => {
-    if (!confirm('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte und Einstellungen werden entfernt.')) return;
+    if (!confirm('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte, Einstellungen sowie Fortschrittsfotos und Technik-Videos werden entfernt.')) return;
     if (!confirm('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
     data = upgradeData(emptyData());
+    if (typeof mediaWipe === 'function') mediaWipe();  // Fotos und Videos (v213)
     registerCustomExercises();
     applyTheme();
     saveData();
@@ -8577,14 +8591,47 @@ const welcomeNeedsPhase = () => !data.nutrition && !(data.profile && data.profil
 function showWelcome() {
   if (!welcomeNeedsProfile() && !welcomeNeedsPhase()) return;
   welc = { step: welcomeNeedsProfile() ? 1 : 2, fresh: !data.welcomeSeen && !data.sessions.length, phase: null, trainAdapt: null };
+  if (welc.fresh && welc.step === 1) { welc.step = 0; welc.slide = 0; }  // v213: neue Nutzer sehen zuerst, was die App besonders macht
   const el = document.createElement('div');
   el.className = 'welcome';
   el.innerHTML = `<div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">${welcomeHtml()}</div>`;
+  // Wischen auf den Startseiten: links = weiter, rechts = zurück
+  let sx = null, sy = null;
+  el.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (sx == null || !welc || welc.step !== 0) return;
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    sx = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) actions['intro-next'](); else if (welc.slide > 0) { welc.slide--; welcomeRedraw(); }
+  }, { passive: true });
   document.body.appendChild(el);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
 }
 
+// Startseiten für neue Nutzer (v213, „Startseite A“): drei Bilder mit je einem Satz, was die App besonders macht
+const INTRO = [
+  { img: 'intro-1.jpg', h: 'Weniger rätseln, mehr trainieren',
+    p: 'Für jeden Satz sagt dir die App, welches <b>Gewicht</b> und wie viele <b>Wiederholungen</b> – passend zu deiner Kraft. Nach jedem Training lernt sie dazu.' },
+  { img: 'intro-2.jpg', h: 'Ein Plan, der mitwächst',
+    p: 'Woche für Woche ein bisschen mehr, dann eine leichtere Woche zur Erholung. Deinen Plan erstellt der Assistent in wenigen Minuten – fürs Studio oder zu Hause.' },
+  { img: 'intro-3.jpg', h: 'Fortschritt, den du siehst',
+    p: 'Bestleistungen, Kraftverlauf und ein Rückblick nach jedem Zyklus zeigen dir, dass es wirkt. <b>Ohne Konto, ohne Werbung</b> – alles bleibt auf deinem Handy.' },
+];
+function introHtml() {
+  const i = welc.slide || 0, s = INTRO[i], last = i === INTRO.length - 1;
+  return `<div class="intro">
+      <div class="intro-shot"><img src="${s.img}" alt="Beispiel aus der App"></div>
+      <h2 id="welcome-title">${s.h}</h2>
+      <p>${s.p}</p>
+      <div class="intro-dots" aria-hidden="true">${INTRO.map((_, k) => `<span class="${k === i ? 'on' : ''}"></span>`).join('')}</div>
+      <div class="row intro-btns">${last ? '' : '<button class="btn" data-action="intro-skip">Überspringen</button>'}
+        <button class="btn primary" data-action="intro-next">${last ? "Los geht's" : 'Weiter ›'}</button></div>
+    </div>`;
+}
+
 function welcomeHtml() {
+  if (welc.step === 0) return introHtml();
   const icon = `<div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
         <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>`;
   const two = welcomeNeedsPhase();  // gibt es einen zweiten Schritt?
@@ -8666,6 +8713,19 @@ function welcomeClose() {
   if (box) { box.classList.remove('show'); setTimeout(() => box.remove(), 350); }
   render();
 }
+
+actions['intro-next'] = () => {
+  if (!welc) return;
+  if ((welc.slide || 0) < INTRO.length - 1) { welc.slide = (welc.slide || 0) + 1; welcomeRedraw(); return; }
+  actions['intro-skip']();
+};
+actions['intro-skip'] = () => {
+  if (!welc) return;
+  welc.step = 1;
+  welcomeRedraw();
+  const card = document.querySelector('.welcome-card');
+  if (card) card.scrollTop = 0;
+};
 
 actions['welcome-sex'] = el => {
   el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));

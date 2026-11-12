@@ -4,7 +4,7 @@
 // Wichtig: immer direkt vom Server laden (cache: 'reload' / 'no-cache'), nicht aus dem Browser-Zwischenspeicher –
 // GitHub Pages erlaubt dort 10 Minuten, sonst landen kurz nach einem Update noch alte Dateien im neuen Cache.
 
-const CACHE = 'trainingsapp-v212';
+const CACHE = 'trainingsapp-v214';
 const FILES = [
   './',
   './index.html',
@@ -18,17 +18,23 @@ const FILES = [
   './nutrition.js',
   './food.js',
   './bls.js',
+  './micro.js',
+  './bls-micro.js',
   './menstrual.js',
   './cardio.js',
   './nutplan.js',
   './trainplan.js',
   './about.js',
+  './media.js',
   './tour.js',
   './zxing.min.js',
   './manifest.json',
   './apple-touch-icon.png',
   './icon-192.png',
   './icon-512.png',
+  './intro-1.jpg',
+  './intro-2.jpg',
+  './intro-3.jpg',
 ];
 
 self.addEventListener('install', event => {

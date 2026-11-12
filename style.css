@@ -2832,3 +2832,102 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .wiz-ex.tb { flex-wrap: wrap; row-gap: 6px; }
 .wiz-ex.tb > div { flex: 1 1 100%; }
 .wiz-ex.tb > div + * { margin-left: auto; }
+
+/* ---------- v213: Fortschrittsfotos und Technik-Videos (media.js) ---------- */
+.ex-card .ex-tools { flex-wrap: wrap; }
+.ph-link { margin-bottom: 2px; }
+.ph-slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 10px; }
+.ph-slot, .ph-thumb { position: relative; aspect-ratio: 3 / 4; border-radius: 14px; overflow: hidden; padding: 0; border: 0;
+  background: var(--fill); color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.ph-slot { border: 2px dashed var(--line-strong); }
+.ph-slot b { font-size: 28px; line-height: 1; color: var(--accent-text); }
+.ph-slot span { font-size: 14px; font-weight: 650; }
+.ph-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .2s; }
+.ph-thumb span { position: absolute; left: 6px; bottom: 6px; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 700;
+  background: rgba(0, 0, 0, .55); color: #fff; }
+.ph-thumb.blur img { filter: blur(14px); }
+.ph-date small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+.ph-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ph-day p { margin: 0 0 8px; }
+.ph-day small { color: var(--muted); }
+.ph-cmp-sel { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ph-cmp-sel select { flex: 1; min-width: 0; }
+.ph-cmp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.ph-cmp-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ph-cmp-col small { color: var(--muted); font-size: 13px; text-align: center; }
+.ph-cmp-img { padding: 0; border: 0; background: none; border-radius: 12px; overflow: hidden; }
+.ph-cmp-img img { width: 100%; display: block; }
+.ph-none { aspect-ratio: 3 / 4; border-radius: 12px; background: var(--fill); color: var(--muted); display: flex; align-items: center;
+  justify-content: center; font-size: 14px; }
+.ph-full { margin: 0 -4px 10px; border-radius: 16px; overflow: hidden; background: #000; }
+.ph-full img { width: 100%; display: block; max-height: 72vh; object-fit: contain; }
+.ph-remind p { margin: 0 0 10px; }
+
+.vid-add .btn { width: 100%; margin-top: 8px; }
+.vid-item { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
+.vid-thumb { position: relative; flex: none; width: 96px; aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; padding: 0; border: 0; background: #000; }
+.vid-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.vid-thumb span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 26px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .6); }
+.vid-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.vid-meta small { color: var(--muted); font-size: 13px; }
+.vid-meta small.ok { color: var(--success); font-weight: 650; }
+.vid-meta small.warn { color: var(--warn-text); font-weight: 650; }
+.vid-btns { grid-column: 1 / -1; display: flex; gap: 8px; }
+.vid-btns .btn { margin: 0; flex: 1; }
+.vid-btns .btn.danger { flex: none; width: 52px; padding: 0; }
+.vid-grid { display: grid; gap: 10px; }
+.vid-grid.two { grid-template-columns: 1fr 1fr; gap: 8px; }
+.vid-box { min-width: 0; }
+.vid-wrap { position: relative; border-radius: 14px; overflow: hidden; background: #000; line-height: 0; }
+.vid-wrap video { width: 100%; height: auto; max-height: 62vh; display: block; margin: 0 auto; }
+.vid-grid.two .vid-wrap video { max-height: 48vh; }
+.vid-lines { position: absolute; left: 0; top: 0; pointer-events: none; }
+.vid-date { margin: 6px 0 2px; font-size: 13px; color: var(--muted); text-align: center; }
+.vid-seek { width: 100%; accent-color: var(--accent); }
+.vid-ctl { display: flex; justify-content: center; gap: 6px; }
+.vid-ctl .btn { margin: 0; min-width: 52px; }
+.vid-time { margin: 4px 0 8px; font-size: 13px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.vid-tools .btn { flex: 1; }
+.vid-help ol, .vid-help ul { padding-left: 20px; }
+.vid-help li { margin: 4px 0; }
+.vid-help h3 { margin: 12px 0 4px; font-size: 16px; }
+
+/* v213: Startseiten für neue Nutzer (Begrüßung, Schritt 0) */
+.intro { text-align: center; }
+.intro-shot { margin: 0 auto 14px; max-width: 300px; border-radius: 18px; overflow: hidden; background: #f2f3f7;
+  box-shadow: 0 0 0 1px var(--line), 0 10px 28px -12px rgba(16, 24, 40, .35); }
+.intro-shot img { display: block; width: 100%; aspect-ratio: 780 / 880; object-fit: cover; object-position: top; }
+.intro h2 { margin: 6px 0 8px; }
+.intro p { margin: 0 auto; max-width: 340px; color: var(--muted); line-height: 1.45; }
+.intro-dots { display: flex; justify-content: center; gap: 7px; margin: 16px 0 14px; }
+.intro-dots span { width: 8px; height: 8px; border-radius: 99px; background: var(--line-strong); transition: width .2s; }
+.intro-dots span.on { width: 22px; background: var(--accent); }
+.intro-btns { justify-content: center; }
+.intro-btns .btn { flex: 1; }
+@media (max-height: 700px) { .intro-shot { max-width: 230px; } }
+
+/* ---------- v214: Mikronährstoffe (micro.js) ---------- */
+.mic-btn { margin-top: 10px; }
+.mic-seg { margin-bottom: 12px; }
+.mic-cov p { margin: 0 0 6px; }
+.mic-cov p:last-child { margin-bottom: 0; }
+.mic-h { margin: 18px 4px 8px; font-size: 18px; }
+.mic-list { padding-top: 4px; padding-bottom: 4px; }
+.mic-row { border-bottom: 1px solid var(--line); }
+.mic-row:last-child { border-bottom: 0; }
+.mic-row > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 10px 0; align-items: center; }
+.mic-row > summary::-webkit-details-marker { display: none; }
+.mic-name { font-weight: 650; font-size: 15px; }
+.mic-gap { font-weight: 600; color: var(--muted); font-size: 12px; margin-left: 4px; }
+.mic-val { font-variant-numeric: tabular-nums; font-size: 15px; text-align: right; }
+.mic-bar { grid-column: 1 / -1; height: 7px; border-radius: 99px; background: var(--fill); overflow: hidden; }
+.mic-bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent); opacity: .75; }
+.mic-bar.max i { background: var(--muted); }
+.mic-ref { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.mic-info { padding: 0 0 12px; }
+.mic-info p { margin: 0 0 6px; font-size: 14px; line-height: 1.45; }
+.mic-women { color: var(--text); background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; }
+.mic-form { margin-top: 10px; }
+.mic-form > summary { cursor: pointer; font-weight: 650; padding: 6px 0; }
+.mic-in span { font-size: 14px; }

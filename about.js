@@ -46,6 +46,10 @@ function aboutDatenschutz() {
       <b>Open Food Facts</b> (Open Food Facts, Frankreich) ab. Dabei werden der Barcode bzw. dein Suchbegriff und deine IP-Adresse übertragen –
       sonst nichts. Mehr dazu: <a href="https://world.openfoodfacts.org/privacy" target="_blank" rel="noopener">Datenschutz bei Open Food Facts</a>.
       Die Kamera nutzt die App nur zum Scannen; das Bild wird auf deinem Gerät ausgewertet und weder gespeichert noch übertragen.</p>
+    <h3>Fortschrittsfotos und Technik-Videos</h3>
+    <p>Fotos und Videos, die du in der App aufnimmst oder auswählst, speichert die App nur auf deinem Gerät. Sie werden nicht übertragen und
+      sind nicht in der normalen Sicherung. Fotos kannst du als eigene Datei sichern, Fotos und Videos über das Teilen-Menü in deiner Galerie
+      ablegen – wohin, bestimmst du. Die Kamera nutzt die App nur, wenn du selbst ein Foto oder Video aufnimmst.</p>
     <h3>Sicherungen</h3>
     <p>Eine Sicherung ist eine Datei, die du selbst speicherst oder teilst. Wohin sie geht, bestimmst du – wir haben keinen Zugriff darauf.
       Auf Wunsch verschlüsselt die App die Sicherung mit einem Passwort (Einstellung unter „Deine Daten“); das Passwort wird nirgends gespeichert.</p>

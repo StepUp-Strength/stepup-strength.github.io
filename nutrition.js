@@ -1256,6 +1256,7 @@ function renderNutrition() {
   if (!bwDone) h += bwBlock;
   const list = bwList();
   if (list) h += `<details class="card about-sec bw-entries"><summary><b>Alle Gewichts-Einträge</b><small>${data.bodyweight.length}</small></summary>${list.replace('<h2>Einträge</h2>', '')}</details>`;
+  if (typeof photoBtnHtml === 'function') h += photoBtnHtml();  // Fortschrittsfotos (v213, media.js)
   if (typeof measBtnHtml === 'function') h += measBtnHtml();  // Körpermaße nur beiläufig (v207, User-Wunsch)
   h += nutBasicsCard(dayKcal, kg != null ? kg : currentBodyweight());
   return h;

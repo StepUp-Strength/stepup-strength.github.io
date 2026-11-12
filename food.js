@@ -551,7 +551,7 @@ function foodRemember(f, extra = {}) {
   data.foods[f.key] = foodBuiltin(f)
     ? { fav: !!old.fav, last: Date.now(), ...extra }
     : { key: f.key, name: f.name, brand: f.brand || '', per: f.per, portion: f.portion || null, code: f.code || null,
-        src: f.src, fav: !!old.fav, last: Date.now(), ...extra };
+        src: f.src, ...(f.mic ? { mic: f.mic } : {}), ...(f.supp ? { supp: true } : {}), fav: !!old.fav, last: Date.now(), ...extra };
 }
 
 const foodVal = (per, g) => per.map(v => (v || 0) * g / 100);
@@ -749,7 +749,8 @@ function renderFood(p) {
       <b>${foodDayLabel(date)}</b>
       <button class="icon-btn" data-action="food-day" data-d="1" ${date >= todayISO() ? 'disabled' : ''} aria-label="Nächster Tag">›</button>
     </div>
-    <div class="card nut-intake">${foodSumHtml(t, foodGoal(date))}${list.some(e => e.key !== FOOD_FILL) ? foodFsHtml(t, foodGoal(date)) : ''}</div>
+    <div class="card nut-intake">${foodSumHtml(t, foodGoal(date))}${list.some(e => e.key !== FOOD_FILL) ? foodFsHtml(t, foodGoal(date)) : ''}
+      ${typeof microBtnHtml === 'function' ? microBtnHtml() : ''}</div>
     ${date === todayISO() ? foodOpenCard() : ''}`;
   const planDay = typeof nutPlanActive === 'function' && nutPlanActive() ? nutPlanDay(date) : null;
   const planMeals = (planDay && planDay.meals) || {};
@@ -761,8 +762,8 @@ function renderFood(p) {
         <div class="food-meal-head"><b>${icon} ${label}</b><span class="hint">${items.length ? nutKcal(kcal) + ' kcal' : ''}</span></div>
         ${items.map(e => `<div class="food-row">
           <button class="food-pick" data-action="food-entry" data-id="${e.id}">
-            <span>${esc(e.name)}<small>${e.brand ? esc(e.brand) + ' · ' : ''}${foodNum(e.g)} g</small></span>
-            <b>${foodKcal(foodVal(e.per, e.g)[0])} kcal</b></button>
+            <span>${e.supp ? '💊 ' : ''}${esc(e.name)}<small>${e.brand ? esc(e.brand) + ' · ' : ''}${foodNum(e.g)} ${e.supp ? 'Stück' : 'g'}</small></span>
+            <b>${e.supp ? 'Ergänzung' : foodKcal(foodVal(e.per, e.g)[0]) + ' kcal'}</b></button>
           <button class="icon-btn danger" data-action="food-del" data-id="${e.id}" aria-label="Entfernen">✕</button></div>`).join('')}
         ${!items.length && planMeals[k] ? `<p class="hint nut-small np-plan-hint">📋 Plan: ${planMeals[k].map(i => `${esc(i.name)}${i.g ? ` ${fmtNum(i.g)} g` : ''}`).join(' · ')}</p>` : ''}
         <div class="row">
@@ -789,7 +790,8 @@ function renderFood(p) {
 
 function foodHit(f) {
   return `<button class="btn nav food-hit" data-action="food-pick" data-key="${esc(f.key)}">
-      <span class="lib-txt">${f.fav ? '⭐ ' : ''}${esc(f.name)}<small>${f.brand ? esc(f.brand) + ' · ' : ''}${foodKcal(f.per[0])} kcal · Eiweiß ${foodNum(f.per[1])} g je 100 g</small></span></button>`;
+      <span class="lib-txt">${f.fav ? '⭐ ' : ''}${f.supp ? '💊 ' : ''}${esc(f.name)}<small>${f.brand ? esc(f.brand) + ' · ' : ''}${f.supp ? 'Nahrungsergänzung'
+        : `${foodKcal(f.per[0])} kcal · Eiweiß ${foodNum(f.per[1])} g je 100 g`}</small></span></button>`;
 }
 
 // Suchtext: Name, Name ohne Leerzeichen (so findet „Hähnchenbrust“ auch „Hähnchen Brust, ohne Haut, roh“ aus dem BLS),
@@ -901,6 +903,7 @@ function renderFoodAdd() {
     <div class="row food-tools">
       <button class="btn" data-action="food-scan">📷 Barcode</button>
       <button class="btn" data-action="food-own">＋ Eigenes</button>
+      ${typeof feat === 'function' && feat('nut-micro') ? '<button class="btn" data-action="supp-new">💊 Ergänzung</button>' : ''}
     </div>
     <div id="food-results">${foodResults()}</div>`;
 }
@@ -945,6 +948,7 @@ function offFood(p) {
     per: [kcal == null ? null : Math.round(kcal), r1(n.proteins_100g), r1(n.carbohydrates_100g), r1(n.fat_100g),
       opt(n.fiber_100g), opt(n.sugars_100g)],
     portion: sq > 0 && sq < 2000 ? { label: '1 Portion', g: Math.round(sq) } : null,
+    ...(typeof offMicro === 'function' && offMicro(n) ? { mic: offMicro(n) } : {}),  // v214: Mikros, soweit angegeben
   };
 }
 const offUsable = f => f.name && f.per[0] != null;
@@ -997,6 +1001,7 @@ async function foodByCode(code) {
 /* ----- Barcode-Scanner (Kamera) ----- */
 
 let foodScan = null;  // { stop }
+let foodScanTarget = null;  // v214: andere Verwendung des Codes (z. B. suppByCode), sonst foodByCode
 const loadedScripts = {};
 const loadScript = src => loadedScripts[src] || (loadedScripts[src] = new Promise((ok, fail) => {
   const s = document.createElement('script');
@@ -1018,12 +1023,16 @@ function foodScanDone(code) {
   foodScan.done = true;
   if (navigator.vibrate) navigator.vibrate(60);
   foodScanClose();
-  foodByCode(code);
+  const to = foodScanTarget || foodByCode;
+  foodScanTarget = null;
+  to(code);
 }
 
 function foodCodePrompt() {
   const code = prompt('Barcode-Nummer eintippen (die Ziffern unter dem Strichcode):');
-  if (code && code.replace(/\D/g, '').length >= 6) foodByCode(code);
+  const to = foodScanTarget || foodByCode;
+  foodScanTarget = null;
+  if (code && code.replace(/\D/g, '').length >= 6) to(code);
   else if (code) alert('Bitte die ganze Nummer eintippen (meist 13 Ziffern).');
 }
 
@@ -1085,6 +1094,15 @@ function foodAmtSum(per, g) {
     ${fs ? `<p class="hint nut-small food-fs-amt">🌾 Ballaststoffe ${foodNum((per[4] || 0) * (g || 0) / 100)} g · 🍬 Zucker ${foodNum((per[5] || 0) * (g || 0) / 100)} g</p>` : ''}`;
 }
 
+// Nahrungsergänzung (v214): Menge in Stück, statt Makros die enthaltenen Nährstoffe
+function suppMicText(f, n) {
+  if (!f.mic || typeof MICROS === 'undefined') return '';
+  // Folsäure wie auf der Packung (gespeichert als Folat-Äquivalent = doppelt, siehe microFromForm)
+  return MICROS.filter(([k]) => f.mic[k] != null).map(([k, l, u]) => k === 'fol' ? `Folsäure ${microFmt(f.mic[k] * n / 200)} µg`
+    : `${l} ${microFmt(f.mic[k] * n / 100)} ${u}`).join(' · ');
+}
+const foodAmtSumFor = (f, g) => f.supp ? `<p class="hint nut-small">${suppMicText(f, g || 0) || '–'}</p>` : foodAmtSum(f.per, g);
+
 // Lebensmittel für die Menge-Seite: aus dem Eintrag (params.id) oder dem Schlüssel (params.key)
 function foodAmtFood(p) {
   const e = p.id && data.foodLog.find(x => x.id === p.id);
@@ -1092,7 +1110,7 @@ function foodAmtFood(p) {
     const f = foodGet(e.key);
     const fs = foodFS(e);
     return { e, f: { ...(f || { key: e.key, src: 'own', portion: null }), name: e.name, brand: e.brand,
-      per: [...e.per.slice(0, 4), ...(fs || [null, null])] } };
+      per: [...e.per.slice(0, 4), ...(fs || [null, null])], ...(e.mic ? { mic: e.mic } : {}), ...(e.supp ? { supp: true } : {}) } };
   }
   return { e: null, f: p.key ? foodGet(p.key) : null };
 }
@@ -1105,26 +1123,28 @@ function renderFoodAmt(p) {
     foodAmt = { for: id, g: e ? fmtNum(e.g) : String(f.portion ? f.portion.g : 100), meal: e ? e.meal : p.meal || 's' };
   }
   const g = parseNum(foodAmt.g);
-  const chips = [...(f.portion ? [[`${f.portion.label} (${f.portion.g} g)`, f.portion.g], [`2 × (${f.portion.g * 2} g)`, f.portion.g * 2]] : []),
-    ...[50, 100, 150, 200, 250].filter(x => !f.portion || (x !== f.portion.g && x !== f.portion.g * 2)).map(x => [`${x} g`, x])];
+  const chips = f.supp ? [1, 2, 3].map(x => [`${x} Stück`, x])
+    : [...(f.portion ? [[`${f.portion.label} (${f.portion.g} g)`, f.portion.g], [`2 × (${f.portion.g * 2} g)`, f.portion.g * 2]] : []),
+      ...[50, 100, 150, 200, 250].filter(x => !f.portion || (x !== f.portion.g && x !== f.portion.g * 2)).map(x => [`${x} g`, x])];
   const [kcal, pr, ca, fa, fib, sug] = f.per;
   const fsTxt = fib != null || sug != null ? ` · Ballaststoffe ${foodNum(fib || 0)} g · Zucker ${foodNum(sug || 0)} g` : '';
   const src = f.src === 'off' ? ' · aus Open Food Facts' : f.src === 'base' ? ' · Durchschnittswert'
     : f.src === 'bls' ? ' · Durchschnittswert aus dem Bundeslebensmittelschlüssel (Max Rubner-Institut)' : ' · eigenes Lebensmittel';
   return `<div class="card food-amt">
       <p class="food-amt-name"><b>${esc(f.name)}</b>${f.brand ? `<small>${esc(f.brand)}</small>` : ''}</p>
-      <p class="hint nut-small">je 100 g: ${foodKcal(kcal)} kcal · Eiweiß ${foodNum(pr)} g · Kohlenhydrate ${foodNum(ca)} g · Fett ${foodNum(fa)} g${fsTxt}${src}</p>
-      <label class="row"><span>Menge in Gramm</span>
+      <p class="hint nut-small">${f.supp ? `💊 Nahrungsergänzung · je Stück: ${suppMicText(f, 1)}`
+        : `je 100 g: ${foodKcal(kcal)} kcal · Eiweiß ${foodNum(pr)} g · Kohlenhydrate ${foodNum(ca)} g · Fett ${foodNum(fa)} g${fsTxt}${src}`}</p>
+      <label class="row"><span>${f.supp ? 'Anzahl (Stück)' : 'Menge in Gramm'}</span>
         <input class="inp kg" id="food-g" type="text" inputmode="decimal" autocomplete="off" data-field="food-g" value="${esc(foodAmt.g)}"></label>
       <div class="variants food-chips">${chips.map(([l, v]) => `<button class="vchip ${g === v ? 'on' : ''}" data-action="food-g-set" data-g="${v}">${l}</button>`).join('')}</div>
-      <div id="food-sum">${foodAmtSum(f.per, g)}</div>
+      <div id="food-sum">${foodAmtSumFor(f, g)}</div>
     </div>
     <div class="variants food-meals">${Object.entries(MEALS).map(([k, [icon, label]]) =>
       `<button class="vchip ${foodAmt.meal === k ? 'on' : ''}" data-action="food-meal" data-k="${k}">${icon} ${label}</button>`).join('')}</div>
     <button class="btn primary" data-action="food-save">${e ? '✔ Speichern' : '＋ Hinzufügen'}</button>
     <div class="row food-amt-more">
       <button class="btn" data-action="food-fav">${f.fav ? '⭐ Favorit' : '☆ Als Favorit merken'}</button>
-      ${!foodBuiltin(f) ? '<button class="btn" data-action="food-own-edit">✎ Werte ändern</button>' : ''}
+      ${!foodBuiltin(f) ? `<button class="btn" data-action="${f.supp ? 'supp-edit' : 'food-own-edit'}">✎ Werte ändern</button>` : ''}
     </div>
     ${e ? `<button class="btn danger" data-action="food-del" data-id="${e.id}">Aus ${MEALS[e.meal][1]} entfernen</button>` : ''}`;
 }
@@ -1136,7 +1156,8 @@ function foodFormFrom(f) {
   const per = f.per || [];
   return { key: f.key || null, name: f.name || '', brand: f.brand || '', code: f.code || null,
     kcal: s(per[0]), p: s(per[1]), c: s(per[2]), f: s(per[3]), fib: s(per[4]), sug: s(per[5]),
-    pl: f.portion ? f.portion.label : '', pg: f.portion ? s(f.portion.g) : '' };
+    pl: f.portion ? f.portion.label : '', pg: f.portion ? s(f.portion.g) : '',
+    ...(typeof microToForm === 'function' ? microToForm(f.mic) : {}) };
 }
 
 function renderFoodOwn() {
@@ -1158,6 +1179,7 @@ function renderFoodOwn() {
       <label class="row"><span>Bezeichnung</span><input class="inp food-pl" type="text" data-field="food-form" data-k="pl" autocomplete="off" value="${esc(f.pl)}" placeholder="z. B. 1 Scheibe"></label>
       <label class="row"><span>Gramm</span>${inp('pg', 'g')}</label>
       <p class="hint nut-small">Lässt du die Kalorien leer, rechnet die App sie aus den Makros aus (Eiweiß und Kohlenhydrate 4 kcal, Fett 9 kcal pro Gramm).</p>
+      ${typeof microFormHtml === 'function' && feat('nut-micro') ? microFormHtml(f) : ''}
     </div>
     <button class="btn primary" data-action="food-own-save">✔ Speichern</button>
     ${f.key && (data.foods[f.key] || {}).src === 'own' ? '<button class="btn danger" data-action="food-own-del">Lebensmittel löschen</button>' : ''}`;
@@ -1206,13 +1228,14 @@ Object.assign(actions, {
     const p = current.params;
     const { e, f } = foodAmtFood(p);
     const g = parseNum(foodAmt.g);
-    if (g == null || g <= 0 || g > 5000) { alert('Bitte eine Menge zwischen 1 und 5.000 g eintragen.'); return; }
+    if (g == null || g <= 0 || g > 5000) { alert(f.supp ? 'Bitte eine Anzahl eintragen, z. B. 1.' : 'Bitte eine Menge zwischen 1 und 5.000 g eintragen.'); return; }
     const date = e ? e.date : p.date || todayISO();
     const reopened = foodReopen(date);
     if (e) {
       Object.assign(e, { g: round1(g), meal: foodAmt.meal });
     } else {
-      data.foodLog.push({ id: uid(), date, meal: foodAmt.meal, key: f.key, name: f.name, brand: f.brand || '', g: round1(g), per: f.per });
+      data.foodLog.push({ id: uid(), date, meal: foodAmt.meal, key: f.key, name: f.name, brand: f.brand || '', g: round1(g), per: f.per,
+        ...(f.mic ? { mic: f.mic } : {}), ...(f.supp ? { supp: true } : {}) });
     }
     if (f.src !== 'own' || data.foods[f.key]) foodRemember(f);
     foodCache.delete(f.key);
@@ -1221,7 +1244,7 @@ Object.assign(actions, {
     foodAmt = null;
     foodQuery = '';
     foodOnline = null;
-    if (reopened) foodReopenToast(); else toast(e ? 'Gespeichert ✔' : `${f.name} hinzugefügt ✔`);
+    if (reopened && !f.supp) foodReopenToast(); else toast(e ? 'Gespeichert ✔' : `${f.name} hinzugefügt ✔`);
     go('food', { date });
   },
   'food-del': el => {
@@ -1258,7 +1281,8 @@ Object.assign(actions, {
   'food-meal-save': el => {
     const date = current.params.date || todayISO();
     const k = el.dataset.meal;
-    const items = foodOn(date).filter(e => e.meal === k).map(({ key, name, brand, g, per }) => ({ key, name, brand, g, per }));
+    const items = foodOn(date).filter(e => e.meal === k).map(({ key, name, brand, g, per, mic, supp }) =>
+      ({ key, name, brand, g, per, ...(mic ? { mic } : {}), ...(supp ? { supp } : {}) }));
     if (!items.length) return;
     const name = prompt(`Name für diese Mahlzeit (${items.length} Lebensmittel):`, MEALS[k][1]);
     if (!name || !name.trim()) return;
@@ -1329,18 +1353,21 @@ Object.assign(actions, {
     if (per[0] == null && per.slice(1).every(v => v == null)) { alert('Bitte mindestens die Kalorien oder die Makros eintragen.'); return; }
     if (per[0] == null) per[0] = Math.round((per[1] || 0) * 4 + (per[2] || 0) * 4 + (per[3] || 0) * 9);
     const pg = num('pg');
+    const mic = typeof microFromForm === 'function' ? microFromForm(f) : null;  // v214: freiwillige Mikros je 100 g
+    if (mic && mic.error) { alert(mic.error); return; }
     const old = f.key ? foodGet(f.key) : null;
     const food = {
       key: f.key || 'own:' + uid(), name: f.name.trim(), brand: f.brand.trim(), code: f.code,
       src: old ? old.src : 'own', per: [...per.map(v => round1(v || 0)), ...fs.map(v => (v == null ? null : round1(v)))],
       portion: pg > 0 && pg < 5000 ? { label: f.pl.trim() || '1 Portion', g: round1(pg) } : null,
+      ...(mic ? { mic } : old && old.mic && !feat('nut-micro') ? { mic: old.mic } : {}),
     };
     foodRemember(food, { fav: old ? !!old.fav : false });
     foodCache.delete(food.key);
     // geänderte Werte gelten auch für den gerade geöffneten Eintrag
     const p = current.params;
     const e = p.id && data.foodLog.find(x => x.id === p.id);
-    if (e) { Object.assign(e, { name: food.name, brand: food.brand, per: food.per }); foodSync(e.date); }
+    if (e) { Object.assign(e, { name: food.name, brand: food.brand, per: food.per }); if (food.mic) e.mic = food.mic; else delete e.mic; foodSync(e.date); }
     saveData();
     foodForm = null;
     foodAmt = null;
@@ -1364,7 +1391,7 @@ fields['food-g'] = el => {
   foodAmt.g = el.value;
   const { f } = foodAmtFood(current.params);
   const sum = $view.querySelector('#food-sum');
-  if (f && sum) sum.innerHTML = foodAmtSum(f.per, parseNum(el.value));
+  if (f && sum) sum.innerHTML = foodAmtSumFor(f, parseNum(el.value));
   $view.querySelectorAll('.food-chips .vchip').forEach(b => b.classList.toggle('on', Number(b.dataset.g) === parseNum(el.value)));
 };
 fields['food-form'] = el => { foodForm[el.dataset.k] = el.value; };
