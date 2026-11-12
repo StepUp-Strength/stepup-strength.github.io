@@ -759,6 +759,20 @@ function wizWeekText(g) {
   return t;
 }
 
+// Hinweis beim Volumen-Bearbeiten (Experte, v212): wie lange die Trainings mit diesen Zahlen etwa dauern – reine Info,
+// die App übernimmt eingetippte Zahlen weiter ohne Zeitgrenze. Gleiches Modell wie capSessions (Minuten je Satz inkl. Pause).
+function wizDurText() {
+  const days = wiz.days.filter(d => d.groups.length);
+  if (!days.length) return '';
+  const mins = w => days.map(d => Math.max(5, Math.round(d.groups.reduce((a, g) =>
+    a + (wiz.volume[g] ? wiz.volume[g][w] * wizSetMin(g) : 0), 0) / 5) * 5));
+  const a = mins(0), b = mins(3);
+  const list = days.map((d, i) => `<b>${esc(d.name)}</b> ca. ${a[i] === b[i] ? fmtDur(b[i]) : `${fmtDur(a[i])} → ${fmtDur(b[i])}`}`).join(' · ');
+  let t = `⏱ So lange dauern deine Trainings damit etwa (Intro → Woche 4): ${list}.`;
+  if (wiz.timeMax && Math.max(...b) > sessionCap()) t += ` Das ist etwas länger als die ${wiz.timeMax} min, die du vorhin gewählt hast – die App übernimmt deine Zahlen trotzdem so.`;
+  return t;
+}
+
 const focusBadge = g => wiz.prio.includes(g) ? ' <small class="focus up">⭐ +2/Woche</small>'
   : wiz.low.includes(g) ? ' <small class="focus down">😌 −2/Woche</small>' : '';
 
@@ -1386,7 +1400,8 @@ function renderWizard() {
         <tr class="vol-per"><td>pro Training</td>${wiz.volume[g].map((v, w) => inp('wiz-vol', g, w, v, 'per')).join('')}</tr>
         <tr class="vol-week"><td colspan="5"><span data-wizweek="${g}">${wizWeekText(g)}</span></td></tr>`;
     }
-    return h + `</table><button class="btn outline" data-action="wiz-edit" data-k="volEdit">✔ Fertig bearbeitet</button></div>
+    return h + `</table><p class="hint vol-dur" data-wizdur>${wizDurText()}</p>
+      <button class="btn outline" data-action="wiz-edit" data-k="volEdit">✔ Fertig bearbeitet</button></div>
       <div class="row"><button class="btn" data-action="wiz-step" data-to="auto">Zurück</button>${next}</div>`;
   }
 
@@ -1484,7 +1499,7 @@ function renderWizard() {
     const open = e => wiz.swapOpen && wiz.swapOpen.d === di && nameKey(wiz.swapOpen.n) === nameKey(e.name);
     h += `<div class="card"><h2>${esc(day.name)}</h2>
       <p class="hint">Sätze: Intro · W2 · W3 · W4 · Deload</p>
-      <ul class="list reorder">${day.exercises.map((e, ei) => `<li class="wiz-ex${pairsOf(day).has(ei) ? ` ss ss-${pairsOf(day).get(ei).role}` : ''}"><div>${pairsOf(day).has(ei)
+      <ul class="list reorder">${day.exercises.map((e, ei) => `<li class="wiz-ex${techOn() ? ' tb' : ''}${pairsOf(day).has(ei) ? ` ss ss-${pairsOf(day).get(ei).role}` : ''}"><div>${pairsOf(day).has(ei)
         ? `<small class="ss-tag">🔗 Supersatz ${pairsOf(day).get(ei).role} · mit ${esc(day.exercises[ei + (pairsOf(day).get(ei).role === 'A' ? 1 : -1)].name)}</small><br>` : ''}<b>${esc(e.name)}</b><br>
         <small class="hint">${MUSCLES[e.group]} · ${KIND_SHORT[kindOf(e)]} · Sätze ${weeks.map(m => m.get(e.id)).join(' · ')} · D ${dl.get(e.id)}</small></div>
         ${libInfoBtn(e.name)}
@@ -2018,6 +2033,8 @@ Object.assign(fields, {
     if (week) week.value = wizWeekly(g, w);
     const t = $view.querySelector(`[data-wizweek="${g}"]`);
     if (t) t.textContent = wizWeekText(g);
+    const dur = $view.querySelector('[data-wizdur]');
+    if (dur) dur.innerHTML = wizDurText();
   },
   // Sätze pro Woche -> pro Training (abgerundet); der Rest wird beim Speichern auf einzelne Tage verteilt
   'wiz-volw': el => {
@@ -2031,6 +2048,8 @@ Object.assign(fields, {
     if (per) per.value = wiz.volume[g][w];
     const t = $view.querySelector(`[data-wizweek="${g}"]`);
     if (t) t.textContent = wizWeekText(g);
+    const dur = $view.querySelector('[data-wizdur]');
+    if (dur) dur.innerHTML = wizDurText();
   },
   'wiz-rir': el => {
     const n = parseNum(el.value);

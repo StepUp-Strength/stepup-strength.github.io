@@ -2826,3 +2826,9 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .tech-train { margin-top: 6px; }
 .wiz-tech-note { font-size: 13.5px; color: var(--accent-text); padding-top: 0; }
 .icon-btn.swap.on { background: var(--accent-soft); color: var(--accent-text); }
+
+/* v212: Assistent-Vorschau mit drei Knöpfen (Info, Technik, Ersetzen) – Knöpfe in eigener Zeile unter dem Namen,
+   sonst bricht der Übungsname Wort für Wort um */
+.wiz-ex.tb { flex-wrap: wrap; row-gap: 6px; }
+.wiz-ex.tb > div { flex: 1 1 100%; }
+.wiz-ex.tb > div + * { margin-left: auto; }

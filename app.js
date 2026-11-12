@@ -1534,7 +1534,21 @@ function volumeEditor() {
       <select class="inp sel" data-field="vol-add"><option value="">auswählen …</option>
         ${missing.map(g => `<option value="${g}">${MUSCLES[g]}</option>`).join('')}</select></label>`;
   }
-  return h + `<div class="row"><button class="btn outline" data-action="vol-reset">Standardwerte wiederherstellen</button></div></div></details>`;
+  return h + `<p class="hint vol-dur" data-voldur>${volDurText()}</p>
+    <div class="row"><button class="btn outline" data-action="vol-reset">Standardwerte wiederherstellen</button></div></div></details>`;
+}
+
+// Hinweis unter der Volumen-Tabelle (Experte, v212): wie lange die Trainingstage damit etwa dauern – reine Info, keine Grenze.
+function volDurText() {
+  const p = activePlan();
+  const days = p ? activeDays(p) : [];
+  if (!days.length) return '';
+  const bw = data.cycle.buildWeeks || 4;
+  const dur = days.map(d => [Math.round(estDuration(d, 1, p)), Math.round(estDuration(d, bw, p))]);
+  const list = days.map((d, i) => `<b>${esc(d.name)}</b> ca. ${dur[i][0] === dur[i][1] ? fmtDur(dur[i][1]) : `${fmtDur(dur[i][0])} → ${fmtDur(dur[i][1])}`}`).join(' · ');
+  let t = `⏱ So lange dauern deine Trainingstage damit etwa (Intro → Höhepunkt): ${list}.`;
+  if (p.timeMax && Math.max(...dur.map(x => x[1])) > p.timeMax * 1.1) t += ` Das ist etwas länger als die ${p.timeMax} min, die du beim Erstellen gewählt hast – die App übernimmt deine Zahlen trotzdem so.`;
+  return t;
 }
 
 // Unter der Muskelgruppe: Zahl der Trainings, Deload, Verteilung und ob die Übungen das Volumen genau treffen.
@@ -2141,7 +2155,7 @@ const TECH_INFO = {
   myo: {
     what: 'Ein Aktivierungssatz bis kurz vors Muskelversagen, dann nur 3–5 Atemzüge Pause (etwa 20 Sekunden) und ein Mini-Satz mit 3–5 Wiederholungen – mit demselben Gewicht. Das wiederholst du drei- bis fünfmal.',
     why: 'Nach dem Aktivierungssatz arbeitet der Muskel schon mit allen Fasern – jede Wiederholung der Mini-Sätze ist deshalb eine besonders wirksame. Ein Myo-Satz bringt ungefähr so viel Reiz wie zwei bis drei normale Sätze, in zwei bis drei Minuten statt zehn bis zwölf.',
-    warn: 'Wichtig: Ein Myo-Satz bringt deutlich mehr Reiz – aber auch deutlich mehr Ermüdung als ein normaler Satz. Setz ihn bewusst ein, eher für einzelne Übungen und eher zusätzlich zu wenigen normalen Sätzen statt zu vielen.',
+    warn: '<b>Wichtig:</b> Ein Myo-Satz bringt deutlich mehr Reiz – aber auch deutlich mehr Ermüdung als ein normaler Satz. Setz ihn bewusst ein, eher für einzelne Übungen und eher zusätzlich zu wenigen normalen Sätzen statt zu vielen.',
     when: 'Wenn die Zeit knapp ist. Gut bei Isolations- und Maschinenübungen mit mittleren bis höheren Wiederholungen (Aktivierungssatz etwa 12–20 Wdh.), z. B. Seitheben, Beinstrecker, Curls oder Kabelübungen.',
     not: 'Nicht bei schweren Grundübungen und niedrigen Wiederholungen, nicht, solange du die Technik noch lernst, nicht im Deload und nicht bei jeder Übung eines Trainings.',
     app: 'Der Aktivierungssatz ist der Hauptsatz: Er behält seine Vorgabe und wird nur mit Myo-Sätzen verglichen. Die Mini-Sätze haben dasselbe Gewicht, Ziel 3–5 Wiederholungen. Steigerung: insgesamt eine Wiederholung mehr als letztes Mal, bis jeder Mini-Satz 5 hat – danach steigt das Gewicht über den Aktivierungssatz. Zwischen den Mini-Sätzen läuft ein 20-Sekunden-Timer. Für die Vorermüdung zählt ein Myo-Satz wie 2 Sätze.',
@@ -5976,6 +5990,11 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 212, date: '2026-11-11', items: [
+    ['⏱ Sätze je Muskelgruppe selbst eintragen: Darunter steht jetzt, wie lange deine Trainingstage damit etwa dauern.', 'plan-volume'],
+    ['Die Einführung erklärt jetzt auch Zyklus-Rückblick, Cardio, Zykluskalender und den Beschwerde-Bericht.'],
+    ['Plan-Vorschau im Assistenten: Die Übungsnamen haben wieder Platz, die Knöpfe stehen darunter.', 'tr-variants'],
+  ] },
   { v: 211, date: '2026-11-11', items: [
     ['⚡ Intensitätstechniken: Reduktions- und Myo-Sätze – im Training je Satz (Satznummer antippen) oder dauerhaft je Übung im Tagesplan.', 'tr-variants'],
     ['Alle Teil-Sätze werden gespeichert und angezeigt; verglichen und gesteigert wird nur mit gleich ausgeführten Sätzen.', 'tr-variants'],
@@ -8065,6 +8084,8 @@ const fields = {
     saveData();
     const week = $view.querySelector(`[data-field="volw"][data-g="${g}"][data-w="${w}"]`);
     if (week) week.value = weeklyTarget(g, w) || n;
+    const dur = $view.querySelector('[data-voldur]');
+    if (dur) dur.innerHTML = volDurText();
     const text = $view.querySelector(`[data-volweek="${g}"]`);
     if (text) text.textContent = volWeekText(g);
   },
@@ -8077,6 +8098,8 @@ const fields = {
     saveData();
     const per = $view.querySelector(`[data-field="vol"][data-g="${g}"][data-w="${w}"]`);
     if (per) per.value = data.volume[g][w];
+    const dur = $view.querySelector('[data-voldur]');
+    if (dur) dur.innerHTML = volDurText();
     const text = $view.querySelector(`[data-volweek="${g}"]`);
     if (text) text.textContent = volWeekText(g, [w, n]);
   },
@@ -8410,7 +8433,7 @@ function applyTheme() {
 // Mitteilungen und Rückfragen. Einfache Zeichen (✔ ✕ ✎ ↑ ↓ ★ …) bleiben – mit U+FE0E immer einfarbig.
 // Behälter, die danach leer sind (z. B. das große Symbol über einer Frage), werden ausgeblendet (.plain-empty).
 const plainOn = () => !!(data.profile && data.profile.look === 'plain');
-const PLAIN_KEEP = new Set([...'✔✓✕✎★☆↑↓⇅⇄↔↕⬆⬇▶◀‹›→←−+']);
+const PLAIN_KEEP = new Set([...'✔✓✕✎★☆↑↓⇅⇄↔↕⬆⬇▶◀‹›→←↘↗↩−+']);  // ↘ = Reduktions-Teil-Satz (v212)
 const PLAIN_MAP = { '🗑': '✕', '⏳': '–', '⏭': '–' };  // Symbole, die allein in Knöpfen/Kästchen stehen
 const PLAIN_RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2})[︎️]?\p{Emoji_Modifier}?(?:‍\p{Extended_Pictographic}[︎️]?\p{Emoji_Modifier}?)*( ?)|️|⃣/gu;
 function plainStrip(s) {

@@ -235,6 +235,35 @@ const TOURS = {
     { id: 'share-send', sel: '[data-action="share-send"]', title: 'Teilen',
       text: 'Öffnet das Teilen-Menü deines Handys, z. B. für WhatsApp oder Instagram. Mit „Bild speichern“ landet es in deinen Fotos bzw. Downloads.' },
   ],
+  // v212: bisher ohne Einführung
+  cyclereview: [
+    { id: 'rev-tiles', sel: '.review-tiles', title: 'Dein Zyklus in Zahlen',
+      text: 'Hier siehst du auf einen Blick, was du in diesem Zyklus geschafft hast: Bestleistungen, wie viel stärker du im Schnitt geworden bist, wie viel Gewicht du bewegt hast und wie viele Sätze es waren.' },
+    { id: 'rev-gains', sel: '.review-list', title: 'Deine größten Fortschritte',
+      text: 'Die Übungen, bei denen du am meisten zugelegt hast. Frühere Rückblicke findest du jederzeit im Verlauf ganz unten unter „Zyklus-Rückblicke“.' },
+  ],
+  cardio: [
+    { id: 'cardio-kind', sel: '.cardio-types', title: 'Aktivität wählen',
+      text: 'Wähle, was du gemacht hast, und darunter, wie anstrengend es war. Aus Aktivität, Anstrengung, Dauer und deinem Körpergewicht schätzt die App die verbrauchten Kalorien.' },
+    { id: 'cardio-own', sel: '[data-field="cardio-in"][data-k="kcal"]', title: 'Eigener Wert',
+      text: 'Zeigt deine Uhr einen Kalorienwert an, kannst du ihn hier eintragen – er ersetzt dann die Schätzung der App. Uhren schätzen oft eher zu hoch.' },
+  ],
+  mcal: [
+    { id: 'mc-grid', sel: '.mc-cal .mc-grid:not(.mc-wd)', title: 'Dein Kalender',
+      text: 'Tipp den ersten Tag einer Periode an, um ihn einzutragen. Die übrigen Phasen und die nächste Periode („erwartet“) rechnet die App selbst aus. Nochmal tippen entfernt den Eintrag.' },
+    { id: 'mc-today', sel: '[data-action="mc-today"]', title: 'Schnell eintragen',
+      text: 'Hat deine Periode heute begonnen, genügt ein Tipp hier.' },
+    { id: 'mc-help', sel: '.mc-help > summary', title: 'So funktioniert es',
+      text: 'Hier steht ausführlich, wie der Kalender rechnet und was er in der App verändert – zum Beispiel, dass Tage mit Wassereinlagerung nicht in deinen Gewichtsverlauf eingehen.' },
+  ],
+  complreport: [
+    { id: 'crep-weeks', sel: '.rep-weeks', title: 'Zeitraum',
+      text: 'Wähle, wie viele Wochen der Bericht zeigen soll – für einen Termin reichen meist die letzten 4 bis 8 Wochen.' },
+    { id: 'crep-send', sel: '[data-action="crep-send"]', title: 'Dein Bericht als Bild',
+      text: 'Darüber siehst du deinen Bericht: Verlauf je Stelle, betroffene Übungen und deine Notizen auf einem Bild. Hier verschickst du es, z. B. per Messenger oder E-Mail an die Praxis – oder du zeigst es beim Termin einfach auf dem Handy.' },
+    { id: 'crep-text', sel: '[data-action="crep-text"]', title: 'Als Text',
+      text: 'Lieber als Text, zum Beispiel für eine E-Mail? Dann diesen Knopf nehmen.' },
+  ],
   library: [
     { id: 'lib-search', sel: '.lib-search', title: 'Suchen',
       text: 'Tipp einen Teil des Namens ein, z. B. „Rudern“ oder „Band“.' },
