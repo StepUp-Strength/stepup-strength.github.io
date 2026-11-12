@@ -493,7 +493,7 @@ function fmtDate(iso, long) {
 }
 
 // Tonnage = Summe aus Gewicht × Wiederholungen aller Sätze (Sätze ohne Gewicht zählen nicht)
-const setsTonnage = sets => sets.reduce((a, x) => a + (x.weight != null && x.reps != null ? x.weight * x.reps : 0)
+const setsTonnage = sets => sets.filter(x => !x.outlier).reduce((a, x) => a + (x.weight != null && x.reps != null ? x.weight * x.reps : 0)
   + (x.subs || []).reduce((b, y) => b + (y.weight != null && y.reps != null ? y.weight * y.reps : 0), 0), 0);
 const sessionTonnage = s => s.entries.reduce((sum, e) => sum + setsTonnage(e.sets), 0);
 
@@ -502,8 +502,25 @@ const fmtTons = kg => kg >= 1000
   ? `${(Math.round(kg / 100) / 10).toLocaleString('de-DE')} t`
   : `${Math.round(kg).toLocaleString('de-DE')} kg`;
 
+/* Ausreißer (v215, User 2026-11-12): extreme Tippfehler, die trotz Rückfrage gespeichert wurden (Komma/Null vergessen),
+   bleiben sichtbar, zählen aber nicht für Vorschläge, Max., Deload, Bestleistungen und Tonnage.
+   Gewicht ≥ 2,5× oder ≤ 0,4× des Vorschlags bzw. des letzten Gewichts; Wdh. ≥ 3× und mind. 15 mehr. Zu wenig Wdh. = echt. */
+const OUTLIER_HI = 2.5, OUTLIER_LO = 0.4;
+function setOutlier(s, ref) {
+  if (!s || !ref) return false;
+  if (s.weight != null && ref.weight > 0 && (s.weight >= ref.weight * OUTLIER_HI || s.weight <= ref.weight * OUTLIER_LO)) return true;
+  return s.reps != null && ref.reps > 0 && s.reps >= ref.reps * 3 && s.reps >= ref.reps + 15;
+}
+// Bezug: Vorschlag des Satzes, sonst erster normaler Satz vom letzten Mal
+function outlierRef(name, planned) {
+  if (planned && (planned.weight > 0 || planned.reps > 0)) return planned;
+  const last = lastEntry(name);
+  return last ? ofVariant(last.sets, '')[0] || null : null;
+}
+
 function fmtSet(s) {
-  const tank = (s.rir != null && feat('tr-rir-input') ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '');
+  const tank = (s.rir != null && feat('tr-rir-input') ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '')
+    + (s.outlier ? ' · ⚠ zählt nicht (Ausreißer)' : '');
   // Teil-Sätze (v211): Reduktion „→ 65 × 8 → 52,5 × 6“, Myo „+ 4+4+3“
   const subs = !(s.subs || []).length ? '' : s.variant === 'myo' ? ` + ${s.subs.map(x => x.reps).join('+')}`
     : ' ' + s.subs.map(x => `→ ${x.weight != null ? `${fmtNum(x.weight)} × ` : ''}${x.reps}`).join(' ');
@@ -2045,7 +2062,8 @@ const VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam', drop: 'Red
 const VARIANT_SHORT = { pause: 'P', slow: 'L', drop: 'R', myo: 'M' };
 const EXEC_VARIANTS = { '': 'Normal', pause: 'mit Pause', slow: 'langsam' };  // Ausführung im Plan (Techniken extra)
 const variantOf = s => (s && s.variant) || '';
-const ofVariant = (sets, v) => (sets || []).filter(s => variantOf(s) === v);
+// v215: als Ausreißer markierte Sätze (s.outlier) zählen bei keinem Vergleich mit
+const ofVariant = (sets, v) => (sets || []).filter(s => variantOf(s) === v && !s.outlier);
 
 /* ---------- Intensitätstechniken (v211, User-Wunsch 2026-11-11) ----------
    Reduktionssatz (drop) und Myo-Satz (myo) sind Ausführungen eines Satzes wie „langsam“: Der Hauptsatz behält seine Vorgabe
@@ -2351,7 +2369,7 @@ function updateNextHints(ei) {
 // mit Gewicht entweder das daraus geschätzte „Max. bei 10 Wdh.“ (Gewicht und Wdh., der Tank nicht – nur was wirklich
 // geschafft wurde) oder ein neues Höchstgewicht; ohne Gewicht die Wdh. (Band: je stärkere Stufe BAND_STEP_REPS Wdh.
 // mehr). Wer eine Übung zum ersten Mal macht, hat noch keine Bestleistung zu schlagen – dann gibt es noch keinen Stern.
-const pbKey = s => `${variantOf(s)}|${s.weight != null && s.weight > 0 ? 'w' : 'r'}`;
+const pbKey = s => `${s.outlier ? 'aus:' : ''}${variantOf(s)}|${s.weight != null && s.weight > 0 ? 'w' : 'r'}`;
 function pbScore(s, band) {
   if (!s || s.reps == null || s.reps <= 0) return null;
   if (s.weight != null && s.weight > 0) return s.weight / repFactor(s.reps);
@@ -2637,16 +2655,24 @@ const repsAtWeight = (reps, rir, from, to) => Math.floor(capacityAt(reps + rir, 
 
 // Innerhalb eines Trainings nie schwerer als der Satz davor (derselben Ausführung): sonst dessen Gewicht,
 // Wdh. passend umgerechnet. Leichter werden darf ein Satz (Ermüdung), wieder schwerer werden nicht (kein Zickzack).
+// v216 (User 2026-11-12): bei gleichem Gewicht höchstens SAME_W_PLUS Wdh. mehr als der Satz davor – sonst z. B. nach der
+// Bremse „2,5 kg × 5, dann 2,5 kg × 23“ (Satz 1 nach Plan, Satz 2 aus seiner eigenen, viel leichteren Vorwoche)
+const SAME_W_PLUS = 2;
 function notHeavierThanBefore(en, i, v, set) {
   const w = parseNum(set.weight);
   if (w == null) return set;
   let before = null;
   for (let j = i - 1; j >= 0; j--) if (en.sets[j] && variantOf(en.sets[j]) === v) { before = en.sets[j]; break; }
   const pw = before && parseNum(before.weight);
-  if (pw == null || w <= pw) return set;
+  const cap = s => {
+    const pr = parseNum(before.reps), r = parseNum(s.reps);
+    return pr != null && r != null && parseNum(s.weight) === pw && r > pr + SAME_W_PLUS ? { ...s, reps: String(pr + SAME_W_PLUS) } : s;
+  };
+  if (pw == null) return set;
+  if (w <= pw) return cap(set);
   const rir = rirAt(en.target, i);
   const reps = Math.max(minReps(), repsAtWeight(parseNum(set.reps), rir, w, pw));
-  return { ...set, weight: fmtNum(pw), reps: String(reps), baseWeight: pw };
+  return cap({ ...set, weight: fmtNum(pw), reps: String(reps), baseWeight: pw });
 }
 
 // Satz i (neu) vorschlagen und den ursprünglichen Vorschlag für die Bremse merken
@@ -5517,7 +5543,8 @@ function startSessionEdit(s) {
     id: s.id,
     entries: s.entries.map(e => ({
       comment: e.comment || '',
-      sets: e.sets.map(st => ({ weight: txt(st.weight), reps: txt(st.reps), rir: txt(st.rir), variant: st.variant, ...(st.subs ? { subs: st.subs } : {}) })),
+      sets: e.sets.map(st => ({ weight: txt(st.weight), reps: txt(st.reps), rir: txt(st.rir), variant: st.variant, ...(st.subs ? { subs: st.subs } : {}),
+        ...(st.outlier ? { outlier: 1, w0: st.weight } : {}) })),
     })),
   };
 }
@@ -5555,9 +5582,16 @@ function saveSessionEdit() {
   const s = data.sessions.find(x => x.id === sessionEdit.id);
   const entries = [];
   sessionEdit.entries.forEach((e, ei) => {
+    const orig = s.entries[ei] || {};
     const sets = e.sets
-      .map(st => ({ weight: parseNum(st.weight), reps: parseNum(st.reps), rir: parseNum(st.rir),
-        ...(st.variant ? { variant: st.variant } : {}), ...(st.subs && isTech(st.variant) ? { subs: st.subs } : {}) }))
+      .map((st, i) => {
+        const x = { weight: parseNum(st.weight), reps: parseNum(st.reps), rir: parseNum(st.rir),
+          ...(st.variant ? { variant: st.variant } : {}), ...(st.subs && isTech(st.variant) ? { subs: st.subs } : {}) };
+        // v215: Ausreißer neu prüfen – korrigiert zählt der Satz wieder; ohne Vorschlag bleibt die Markierung, solange das Gewicht gleich ist
+        const pl = (orig.planned || [])[i];
+        if (pl && (pl.weight > 0 || pl.reps > 0) ? setOutlier(x, pl) : st.outlier && x.weight === st.w0) x.outlier = 1;
+        return x;
+      })
       .filter(st => st.weight != null || st.reps != null);
     if (!sets.length) return;
     const en = { ...s.entries[ei], sets };
@@ -5992,6 +6026,16 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 216, date: '2026-11-12', items: [
+    ['Kleine Gewichte bis 10 kg: Ist der nächste Gewichtsschritt sehr groß, fragt die App einmal, ob du an dem Gerät 1,25 kg feiner einstellen kannst.'],
+    ['Nach einem verfehlten Satz bekommen die folgenden Sätze mit gleichem Gewicht höchstens 2 Wdh. mehr als der Satz davor.'],
+  ] },
+  { v: 215, date: '2026-11-12', items: [
+    ['Tippfehler, die trotz Rückfrage gespeichert wurden (z. B. 100 statt 10 kg), zählen nicht mehr für Vorschläge und Bestleistungen. Im Verlauf steht dann „zählt nicht“ – korrigierst du den Satz, zählt er wieder.'],
+    ['Deload-Woche: Ein deutlich verfehlter Satz der Vorwoche ist kein Maßstab mehr – so wird der Deload nie schwerer als das, was du geschafft hast.'],
+    ['Große Schrift: Knöpfe und Tabellen passen jetzt überall auf den Bildschirm.'],
+    ['Vitamine & Mineralstoffe: Die Richtwerte passen jetzt zu deinem Alter.', 'nut-micro'],
+  ] },
   { v: 214, date: '2026-11-11', items: [
     ['🔬 Vitamine & Mineralstoffe im Ernährungstagebuch: 29 Nährstoffe mit den Richtwerten der DGE – als Durchschnitt über 7 Tage oder je Tag.', 'nut-micro'],
     ['💊 Nahrungsergänzung eintragen oder scannen – gespeichert wie ein Lebensmittel, gezählt in Stück.', 'nut-micro'],
@@ -6419,9 +6463,23 @@ function bandShift(e, band) {
 
 // Deload mit Gewicht: erster normaler Satz (mit Gewicht) im letzten Training ohne Deload – bevorzugt neuester Zyklus
 // und derselbe Trainingstag (null ohne Training)
+// v215: ein deutlich verfehlter Satz (Bremse) ist kein Maßstab – sonst wäre der Deload schwerer als zuletzt geschafft;
+// verfehlt jeder Satz das Ziel, gilt der leichteste
 function lastWorkSet(name, dayId, t = null) {
   const e = findWeekEntry(name, dayId, () => true);
-  const s = (e && ofVariant(e.sets, '').find(x => x.weight != null && x.reps != null)) || null;
+  const sets = e ? ofVariant(e.sets, '') : [];
+  const idx = sets.map((x, i) => i).filter(i => sets[i].weight != null && sets[i].reps != null);
+  const ok = idx.filter(i => !missed(e, '', i));
+  const i = ok.length ? ok[0] : idx.length ? idx.reduce((a, b) => (sets[b].weight < sets[a].weight ? b : a)) : -1;
+  let s = i >= 0 ? sets[i] : null;
+  // alle verfehlt: erst das Gewicht, mit dem das geplante Ziel geklappt hätte (wie die Bremse), dann gilt der Deload-Abschlag
+  if (s && !ok.length && t) {
+    const pl = ofVariant(e.planned, '')[i];
+    const goal = pl && pl.reps != null ? pl.reps : s.reps;
+    const cap = s.reps + (s.rir != null ? s.rir : t.rir || 0);
+    const fit = weightForGoal(cap, s.weight, { step: 2.5, ...t }, 0, goal);
+    if (fit && fit.weight != null && fit.weight < s.weight) s = { ...s, weight: fit.weight, reps: fit.reps };
+  }
   return s && t ? condSet(s, e.fat || 0, t.fat || 0, { step: 2.5, ...t }) : s;
 }
 
@@ -6584,11 +6642,27 @@ function highRepHint(en) {
     ${feat('tr-step') && !t.weights ? 'Wähle oben eine kleinere Steigerung (z. B. 1,25 kg), führe' : 'Führe'} die Übung langsamer aus (3 Sekunden absenken) oder tausche sie über „⇄ Ersetzen“ gegen eine schwerere Variante.${hintBtns(en, 'high')}`;
 }
 
+/* v216 (User 2026-11-12): kleine Gewichte bis STEP_ASK_KG mit großem Sprung (Stufe > 25 % des Gewichts) – einmal je Übung
+   fragen, ob das Gerät 1,25 kg feiner kann. Ja = Steigerung 1,25 kg dauerhaft; Nein = bleibt (die App steigert dann eher
+   über Wdh.). Nicht bei Kurzhanteln (feste Größen), Heim-Gewichten, eigener Steigerung oder wenn schon gefragt. */
+const STEP_FINE = 1.25, STEP_ASK_KG = 10, STEP_ASK_JUMP = 0.25;
+function stepAskHint(en) {
+  const t = en.target, ex = planExercise(en.name);
+  if (!ex || ex.step != null || ex.stepAsked || t.weights || DUMBBELL.test(norm(en.name))) return '';
+  const w = parseNum((en.sets[0] || {}).weight), st = t.step || 2.5;
+  if (!(w > 0) || w > STEP_ASK_KG || st <= STEP_FINE || st / w <= STEP_ASK_JUMP) return '';
+  const ei = draft.entries.indexOf(en);
+  return `⚖️ Kleine Gewichte: Von ${fmtNum(w)} auf ${fmtNum(w + st)} kg wären ${Math.round(st / w * 100)} % mehr – ein großer Sprung.
+    Kannst du an diesem Gerät auch 1,25 kg feiner einstellen, z. B. mit einer kleinen Zusatzscheibe?
+    <span class="hint-btns"><button class="vchip" data-action="step-ask" data-ei="${ei}" data-v="1">Ja, in 1,25-kg-Schritten</button>
+      <button class="vchip" data-action="step-ask" data-ei="${ei}" data-v="0">Nein, geht nicht</button></span>`;
+}
+
 function bwHint(en) {
   const t = en.target;
   if (!t || t.own || t.deload) return '';
   if (!t.bodyweight) {
-    if (!t.weights) return highRepHint(en);
+    if (!t.weights) return stepAskHint(en) || highRepHint(en);
     return weightLowHint(en) || maxedHint(en) || highRepHint(en);
   }
   if (t.band) return bandHint(en);
@@ -6751,7 +6825,7 @@ function replaceExercise(en, name, max10) {
 // Ergebnis einer Übung fürs nächste Mal, gemessen am ersten normalen Satz (null, wenn Werte fehlen).
 // max10 steht auch im Ergebnis – für Ersatzübungen, die nicht im Plan stehen.
 function entryResult(en) {
-  const first = en.sets.find(s => !s.variant);
+  const first = en.sets.find(s => !s.variant && !s.outlier);
   if (!en.target || !first || first.weight == null || first.reps == null || first.rir == null) return null;
   const t = { step: 2.5, ...en.target };
   const result = progression(first, t);
@@ -6763,7 +6837,7 @@ function entryResult(en) {
 // Max. bei 10 Wdh. aus dem ersten normalen Satz: Wdh. + Tank = Wdh. bis zum Versagen bei diesem Gewicht
 // (Tank nicht eingetragen -> Ziel-Tank der Woche)
 function estimateMax10(en) {
-  const first = en.sets.find(s => !s.variant);
+  const first = en.sets.find(s => !s.variant && !s.outlier);
   if (!first || !first.weight || first.reps == null) return null;
   const rir = first.rir != null ? first.rir : en.target ? en.target.rir : 0;
   const fat = en.fat != null ? en.fat : (en.target && en.target.fat) || 0;
@@ -6795,6 +6869,7 @@ function saveTraining() {
         .map(s => ({
           weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir),
           ...(s.variant ? { variant: s.variant } : {}),
+          ...(setOutlier({ weight: parseNum(s.weight), reps: parseNum(s.reps) }, outlierRef(en.name, (en.planned || [])[en.sets.indexOf(s)])) ? { outlier: 1 } : {}),
           ...(s.open ? { open: 1 } : {}),
           ...(isTech(s.variant) && s.subs ? { subs: s.subs.map((x, j) => ({ weight: subWeight(en, en.sets.indexOf(s), j), reps: parseNum(x.reps) }))
             .filter(x => x.reps != null) } : {}),  // Teil-Sätze (v211)
@@ -7453,6 +7528,14 @@ const actions = {
     if (!e) return;
     e.commentHidden = true;
     saveData(); render();
+  },
+  // v216: Antwort auf die Frage nach 1,25-kg-Schritten (einmal je Übung)
+  'step-ask': el => {
+    const en = draft.entries[el.dataset.ei];
+    const ex = en && planExercise(en.name);
+    if (ex) { ex.stepAsked = 1; saveData(); }
+    if (el.dataset.v === '1') { actions['tr-step']({ dataset: { ei: el.dataset.ei, v: String(STEP_FINE) } }); toast('Steigerung jetzt 1,25 kg ✔'); }
+    else { saveDraft(); render(); }
   },
   'tr-step-open': el => {
     const en = draft.entries[el.dataset.ei];

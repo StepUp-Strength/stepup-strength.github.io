@@ -262,8 +262,9 @@ function trainingProgress() {
 
     for (const e of s.entries) {
       const k = nameKey(e.name), n = norm(e.name);
-      const maxW = Math.max(0, ...e.sets.map(x => x.weight || 0));
-      const maxReps = Math.max(0, ...e.sets.map(x => x.reps || 0));
+      const real = e.sets.filter(x => !x.outlier);  // v215: Ausreißer zählen nicht
+      const maxW = Math.max(0, ...real.map(x => x.weight || 0));
+      const maxReps = Math.max(0, ...real.map(x => x.reps || 0));
       c.exCount[k] = (c.exCount[k] || 0) + 1;
       if (!known.has(k)) { known.add(k); series.push({ def: loyaltySeries(e.name, k), i: 0 }); }
       // Gewichtsserie startet beim ersten Gewicht – Meilensteine liegen immer darüber
@@ -1143,7 +1144,7 @@ function cycleReview(cs) {
     r.weeks = Math.max(r.weeks, s.week || 0);
     if (s.duration) r.minutes += s.duration;
     s.entries.forEach((e, ei) => {
-      const done = e.sets.filter(x => x.reps > 0);
+      const done = e.sets.filter(x => x.reps > 0 && !x.outlier);
       r.sets += done.length;
       r.weekSets[s.week] = (r.weekSets[s.week] || 0) + done.length;
       for (const x of done) { r.reps += x.reps; if (x.weight > 0) r.kg += x.weight * x.reps; }

@@ -2931,3 +2931,19 @@ header.tr h1 { font-size: 20px; letter-spacing: -.01em; }
 .mic-form { margin-top: 10px; }
 .mic-form > summary { cursor: pointer; font-weight: 650; padding: 6px 0; }
 .mic-in span { font-size: 14px; }
+
+/* ---------- v215: große Schrift (Optionen → Aussehen) – nichts ragt über den Rand ---------- */
+.food-tools { flex-wrap: wrap; }
+.food-tools .btn { flex: 1 1 auto; }
+html[data-size="l"] table.rir th, html[data-size="l"] table.rir td,
+html[data-size="xl"] table.rir th, html[data-size="xl"] table.rir td { padding-left: 2px; padding-right: 2px; }
+html[data-size="xl"] table.rir { font-size: 14px; }
+html[data-size="xl"] table.rir th { font-size: 11px; letter-spacing: 0; }
+html[data-size="xl"] table.rir th:first-child, html[data-size="xl"] table.rir td:first-child { white-space: normal; }
+html[data-size="xl"] .stepper { gap: 6px; }
+html[data-size="xl"] .row > span { min-width: 0; }
+html[data-size="l"] .ex-chips, html[data-size="xl"] .ex-chips { flex-wrap: wrap; min-width: 0; }
+html[data-size="l"] .ex-chips .step-chip, html[data-size="xl"] .ex-chips .step-chip { white-space: normal; text-align: left; }
+html[data-size="l"] .prog-def, html[data-size="xl"] .prog-def, html[data-size="l"] .prog-def .variants, html[data-size="xl"] .prog-def .variants { flex-wrap: wrap; min-width: 0; }
+html[data-size="xl"] .ex-meta { flex-wrap: wrap; }
+html[data-size="l"] .prog-def .variants, html[data-size="xl"] .prog-def .variants, html[data-size="xl"] .ex-meta .ex-chips { flex: 1 1 100%; }

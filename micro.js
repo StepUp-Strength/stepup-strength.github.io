@@ -71,7 +71,7 @@ const MICRO_WOMEN = {
 // Altersgruppe der DGE-Tabellen: 0 = 19 bis unter 25, 1 = 25 bis unter 51, 2 = 51 bis unter 65, 3 = ab 65
 function microAgeIdx() {
   const n = data.nutrition || {};
-  const age = n.ageYear ? new Date().getFullYear() - n.ageYear : n.age;
+  const age = n.age != null && typeof nutAge === 'function' ? nutAge(n) : null;  // v215: ageYear ist das Jahr der Eingabe
   return !age ? 1 : age < 25 ? 0 : age < 51 ? 1 : age < 65 ? 2 : 3;
 }
 // Frauen 51–64: Periode noch eingetragen (Zykluskalender, letzte 90 Tage)?
@@ -215,7 +215,7 @@ function renderMicro(p) {
   }
   return h + `<details class="card nut-help"><summary>So sind die Werte zu verstehen</summary>
       <p>Die Richtwerte sind die Referenzwerte der Deutschen Gesellschaft für Ernährung (DGE), passend zu ${c.f ? 'Frauen' : 'Männern'}
-        ${['von 19 bis 24', 'von 25 bis 50', 'von 51 bis 64', 'ab 65'][c.ai]} Jahren${(data.nutrition || {}).age || (data.nutrition || {}).ageYear ? '' : ' (Alter nicht eingetragen – angenommen 25 bis 50)'}.
+        ${['von 19 bis 24', 'von 25 bis 50', 'von 51 bis 64', 'ab 65'][c.ai]} Jahren${(data.nutrition || {}).age != null ? '' : ' (Alter nicht eingetragen – angenommen 25 bis 50)'}.
         Sie sind so bemessen, dass fast alle gesunden Menschen damit gut versorgt sind – wer darunter liegt, hat deshalb nicht automatisch zu wenig.</p>
       <p>Die Lebensmittelwerte sind Durchschnittswerte (Bundeslebensmittelschlüssel des Max Rubner-Instituts). Wie viel der Körper davon
         wirklich aufnimmt, hängt von vielem ab. <b>Ob dir etwas fehlt, kann nur ein Bluttest zeigen</b> – die App hält nur fest, was du gegessen hast.</p>
