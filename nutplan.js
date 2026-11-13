@@ -1,4 +1,4 @@
-/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
+/* LockYourGains · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 /* ---------- Ernährungsplan importieren (Excel, CSV, Google Sheets, Kopieren & Einfügen) ----------
    data.nutPlan = { name, importedAt, start, assign: 'weekday' | 'daytype' | 'rotation' | 'same',
                     days: [{ label, kind?: 'train'|'rest', weekday?: 0–6 (Mo = 0), kcal, p, c, f,
@@ -258,19 +258,19 @@ function renderNutPlan() {
   }
   return `<div class="card wiz-q">
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📋</span><h2>Ernährungsplan übernehmen</h2></div>
-      <p class="hint wiz-q-explain">Du hast einen festen Ernährungsplan, z. B. von deinem Ernährungsberater oder Trainer? Übernimm ihn einmal –
+      <p class="hint wiz-q-explain explain">Du hast einen festen Ernährungsplan, z. B. von deinem Ernährungsberater oder Trainer? Übernimm ihn einmal –
         dann zeigt die App an jedem Tag automatisch die Ziele aus deinem Plan. Enthält er auch die Lebensmittel, kannst du im Tagebuch
         jede Mahlzeit mit einem Tipp „wie geplant“ eintragen.</p>
       <button class="btn primary" data-action="np-pick">📄 Datei wählen (Excel oder CSV)</button>
       <button class="btn" data-action="np-paste-open">📋 Tabelle einfügen</button>
       ${npPasteOpen ? `<textarea class="inp comment" id="np-paste" rows="6" placeholder="In Excel oder Google Sheets die Zellen markieren (mit Überschriften), kopieren und hier einfügen"></textarea>
         <button class="btn primary" data-action="np-paste-go">Übernehmen</button>` : ''}
-      <p class="hint nut-small"><b>Google Sheets:</b> Datei → Herunterladen → Microsoft Excel (.xlsx) bzw. am Handy „Teilen und exportieren →
+      <p class="hint nut-small explain"><b>Google Sheets:</b> Datei → Herunterladen → Microsoft Excel (.xlsx) bzw. am Handy „Teilen und exportieren →
         Kopie senden“ – oder einfach die Zellen kopieren und oben einfügen. Die Datei wird nur auf deinem Handy gelesen, nichts wird hochgeladen.</p>
     </div>
     <div class="card">
       <h2>Vorlagen</h2>
-      <p class="hint nut-small">Noch keinen Plan als Tabelle? Lade eine Vorlage herunter, öffne sie in Excel oder Google Sheets, trag deine Werte
+      <p class="hint nut-small explain">Noch keinen Plan als Tabelle? Lade eine Vorlage herunter, öffne sie in Excel oder Google Sheets, trag deine Werte
         ein und importiere sie hier. Die erste Zeile sind die Überschriften, die Spalten kannst du beim Import auch frei zuordnen.</p>
       <button class="btn" data-action="np-template" data-k="targets">⬇ Vorlage: nur Tagesziele</button>
       <button class="btn" data-action="np-template" data-k="meals">⬇ Vorlage: mit Mahlzeiten und Lebensmitteln</button>
@@ -375,7 +375,7 @@ Object.assign(actions, {
   'np-save': () => {
     const { days } = npBuild();
     if (!days.length) return;
-    if (nutPlanActive() && !confirm('Den bisherigen Ernährungsplan durch den neuen ersetzen?')) return;
+    if (nutPlanActive() && !askOk('Den bisherigen Ernährungsplan durch den neuen ersetzen?')) return;
     data.nutPlan = { name: npImport.name.trim() || 'Ernährungsplan', importedAt: todayISO(), start: todayISO(), assign: npImport.assign, days, typeFor: {} };
     npImport = null;
     saveData();
@@ -383,7 +383,7 @@ Object.assign(actions, {
     go('nutrition');
   },
   'np-end': () => {
-    if (!confirm('Ernährungsplan beenden?\n\nDas Tagesziel kommt dann wieder aus der Berechnung der App. Dein Tagebuch bleibt, wie es ist.')) return;
+    if (!askOk('Ernährungsplan beenden?\n\nDas Tagesziel kommt dann wieder aus der Berechnung der App. Dein Tagebuch bleibt, wie es ist.')) return;
     data.nutPlan = null;
     saveData();
     render();

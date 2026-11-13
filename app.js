@@ -1,4 +1,4 @@
-/* StepUp Strength · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
+/* LockYourGains · © 2026 Alex Hundt · Alle Rechte vorbehalten – siehe LICENSE */
 'use strict';
 
 /* ---------- Fehlerprotokoll (v205, User-Wunsch 2026-11-11) ---------- */
@@ -548,8 +548,110 @@ function toast(msg) {
   $toast.textContent = msg;
   $toast.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { $toast.hidden = true; }, 2200);
+  // lange Mitteilungen bleiben länger stehen (v219)
+  toast.timer = setTimeout(() => { $toast.hidden = true; }, Math.min(6000, 2200 + Math.max(0, String(msg).length - 50) * 35));
 }
+
+/* ---------- Eigene Fenster statt System-Pop-ups (v219, User 2026-11-12) ----------
+   alert → uiDialog (wartet nicht – danach kommt im Code meist ohnehin return). confirm → askOk: zeigt das Fenster und gibt
+   erst einmal false zurück; bei „OK“ wird die Aktion (bzw. rerun) noch einmal ausgeführt, die bestätigte Frage gilt dann
+   als beantwortet (askPassed). So bleibt der Code synchron. prompt → uiPrompt (async). Tests/Simulation, die window.confirm
+   oder window.prompt selbst setzen, bekommen wie bisher sofort deren Antwort. */
+const NATIVE_CONFIRM = window.confirm, NATIVE_PROMPT = window.prompt;
+let dlgChain = Promise.resolve();
+const dlgCap = s => s.charAt(0).toUpperCase() + s.slice(1);
+function dlgParts(msg) {
+  let text = String(msg == null ? '' : msg).trim(), ok = null, cancel = null;
+  const m = text.match(/\n*OK = ([^,\n]+), Abbrechen = ([^\n]+)$/);
+  if (m) { ok = dlgCap(m[1].trim()); cancel = dlgCap(m[2].trim()); text = text.slice(0, m.index).trim(); }  // „OK = so speichern, Abbrechen = zurück“
+  const paras = text.split(/\n\s*\n/);
+  // erster Absatz als Überschrift, wenn er kurz ist (Frage oder Satz)
+  const title = paras.length > 1 && paras[0].length <= 120 ? paras.shift() : null;
+  const body = paras.map(p => {
+    const lines = p.split('\n');
+    if (lines.every(l => /^\s*[•\-]/.test(l))) return `<ul>${lines.map(l => `<li>${esc(l.replace(/^\s*[•\-]\s*/, ''))}</li>`).join('')}</ul>`;
+    return `<p>${lines.map(esc).join('<br>')}</p>`;
+  }).join('');
+  return { title, body, ok, cancel };
+}
+// opts: { msg, title, ok, cancel, danger, input: { value, type, placeholder }, choices: [{ label, value, primary, danger }] }
+function uiDialog(opts) {
+  const run = () => new Promise(resolve => {
+    const p = dlgParts(opts.msg);
+    const title = opts.title || p.title;
+    const okLabel = p.ok || opts.ok || 'OK', cancelLabel = opts.cancel === false ? null : p.cancel || opts.cancel || (opts.confirm ? 'Abbrechen' : null);
+    const choices = opts.choices || [...(cancelLabel ? [{ label: cancelLabel, value: opts.input ? null : false }] : []),
+      { label: okLabel, value: opts.input ? '__input' : true, primary: !opts.danger, danger: !!opts.danger }];
+    const back = document.createElement('div');
+    back.className = 'dlg-back';
+    back.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+        ${title ? `<h2 class="dlg-title">${esc(title)}</h2>` : ''}<div class="dlg-text">${p.body}</div>
+        ${opts.input ? `<input class="inp dlg-inp" type="${opts.input.type || 'text'}" autocomplete="off" value="${esc(opts.input.value || '')}" placeholder="${esc(opts.input.placeholder || '')}">` : ''}
+        ${opts.copy != null ? `<textarea class="inp dlg-copy" rows="5" readonly>${esc(opts.copy)}</textarea>` : ''}
+        <div class="dlg-btns${choices.length > 2 ? ' many' : ''}">${choices.map((c, i) =>
+          `<button class="btn ${c.danger ? 'danger-fill' : c.primary ? 'primary' : ''}" data-dlg="${i}">${esc(c.label)}</button>`).join('')}</div>
+      </div>`;
+    const done = v => {
+      document.removeEventListener('keydown', key, true);
+      back.classList.remove('show');
+      setTimeout(() => back.remove(), 180);
+      resolve(v);
+    };
+    const pick = i => { const c = choices[i]; done(c.value === '__input' ? back.querySelector('.dlg-inp').value : c.value); };
+    const key = e => {
+      if (e.key === 'Escape' && cancelLabel) { e.preventDefault(); e.stopPropagation(); done(opts.input ? null : false); }
+      if (e.key === 'Enter' && !e.shiftKey && !(e.target && e.target.tagName === 'TEXTAREA')) { e.preventDefault(); pick(choices.length - 1); }
+    };
+    back.addEventListener('click', e => {
+      const b = e.target.closest('[data-dlg]');
+      if (b) { e.stopPropagation(); pick(Number(b.dataset.dlg)); return; }
+      if (e.target === back && cancelLabel) done(opts.input ? null : false);
+    });
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(back);
+    requestAnimationFrame(() => back.classList.add('show'));
+    const f = back.querySelector('.dlg-inp') || back.querySelector('.dlg-copy');  // Knöpfe nicht vorab fokussieren (Rahmen)
+    if (f) setTimeout(() => { try { f.focus(); if (f.select) f.select(); } catch (e) { /* egal */ } }, 50);
+  });
+  const p = dlgChain.then(run, run);
+  dlgChain = p.catch(() => {});
+  return p;
+}
+window.alert = msg => { uiDialog({ msg }); };
+// Bestätigen: Knopf-Beschriftung aus dem Text („… löschen?“ → „Löschen“)
+function confirmOpts(msg) {
+  const t = String(msg).split(/\n\s*\n/)[0];  // nur der erste Absatz (die eigentliche Frage)
+  const verb = (t.match(/(?:^|[^\wäöüß])(löschen|entfernen|verwerfen|zurücksetzen|ersetzen|beenden)(?![\wäöüß])/i) || [])[1];
+  const danger = /(?:^|[^\wäöüß])(löschen|verwerfen)(?![\wäöüß])/i.test(t);
+  return { msg, confirm: true, ok: verb ? dlgCap(verb.toLowerCase()) : 'Ja', danger };
+}
+function uiConfirm(msg) {
+  if (window.confirm !== NATIVE_CONFIRM) return Promise.resolve(!!window.confirm(msg));
+  return uiDialog(confirmOpts(msg));
+}
+let actionNow = null;      // gerade laufende Aktion (Klick) – wird nach „OK“ noch einmal ausgeführt
+let askPassed = new Set(); // in dieser Wiederholung schon bestätigte Fragen
+let askPending = 0;        // offene Rückfragen (bei zwei Fragen nacheinander bleibt die erste bestätigt)
+function askOk(msg, rerun) {
+  if (window.confirm !== NATIVE_CONFIRM) return window.confirm(msg);  // Tests/Simulation: wie bisher sofort
+  if (askPassed.has(msg)) return true;
+  const a = actionNow;
+  const again = rerun || (a ? () => { const keep = actionNow; actionNow = a; try { actions[a.name](a.el); } finally { actionNow = keep; } } : null);
+  askPending++;
+  uiDialog(confirmOpts(msg)).then(ok => {
+    askPending--;
+    if (!ok || !again) { if (!askPending) askPassed.clear(); return; }
+    askPassed.add(msg);
+    try { again(); } catch (e) { console.error(e); } finally { if (!askPending) askPassed.clear(); }
+  });
+  return false;
+}
+function uiPrompt(msg, value = '', type = 'text') {
+  if (window.prompt !== NATIVE_PROMPT) return Promise.resolve(window.prompt(msg, value));
+  return uiDialog({ msg, confirm: true, ok: 'OK', input: { value, type } });
+}
+// Text zum Kopieren anbieten (wenn Teilen und Zwischenablage nicht gehen)
+function uiCopy(text, msg = 'Zum Kopieren markieren und kopieren:') { return uiDialog({ msg, copy: text, ok: 'Fertig' }); }
 
 /* ---------- Erfolgs-Mitteilung ---------- */
 
@@ -1249,7 +1351,7 @@ const ASSIST = /curls|bizeps|seitheben|frontheben|trizeps|kickbacks|stirndrucken
 
 // Eigengewichtsübungen: Steigerung nur über die Wdh. (kg-Spalte = Körpergewicht), kein automatisches Aufwärmen.
 // ex.bwLoad = true: Gewichtsprogression trotzdem an (z. B. mit Zusatzgewicht) – dann wie eine normale Übung.
-const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge|pike-liegestutze|diamant-liegestutze|rudern umgekehrt|kniebeugen eigengewicht|einbeinige kniebeugen|bulgarian split squats ohne|ausfallschritte eigengewicht|beincurls am boden|hip thrust am sofa|seitliches beinheben|clamshells|copenhagen|wadenheben an der treppe|dead bug|superman|y-t-w)/;
+const BODYWEIGHT = /^(klimmzuge(?!.*(zusatzgewicht|assist))|dips \((brust|trizeps)\)|bankdips|liegestutze|hyperextensions \(|sissy squats|nordic|crunches( schragbank)?$|sit-ups|beinheben|knieheben|plank|seitstutz|bauchroller|burpees|glute bridge|pike-liegestutze|diamant-liegestutze|rudern umgekehrt|kniebeugen eigengewicht|einbeinige kniebeugen|bulgarian split squats ohne|ausfallschritte eigengewicht|beincurls am boden|hip thrust am sofa|seitliches beinheben|clamshells|copenhagen|wadenheben an der treppe|dead bug|superman|y-t-w|archer-|pseudo-planche|einarmige (liegestutze|klimmzuge)|klatsch-|handstand|ring-|dips an der geraden|planche|negative klimmzuge|schulterblatt-klimmzuge|muscle-ups|front lever|back lever|toter hang|shrimp|sprung-kniebeugen|wandsitzen|hollow|l-sit|toes to bar|dragon flag|scheibenwischer|burpee-weitsprunge|freier handstand|stutz halten|tuck l-sit|v-sit)/;  // v222: Calisthenics
 // Bandübungen laufen wie Eigengewicht (ohne kg, Steigerung über die Wdh.), dazu die Bandstufe (siehe bandShift)
 const isBodyweightName = name => BODYWEIGHT.test(norm(String(name || '').trim())) || isBandName(name);
 const isBodyweight = ex => !!ex && !ex.bwLoad && isBodyweightName(ex.name);
@@ -1341,9 +1443,27 @@ function rirMigrate() {
   saveData();
 }
 
+/* Diät/Minicut mit angepasstem Training (User-Regel 2026-11-13, ersetzt „1 Wdh. weniger im Tank“):
+   Tank startet in der Intro-Woche bei 2 und sinkt je Woche um 0,5 – nie unter den Wert von Woche 4 (0,5).
+   Grundübungen +0,5, Assistenzübungen −0,5 (statt ±1). Neuling und Einsteiger behalten ihr Plus aus der Erfahrungsstufe,
+   der Abzug für „Alter Hase“ entfällt. Eine eigene Tank-Tabelle des Plans gilt in der Diät nicht. */
+const DIET_KIND_OFFSET = { compound: 0.5, normal: 0, assist: -0.5 };
+function dietLevelBonus() {
+  const lv = activePlan() && activePlan().level;
+  const r = typeof LEVELS !== 'undefined' && LEVELS[lv] ? LEVELS[lv].rir || 0 : 0;
+  return Math.max(0, r);
+}
+function dietRirRange(kind, week) {
+  const base = Math.max(0.5, 2 - 0.5 * (Math.max(1, week) - 1)) + dietLevelBonus();
+  const v = Math.max(0, base + DIET_KIND_OFFSET[kind || 'normal'] + rirFeelAdj());
+  return [v, v];
+}
+const dietAdaptNow = () => typeof nutTrainAdapt === 'function' && nutTrainAdapt() && !ownPlan();
+
 function weekRirText(kind, group) {
   const ci = cycleInfo();
   if (ci.deload) return `Deload – mind. ${DELOAD_RIR}`;
+  if (dietAdaptNow()) return `${fmtNum(dietRirRange(kind, ci.week)[0])} (${weekLabel(ci.week)}, an die Diät angepasst)`;
   return `${rirLabel(kind, ci.week, ci.buildWeeks, group)} (${weekLabel(ci.week)})`;
 }
 
@@ -1625,15 +1745,12 @@ function addSets(exs, sets, count, state) {
 
 // Sätze pro Übung eines Trainingstags (nur bei Tag-Typ und Muskelgruppen aus der Volumen-Tabelle)
 // vol: Volumen-Tabelle (Standard: data.volume; der Plan-Assistent rechnet mit seinem Entwurf)
-// half: Anstieg ab der Intro-Woche halbiert (Training an Diät/Minicut angepasst, siehe nutTrainAdapt)
+// half = Training an Diät/Minicut angepasst (User-Regel 2026-11-13): Intro-Woche mit dem Volumen von Woche 2 des Plans,
+// Woche 2 mit dem von Woche 3, danach kein weiterer Anstieg
+const dietVolWeek = w => Math.min(w + 1, 3);
 function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
   const res = new Map();
-  const vw = (g, w) => {
-    const v = dayVolume(day, g, w, vol);
-    if (!half) return v;
-    const intro = dayVolume(day, g, 1, vol);
-    return intro + Math.floor((v - intro) / 2);  // halber Satz -> abrunden
-  };
+  const vw = (g, w) => dayVolume(day, g, half ? dietVolWeek(w) : w, vol);
   if (!dayIntensity(day)) return res;
   const byGroup = {};
   for (const e of day.exercises) {
@@ -1646,7 +1763,7 @@ function autoSetsForDay(day, week, deload, vol = data.volume, half = false) {
     if (deload) {
       sets = distributeStart(exs, Math.ceil(dayVolume(day, g, 99, vol) / 2));  // Deload: halber Höhepunkt
     } else {
-      sets = distributeStart(exs, dayVolume(day, g, 1, vol));
+      sets = distributeStart(exs, vw(g, 1));
       const state = { k: 0 };
       for (let w = 2; w <= week; w++) addSets(exs, sets, Math.max(0, vw(g, w) - vw(g, w - 1)), state);
     }
@@ -1859,11 +1976,11 @@ function trimToTime(entries, limit) {
 const deloadSets = sets => Math.max(1, Math.round(sets / 2));
 // Sätze pro Woche: Start in der Intro-Woche, Steigerung erst am Zyklusende –
 // bei +1 nur in der letzten Woche, bei +2 in den letzten beiden Wochen je +1 usw.
-// half: Anstieg halbiert (Training an Diät/Minicut angepasst)
+// half = Training an Diät/Minicut angepasst (v229): Wert wie sonst eine Woche später, ab Woche 3 gleich
 function setsForWeek(ex, week, buildWeeks, half = false) {
   const full = Math.max(0, ex.setsEnd - ex.sets);
-  const diff = half ? Math.floor(full / 2) : full;
-  return ex.sets + Math.max(0, diff - (buildWeeks - week));
+  const w = half ? Math.min(dietVolWeek(week), buildWeeks) : week;  // Diät: wie sonst eine Woche später, ab Woche 3 gleich (v229)
+  return ex.sets + Math.max(0, full - (buildWeeks - w));
 }
 
 // ref: erster normaler Satz der letzten Trainingswoche (lastWorkSet) – Bezug für Gewicht und Wdh. (User-Regel
@@ -3398,11 +3515,24 @@ function complReportDraw({ weeks = 8 }) {
 
 // Geschätztes Max. bei 10 Wdh. pro Übung und abgeschlossenem Zyklus (Deload zählt nicht).
 // Weniger als 1 % Zuwachs gegenüber dem Zyklus davor = Stillstand.
+// Diät und Minicut (User 2026-11-13): Im Kaloriendefizit ist Kraft halten normal – dann keine Stillstand-Hinweise
+// und Trainings aus einer Diät- bzw. Minicut-Zeit zählen auch danach nicht für den Vergleich
+const DEFICIT_PHASES = ['diet', 'minicut'];
+const inDeficitPhase = () => !!(data.nutrition && DEFICIT_PHASES.includes(data.nutrition.phase));
+function phaseOnDate(iso) {
+  const n = data.nutrition, d = String(iso).slice(0, 10);
+  if (!n) return null;
+  if (n.since && d >= n.since) return n.phase;
+  const h = (n.history || []).find(x => d >= x.from && d < x.to);
+  return h ? h.phase : null;
+}
 function stagnationHints() {
+  if (inDeficitPhase()) return [];
   const ci = cycleInfo();
   const byEx = {};
   for (const s of data.sessions) {
     if (s.deload) continue;
+    if (DEFICIT_PHASES.includes(phaseOnDate(s.date))) continue;
     const cs = sessionCycle(s).cycleStart;
     if (cs >= ci.cycleStart) continue;  // nur abgeschlossene Zyklen
     s.entries.forEach((e, ei) => {
@@ -3637,7 +3767,7 @@ const views = {
   homeeq:   { title: 'Deine Ausrüstung', tab: 'plan', back: 'plan', render: () => renderHomeEq() },  // steht in wizard.js (später geladen)
   // Übung aus der Bibliothek: zurück dorthin, woher sie geöffnet wurde (from/fromParams)
   libadd:   { title: p => p.name ? 'Eigene Übung bearbeiten' : 'Eigene Übung', tab: 'plan',
-    back: p => p.name ? ['libex', { name: p.name }] : ['library', {}], render: renderLibAdd },
+    back: p => p.ret && swapReturn ? [swapReturn.view, swapReturn.params] : p.name ? ['libex', { name: p.name }] : ['library', {}], render: renderLibAdd },
   libex:    { title: p => p.name, tab: p => p.tab || 'plan', back: p => [p.from || 'library', p.fromParams || {}], render: renderLibEx },
   // aus der Wochenansicht geöffnet: params.week = roundKey dieser Woche
   session:  { title: p => p.edit ? 'Bearbeiten' : 'Training', tab: p => p.week ? 'start' : 'history',
@@ -3660,11 +3790,11 @@ const views = {
 };
 
 /* ---------- Erklärtexte einklappen (v209, User-Wunsch 2026-11-11) ---------- */
-// Längere Erklärungen (class="hint explain") stehen bei den ersten 3 Besuchen einer Seite offen, danach klappen sie zu
-// einem kleinen „? Erklärung“ zusammen. Nur Standard und Experte; Einfach bleibt, wie es ist. Warnungen, Status und
+// Längere Erklärungen (class="hint explain") stehen bei den ersten EXPLAIN_AFTER Besuchen einer Seite offen, danach klappen sie zu
+// einem kleinen „? Erklärung“ zusammen – in allen Modi (v218, User 2026-11-12: 2 Besuche, auch Einfach). Warnungen, Status und
 // Sicherheitshinweise sind bewusst NICHT markiert. Besuche je Seite (Optionen je Bereich) zählt das Gerät
 // (localStorage, gehört nicht in die Sicherung). „Alle Einführungen noch einmal zeigen“ setzt sie zurück.
-const VISIT_KEY = 'trainingsapp-besuche', EXPLAIN_AFTER = 3;
+const VISIT_KEY = 'trainingsapp-besuche', EXPLAIN_AFTER = 2;
 let explainOpen = new Set();  // auf dieser Seite wieder aufgeklappte Erklärungen (bis zum Seitenwechsel)
 const visitKey = (view, p) => view + (p && p.sec ? ':' + p.sec : '');
 function visitsLoad() {
@@ -3679,7 +3809,7 @@ function visitsReset() { try { localStorage.removeItem(VISIT_KEY); } catch (e) {
 const explainKeep = () => !!(data.profile && data.profile.explainKeep);
 const explainId = p => p.textContent.replace(/\s+/g, ' ').trim().slice(0, 80);
 function explainFold() {
-  if (appMode() === 'e' || explainKeep()) return;
+  if (explainKeep()) return;
   if ((visitsLoad()[visitKey(current.view, current.params)] || 0) <= EXPLAIN_AFTER) return;
   $view.querySelectorAll('.explain').forEach(p => {
     if (explainOpen.has(explainId(p))) return;
@@ -3688,12 +3818,11 @@ function explainFold() {
   });
 }
 function explainCard() {
-  if (appMode() === 'e') return '';
   const keep = explainKeep();
   return `<div class="card"><h2>❔ Erklärtexte</h2>
       <div class="seg two"><button class="${keep ? '' : 'on'}" data-action="explain-mode" data-v="0">Einklappen</button>
         <button class="${keep ? 'on' : ''}" data-action="explain-mode" data-v="1">Immer zeigen</button></div>
-      <p class="hint">Längere Erklärungen klappen ab dem vierten Besuch einer Seite zu einem kleinen „? Erklärung“ zusammen – antippen
+      <p class="hint">Längere Erklärungen klappen ab dem dritten Besuch einer Seite zu einem kleinen „? Erklärung“ zusammen – antippen
         zeigt sie wieder. Warnungen und wichtige Hinweise bleiben immer sichtbar.</p></div>`;
 }
 
@@ -4143,7 +4272,9 @@ function startHintCard() {
 // Zyklus (zugeklappt) → Rückblick/Hinweise → Ernährung → weitere Trainingstage → „Wenig Zeit?“ und „Tage auslassen“ → Cardio
 function renderStart() {
   const hint = startHintCard();
-  let h = greeting();
+  let h = (typeof sportSwitch === 'function' ? sportSwitch('kraft') : '')  // v224 Beta-Entwurf: Kraft | Hyrox
+    + greeting() + moveCard() + betaCard()  // v217: Umzugshilfe (alte Adresse) bzw. Beta-Hinweis
+    + (typeof caliUpCards === 'function' ? caliUpCards() : '');  // v225: Calisthenics – nächste Stufe? (nur nach Rückfrage)
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -4193,7 +4324,7 @@ function renderStart() {
       (last ? ` · zuletzt ${fmtDate(last.date)}` : '') + (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
     const next = day === nextDay;
     return `<button class="btn nav day-btn ${next ? 'next' : ''} ${done ? 'done' : ''} ${skipped ? 'skipped' : ''}" data-action="start-day" data-id="${day.id}">
-      <span class="day-no">${skipped ? '⏭' : done ? '✓' : i + 1}</span>
+      <span class="day-no">${skipped ? '⏭' : done ? '✓' : dayNoText(i)}</span>
       <span class="day-txt">${next ? '<span class="badge next-badge">▶ Steht als Nächstes an</span>' : ''}${esc(day.name)}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
         : done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   };
@@ -4244,7 +4375,8 @@ function timeCutNote() {
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
   let h = draft.own
-    ? '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>'
+    ? (activePlan().cali ? '<p class="intro-note">Calisthenics: Die App steigert pro Woche um 1 Wdh. bzw. 5 Sekunden je Satz, bis das Stufenziel erreicht ist. Nicht geschafft? Dann bleibt das Ziel gleich.</p>'
+      : '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>')
     : draft.deload
     ? `<p class="deload-note">${feat('tr-rir-input') ? `Deload-Woche: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.`
       : 'Deload-Woche: halbe Sätze und etwas leichter – jeder Satz sollte sich locker anfühlen.'}</p>`
@@ -4334,10 +4466,12 @@ function renderTraining() {
     if (en.replacing) h += renderReplace(en, ei);
     const bandEx = body && en.target && en.target.band;
     if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen – ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
-    else if (body) h += '<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die Wiederholungen.</p>';
+    else if (body) h += `<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die ${typeof isHoldName === 'function' && isHoldName(en.name) ? 'Haltezeit (Sekunden)' : 'Wiederholungen'}.</p>`;
     if (en.target && !en.target.own) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
-    if (en.target && en.target.own) {
-      h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} Wdh.</p>`;
+    if (en.caliInfo && typeof caliTargetHtml === 'function') {
+      h += caliTargetHtml(en);
+    } else if (en.target && en.target.own) {
+      h += `<p class="target">Plan: ${en.target.sets} × ${en.target.reps} ${typeof holdUnit === 'function' ? holdUnit(en.name) : 'Wdh.'}</p>`;
     } else if (en.target) {
       const t = en.target;
       // Heute: wirklich vorgeschlagene Wdh. (User-Regel 2026-11-06), nicht der Startwert des Plans
@@ -4419,7 +4553,7 @@ function renderTraining() {
     // Einfach: kein Erklärtext zur Anpassung (Fachbegriffe) – die angepassten Werte stehen direkt in den Feldern
     h += `<p class="adjust ${feat('tr-rir-input') ? '' : 'simple-off'}" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     const rirInput = feat('tr-rir-input');
-    h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">${rirInput ? 'Tank' : 'Gefühl'}</span>`;
+    h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">${typeof holdHead === 'function' ? holdHead(en.name) : 'Wdh.'}</span><span class="head">${rirInput ? 'Tank' : 'Gefühl'}</span>`;
     const tankHint = si => !en.target || en.target.own ? '–' : en.target.deload || !en.target.rirSplit
       ? targetRirText(en.target).replace('mind. ', '≥') : fmtNum(rirAt(en.target, si));  // Tank je Satz (v199)
     const next = feat('tr-next') ? nextPreview(en) : [];
@@ -4582,6 +4716,7 @@ function renderReplace(en, ei) {
     <input class="inp" type="text" data-field="rep-name" data-ei="${ei}"
       autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Übung eintippen …">
     <div class="suggest" hidden></div>
+    <button class="btn outline swap-new" data-action="swap-new" data-ctx="tr" data-ei="${ei}">＋ Neue Übung erstellen</button>
     <label class="row" ${feat('tr-max') ? '' : 'style="display:none"'}>
       <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
@@ -4625,6 +4760,8 @@ function renderPlan() {
   const c = data.cycle;
   const active = activePlan();
   let h = feat('plans-multi') ? '<h2>Meine Pläne</h2>' : '<h2>Mein Plan</h2>';
+  // v225 Calisthenics (Beta)
+  if (typeof caliOn === 'function' && caliOn()) h = `<button class="btn nav cali-entry" data-action="cali-open" data-from="plan">🤸 Calisthenics<small>Plan nach deinem Schwerpunkt oder selbst zusammengestellt · Skill-Stufen</small></button>` + h;
   // Einfach: nur der aktive Plan („Neuen Plan erstellen“ ersetzt ihn)
   for (const p of data.plans.filter(x => feat('plans-multi') || x.id === active.id)) {
     const isActive = p.id === active.id;
@@ -4667,7 +4804,7 @@ function renderPlan() {
     const est = open ? 0 : ci ? estDuration(day, ci.week, active, ci.deload) : estRange(day, active)[1];
     const n = day.exercises.filter(e => e.name.trim()).length;
     h += `<button class="btn nav day-btn ${open ? 'pending' : ''}" data-action="${open && active.byHand ? 'own-resume' : 'open-day'}" data-id="${day.id}">
-      <span class="day-no">${open ? '⏳' : i + 1}</span><span class="day-txt">${esc(day.name)}${open ? '<small>noch zu erstellen</small>'
+      <span class="day-no">${open ? '⏳' : dayNoText(i)}</span><span class="day-txt">${esc(day.name)}${open ? '<small>noch zu erstellen</small>'
         : `<small>${n} Übung${n === 1 ? '' : 'en'}${est ? ` · ${estText(est)}${ci ? (ci.deload ? ' im Deload' : ci.week === 1 ? ' in der Intro-Woche' : ` in Woche ${ci.week}`) : ''}` : ''}</small>`}</span></button>`;
   });
   h += '</div>';
@@ -4828,7 +4965,7 @@ function periodCard(c, active) {
       <p class="lbl chips-title">Deload</p>
       <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
         `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
-      <p class="hint">${selfDeload()
+      <p class="hint explain">${selfDeload()
         ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm, z. B. unter „⚙️ Zyklus anpassen“ über „Deload“.'
         : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
         Deload: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
@@ -4863,7 +5000,7 @@ function progressionTable() {
       ${ci.week === w ? '<small class="hint">jetzt</small>' : ''}</td>${cell('volume')}${cell('load')}</tr>`;
   }
   return h + `</table>
-    <p class="hint">Volumen = mehr Sätze von Woche zu Woche (aus: Sätze wie in der Vorwoche). Gewicht & Wdh. = Steigerung von Training zu Training (aus: Werte vom letzten Mal halten). Einzelne Wochen antippen, um nur dort abzuweichen (umrandet). Für ein einzelnes Training lässt es sich direkt im Training umschalten.</p>`;
+    <p class="hint explain">Volumen = mehr Sätze von Woche zu Woche (aus: Sätze wie in der Vorwoche). Gewicht & Wdh. = Steigerung von Training zu Training (aus: Werte vom letzten Mal halten). Einzelne Wochen antippen, um nur dort abzuweichen (umrandet). Für ein einzelnes Training lässt es sich direkt im Training umschalten.</p>`;
 }
 
 // Grenzen für die Plus/Minus-Felder einer Übung
@@ -4954,6 +5091,7 @@ function planSwapHtml(day, ex, i) {
       <input class="inp" type="text" data-field="plan-swap-name" data-i="${i}" autocomplete="off" autocorrect="off" spellcheck="false"
         placeholder="Übung eintippen, z. B. Rudern …">
       <div class="suggest" hidden></div>
+      <button class="btn outline swap-new" data-action="swap-new" data-ctx="plan" data-i="${i}">＋ Neue Übung erstellen</button>
       <div class="row"><button class="btn" data-action="plan-swap-cancel">Abbrechen</button>
         <button class="btn primary" data-action="plan-swap-ok" data-i="${i}">⇄ Ersetzen</button></div>
       <p class="hint">Die neue Übung übernimmt den Platz im Plan mit denselben Sätzen. Gespeicherte Trainings bleiben, wie sie sind;
@@ -4979,18 +5117,51 @@ function renameFormHtml(name) {
     </div>`;
 }
 
-function renameExercise(from, to, ask = true) {
+// Neuer Name prüfen: bereinigt zurück, null = nicht möglich (Hinweis kommt)
+function renameCheck(from, to) {
   to = String(to || '').trim().replace(/\s+/g, ' ');
+  if (!to) { alert('Bitte gib einen Namen ein.'); return null; }
   const kf = nameKey(from), kt = nameKey(to);
-  if (!to) { alert('Bitte gib einen Namen ein.'); return false; }
-  if (to === from.trim()) return true;
-  const custom = customExercise(from), builtin = builtinExercise(from);
   if (kt !== kf && (builtinExercise(to) || customExercise(to) || exNameUsed(kt))) {
-    alert(`„${to}“ gibt es schon. Bitte wähle einen anderen Namen.\n\nWillst du stattdessen eine andere Übung trainieren, nimm im Plan „⇄ Übung ersetzen“.`);
-    return false;
+    alert(`„${to}“ gibt es schon. Bitte wähle einen anderen Namen.\n\nWillst du stattdessen eine andere Übung trainieren, nimm im Plan „⇄ Ersetzen“.`);
+    return null;
   }
-  const n = data.sessions.filter(s => s.entries.some(en => nameKey(en.name) === kf)).length;
-  if (ask && !confirm(`„${from.trim()}“ wirklich in „${to}“ umbenennen?\n\nDer neue Name gilt überall – in allen Plänen und im Verlauf.`
+  return to;
+}
+const exSessionCount = name => { const k = nameKey(name); return data.sessions.filter(s => s.entries.some(en => nameKey(en.name) === k)).length; };
+const trainingsText = n => n === 1 ? '1 Training' : `${n} Trainings`;
+/* Umbenennen (v219, User 2026-11-12): fragen, ob die bisherigen Daten mitgehen.
+   'all' = ja, übertragen (Name gilt überall) · 'new' = nein, neue Übung (bisherige Trainings bleiben beim alten Namen) · null = abbrechen.
+   where 'slot' = Namensfeld im Trainingstag („nein“ gilt dann nur für diesen Platz), 'form' = Umbenennen-Feld. */
+function askRename(from, to, where) {
+  from = from.trim();
+  const n = exSessionCount(from), test = window.confirm !== NATIVE_CONFIRM;
+  if (!n) return Promise.resolve('all');  // keine Daten → nichts zu fragen
+  const msg = `„${from}“ in „${to}“ umbenennen?\n\nSollen deine bisherigen Daten (${trainingsText(n)}: Gewichte, Rekorde, Diagramme) auf „${to}“ übertragen werden?\n\n`
+    + (where === 'slot' ? `Nein: „${to}“ beginnt hier im Plan als neue Übung, die bisherigen Daten bleiben bei „${from}“.`
+      : `Nein: „${to}“ beginnt als neue Übung, die bisherigen Trainings bleiben unter „${from}“ im Verlauf.`);
+  if (test) return Promise.resolve(window.confirm(msg) ? 'all' : 'new');
+  return uiDialog({ msg, confirm: true, choices: [{ label: 'Abbrechen', value: null },
+    { label: 'Nein, als neue Übung', value: 'new' }, { label: 'Ja, Daten übertragen', value: 'all', primary: true }] }).then(v => v || null);
+}
+// Nur dieser Platz im Trainingstag bekommt den neuen Namen (Art und Muskelgruppe bleiben)
+function exSlotRename(day, i, from, to) {
+  const ex = day.exercises[i], kind = kindOf(ex), group = groupOf(ex);
+  ex.name = to;
+  if (!ex.kind && kindOf({ name: to }) !== kind) ex.kind = kind;
+  if (!ex.group && group && groupOf({ name: to }) !== group) ex.group = group;
+  saveData();
+  toast(`Übung „${from}“ in „${to}“ umbenannt ✔ – die bisherigen Daten bleiben bei „${from}“`);
+}
+
+function renameExercise(from, to, ask = true, mode = 'all') {
+  to = renameCheck(from, to);
+  if (to == null) return false;
+  if (to === from.trim()) return true;
+  const kf = nameKey(from), kt = nameKey(to), all = mode !== 'new';
+  const custom = customExercise(from), builtin = builtinExercise(from);
+  const n = exSessionCount(from);
+  if (ask && !askOk(`„${from.trim()}“ wirklich in „${to}“ umbenennen?\n\nDer neue Name gilt überall – in allen Plänen und im Verlauf.`
     + (n ? ` Deine ${n === 1 ? 'bisherigen Einträge aus 1 Training werden' : `bisherigen Einträge aus ${n} Trainings werden`} auf den neuen Namen übertragen (Gewichte, Rekorde, Diagramme).` : '')
     + (builtin && kt !== kf ? `\n\nDie Übung erscheint danach unter „★ Eigene Übungen“; Figur und Tipps von „${from.trim()}“ bleiben verknüpft.` : ''))) return false;
   // Art und Muskelgruppe festhalten, bevor sich der Name ändert (sonst würde neu geraten)
@@ -5004,17 +5175,44 @@ function renameExercise(from, to, ask = true) {
     if (o.replacedFrom && nameKey(o.replacedFrom) === kf) o.replacedFrom = to;
   };
   for (const p of data.plans) for (const d of p.days) d.exercises.forEach(fix);
-  for (const s of data.sessions) s.entries.forEach(fix);
+  if (all) for (const s of data.sessions) s.entries.forEach(fix);
   if (draft) { draft.entries.forEach(fix); saveDraft(); }
-  if (custom) custom.name = to;
+  if (custom && all) custom.name = to;
+  else if (custom) data.customExercises.push({ ...custom, name: to });
   else if (builtin && kt !== kf) data.customExercises.push({ name: to, kind, group, like: libEntry(from) ? from.trim() : '', note: '' });
-  for (const m of [data.hintsDismissed, hintOff().ex, hintOff().low]) if (kt !== kf && m[kf] !== undefined) { m[kt] = m[kf]; delete m[kf]; }
-  if (typeof chartState !== 'undefined' && nameKey(chartState.name) === kf) chartState.name = to;
+  if (all) {
+    for (const m of [data.hintsDismissed, hintOff().ex, hintOff().low]) if (kt !== kf && m[kf] !== undefined) { m[kt] = m[kf]; delete m[kf]; }
+    if (typeof chartState !== 'undefined' && nameKey(chartState.name) === kf) chartState.name = to;
+  }
   registerCustomExercises();
   saveData();
   exRename = null;
-  toast(`Umbenannt in „${to}“ ✔`);
+  toast(`Übung „${from.trim()}“ in „${to}“ umbenannt ✔${!n || kt === kf ? '' : all ? ` – ${trainingsText(n)} übertragen` : ` – die bisherigen Daten bleiben bei „${from.trim()}“`}`);
   return true;
+}
+
+// Namensfeld im Trainingstag (v219): erst beim Verlassen des Feldes bzw. bei der Auswahl übernehmen – nicht bei jedem Buchstaben.
+// Bekannte Übung = ersetzen, neuer Name = umbenennen (mit Rückfrage, ob die bisherigen Daten mitgehen).
+async function exNameCommit(el) {
+  if (el.dataset.busy) return;
+  const day = findDay(current.params.id), i = Number(el.dataset.i), ex = day && day.exercises[i];
+  if (!ex) return;
+  const from = String(el.dataset.orig || '').trim(), to = el.value.trim().replace(/\s+/g, ' ');
+  if (!from) { if (ex.name !== to) { ex.name = to; saveData(); } return; }  // neue Übung: wird beim Tippen schon gespeichert
+  if (!to || to === from) { el.value = from; return; }
+  el.dataset.busy = '1';
+  el.dataset.orig = to;  // nicht zweimal übernehmen (Auswahl + Verlassen des Feldes)
+  try {
+    if (nameKey(to) !== nameKey(from) && (builtinExercise(to) || customExercise(to) || exNameUsed(nameKey(to)))) {
+      if (planReplaceExercise(day, i, to)) render();
+      return;
+    }
+    const how = nameKey(to) === nameKey(from) ? 'all' : await askRename(from, to, 'slot');
+    if (!how) { el.value = from; el.dataset.orig = from; const info = el.parentElement && el.parentElement.querySelector('.info-btn'); if (info) info.hidden = !libEntry(from); return; }
+    if (how === 'all') renameExercise(from, to, false);
+    else exSlotRename(day, i, from, to);
+    render();
+  } finally { delete el.dataset.busy; }
 }
 
 // Übung tauschen: Name, Art und Muskelgruppe neu (automatisch), Max. aus früheren Trainings; Platz und Sätze bleiben
@@ -5041,7 +5239,7 @@ function planReplaceExercise(day, i, name) {
 function ownExerciseCard(ex, i) {
   return `<div class="card">
     <div class="ex-name-row">
-      <input class="inp" type="text" data-field="ex-name" data-i="${i}"
+      <input class="inp" type="text" data-field="ex-name" data-i="${i}" data-orig="${esc(ex.name)}"
         autocomplete="off" autocorrect="off" spellcheck="false"
         value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">
       <button class="info-btn" data-action="lib-open" data-i="${i}" aria-label="Ausführung ansehen"
@@ -5118,7 +5316,7 @@ function renderDay({ id }) {
     if (pr && pr.role === 'A') h += `<div class="ss-wrap plan">${ssPlanHead(day, pr)}`;
     h += `<div class="card${pr ? ' ss-card' : ''}">
       <div class="ex-name-row">${pr ? `<span class="ss-badge">${pr.role}</span>` : ''}
-        ${feat('plan-add-ex') || !ex.name.trim() ? `<input class="inp" type="text" data-field="ex-name" data-i="${i}"
+        ${feat('plan-add-ex') || !ex.name.trim() ? `<input class="inp" type="text" data-field="ex-name" data-i="${i}" data-orig="${esc(ex.name)}"
           autocomplete="off" autocorrect="off" spellcheck="false"
           value="${esc(ex.name)}" placeholder="Übung eintippen, z. B. Bank…">` : `<h3 class="plan-ex-name">${esc(ex.name)}</h3>`}
         <button class="info-btn" data-action="lib-open" data-i="${i}" aria-label="Ausführung ansehen"
@@ -5302,7 +5500,8 @@ function libRow(name) {
 function libResults() {
   const q = norm(libQuery.trim());
   if (!q) return '';
-  const hits = EXERCISE_LIST.filter(([n]) => norm(n).includes(q)).slice(0, 40);
+  const qw = q.split(/[^a-z0-9]+/).filter(Boolean);  // v222: auch englische Begriffe, jedes Wort für sich
+  const hits = EXERCISE_LIST.filter(([n]) => { const t = norm(exSearchText(n)); return t.includes(q) || (qw.length > 1 && qw.every(w => t.includes(w))); }).slice(0, 40);
   return hits.length ? hits.map(([n]) => libRow(n)).join('') : '<p class="hint">Keine Übung gefunden.</p>';
 }
 
@@ -5320,6 +5519,17 @@ function renderLibrary() {
     h += `<details class="award-cat lib-group" ${open ? 'open' : ''}>
       <summary data-action="lib-toggle" data-g="own">★ Eigene Übungen <small class="hint">(${data.customExercises.length})</small></summary>
       ${open ? data.customExercises.map(c => libRow(c.name)).join('') : ''}</details>`;
+  }
+  // Sportarten (v222): Calisthenics und Hyrox mit Unterabschnitten
+  for (const [k, sp] of Object.entries(typeof EX_SPORTS !== 'undefined' ? EX_SPORTS : {})) {
+    const names = sp.parts.flatMap(([, list]) => list).filter(n => EXERCISE_KINDS.has(nameKey(n)));
+    const open = libOpenGroups.has('sp-' + k);
+    h += `<details class="award-cat lib-group lib-sport" ${open ? 'open' : ''}>
+      <summary data-action="lib-toggle" data-g="sp-${k}">${sp.icon} ${sp.label} <small class="hint">(${names.length})</small></summary>
+      ${open ? `<p class="hint lib-sport-hint">${esc(sp.hint)}</p>` + sp.parts.map(([title, list]) => {
+        const ok = list.filter(n => EXERCISE_KINDS.has(nameKey(n)));
+        return ok.length ? `<h3 class="lib-sub">${esc(title)}</h3>${ok.map(n => libRow(n)).join('')}` : '';
+      }).join('') : ''}</details>`;
   }
   for (const g of Object.keys(MUSCLES)) {
     const list = EXERCISE_LIST.filter(e => e[2] === g);
@@ -5433,7 +5643,7 @@ function renderLibAdd(p) {
         <li><b>Ähnliche Übung</b> (freiwillig): Dann zeigt die Bibliothek deren Figur und Tipps zur Ausführung.</li>
         <li><b>Notiz</b> (freiwillig): z. B. Sitzhöhe, Griff oder Einstellung am Gerät.</li>
       </ol>
-      <p class="hint">Danach ist die Übung dauerhaft gespeichert und du kannst sie einfach immer wieder abrufen: in der Bibliothek
+      <p class="hint explain">Danach ist die Übung dauerhaft gespeichert und du kannst sie einfach immer wieder abrufen: in der Bibliothek
         (unter „★ Eigene Übungen“ und bei ihrer Muskelgruppe), bei der Übungsauswahl im Plan und im Plan-Assistenten sowie beim
         „⇄ Ersetzen“ und „+ Übung hinzufügen“ im Training – einfach die ersten Buchstaben eintippen, dann erscheint sie in den Vorschlägen.
         Sie ist auch in deiner Sicherung enthalten. Steigerung und Max. bei 10 Wdh. rechnet die App wie bei jeder anderen Übung.</p>
@@ -5662,7 +5872,14 @@ function renderSession({ id, fresh, edit, week }) {
 // Aus einem gespeicherten Training malt die App ein Bild im Story-Format (1080 × 1920) in der Farbwelt der App: Tagesname,
 // Datum/Woche, Dauer, Tonnage, Sätze, Übungen und neue Bestleistungen (sonst die schwersten Sätze). Nie Körpergewicht oder
 // Gesundheitsdaten. Teilen über das Teilen-Menü (Web Share mit Datei), sonst als Bild-Download.
-const APP_NAME = 'StepUp Strength';  // bei der Umbenennung hier ändern
+const APP_NAME = 'LockYourGains';  // v217: neuer Name (vorher StepUp Strength)
+const APP_SHORT = 'Gainslocker';   // Kurzname: unter dem Symbol und in Dateinamen
+// Beta (eigene Adresse lockyourgains-beta.github.io, eigener Speicher) und alte Adresse (Umzugshilfe) – an der Adresse erkannt
+// (zum Testen ohne echte Adresse: localStorage „trainingsapp-kanal“ = 'beta' bzw. 'alt')
+const CHANNEL_TEST = (() => { try { return localStorage.getItem('trainingsapp-kanal') || ''; } catch (e) { return ''; } })();
+const IS_BETA = /-beta\.github\.io$/i.test(location.hostname) || CHANNEL_TEST === 'beta';
+const OLD_HOST = /^stepup-strength\.github\.io$/i.test(location.hostname) || CHANNEL_TEST === 'alt';
+const NEW_URL = 'https://lockyourgains.github.io/';
 let shareUrl = null, shareFile = null;
 const shareSetText = x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps != null ? x.reps : '–'}` : `${x.reps != null ? x.reps : '–'} Wdh.`;
 function shareData(s) {
@@ -5765,7 +5982,7 @@ function renderShare({ id }) {
 function shareDraw({ id }) {
   const s = data.sessions.find(x => x.id === id), img = document.getElementById('share-img');
   if (!s || !img) return;
-  img.src = canvasToShare(shareCanvas(s), `StepUp-Training ${localDay(s.date)}.jpg`);
+  img.src = canvasToShare(shareCanvas(s), `${APP_SHORT}-Training ${localDay(s.date)}.jpg`);
   $view.querySelectorAll('[data-action="share-send"], [data-action="share-save"]').forEach(b => { b.disabled = false; });
 }
 // Bild zum Teilen bereitlegen (shareUrl/shareFile) und als Daten-URL für die Vorschau zurückgeben
@@ -5978,7 +6195,7 @@ const OPT_SECS = {
     sub: () => `${data.sessions.length} Trainings · ${data.lastExport ? `letzte Sicherung vor ${daysSinceISO(data.lastExport)} Tag${daysSinceISO(data.lastExport) === 1 ? '' : 'en'}` : 'noch nie gesichert'}`,
     warn: () => backupDue() && data.sessions.length >= 2 },
   info: { icon: 'ℹ️', title: 'Hilfe & Info', render: () => infoSecHtml(),
-    sub: () => { const n = errLoad().length; return `Was ist neu · Fehlerprotokoll${n ? ` (${n})` : ''} · Über die App`; } },
+    sub: () => { const n = errLoad().length; return `Feedback · Was ist neu · Fehlerprotokoll${n ? ` (${n})` : ''} · Über die App`; } },
 };
 function renderData() {
   const rows = Object.entries(OPT_SECS).map(([k, s]) => `<button class="btn nav opt-row ${s.warn && s.warn() ? 'warn' : ''}" data-action="opt-open" data-sec="${k}">
@@ -5989,8 +6206,10 @@ views.opt = { title: p => (OPT_SECS[p.sec] || { title: 'Optionen' }).title, tab:
   render: p => OPT_SECS[p.sec] ? OPT_SECS[p.sec].render() : '<p class="hint">Bereich nicht gefunden.</p>',
   after: () => { showAppVersion(); storageInfoFill(); persistFill(); } };
 function infoSecHtml() {
-  return `${whatsNewOptionsCard()}${errCard()}
-    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum, Feedback' : ''}</small></button>
+  const mail = typeof LEGAL !== 'undefined' && LEGAL.email;
+  return `${mail ? `<button class="btn nav fb-btn" data-action="about-feedback">💬 Feedback geben<small>Fehler, Ideen oder Fragen – per E-Mail an ${esc(LEGAL.email)}</small></button>` : ''}
+    ${whatsNewOptionsCard()}${errCard()}
+    <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>`;
 }
 function dataSecHtml() {
@@ -6003,7 +6222,7 @@ function dataSecHtml() {
       <div class="seg two"><button class="${backupPwOn() ? '' : 'on'}" data-action="backup-pw-mode" data-v="0">Ohne Passwort</button>
         <button class="${backupPwOn() ? 'on' : ''}" data-action="backup-pw-mode" data-v="1">Mit Passwort</button></div>
       ${backupPwOn() ? `<input class="inp" type="password" data-field="backup-pw" autocomplete="new-password" placeholder="Passwort (mind. 4 Zeichen)" value="${esc(backupPw)}">` : ''}
-      <p class="hint">Freiwillig. Mit Passwort wird die Sicherungsdatei verschlüsselt – wer sie in die Hände bekommt, kann sie ohne Passwort
+      <p class="hint explain">Freiwillig. Mit Passwort wird die Sicherungsdatei verschlüsselt – wer sie in die Hände bekommt, kann sie ohne Passwort
         nicht lesen. Das Passwort wird nirgends gespeichert: Vergisst du es, lässt sich die Sicherung nicht mehr öffnen.
         ${backupPwOn() ? 'Leer gelassen fragt die App beim Exportieren nach dem Passwort.' : ''}</p>
     </div>
@@ -6011,8 +6230,8 @@ function dataSecHtml() {
     <button class="btn primary" data-action="export">Sicherung exportieren</button>
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
-    <p class="hint">${data.lastExportName ? `Letzte Sicherung: <b>${esc(data.lastExportName)}</b>. ` : ''}Sicherungen heißen immer
-      „StepUp-Sicherung …“ mit Datum und Uhrzeit – such beim Importieren in der Dateien-App einfach nach „StepUp“.
+    <p class="hint explain">${data.lastExportName ? `Letzte Sicherung: <b>${esc(data.lastExportName)}</b>. ` : ''}Sicherungen heißen immer
+      „Gainslocker-Sicherung …“ mit Datum und Uhrzeit – such beim Importieren in der Dateien-App einfach nach „Gainslocker“.
       Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
     <h2>Daten löschen</h2>
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
@@ -6026,6 +6245,38 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 229, date: '2026-11-13', items: [
+    ['Training an die Diät angepasst – neue Regel: Das Volumen startet auf dem Stand von Woche 2, steigt in Woche 2 auf den Stand von Woche 3 und bleibt dann gleich. Im Tank bleiben in der Intro-Woche 2 Wiederholungen, danach jede Woche 0,5 weniger bis 0,5 (Grundübungen +0,5, Assistenzübungen −0,5).'],
+  ] },
+  { v: 228, date: '2026-11-13', items: [
+    ['In einer Diät oder einem Minicut gibt es keine Stillstand-Hinweise mehr – im Kaloriendefizit ist Kraft halten normal und schon ein Erfolg. Auch danach zählen Trainings aus dieser Zeit nicht für den Vergleich.'],
+  ] },
+  { v: 222, date: '2026-11-13', items: [
+    ['🤸 Übungsbibliothek: neuer Bereich Calisthenics – vom Toten Hang bis zu Muscle-up, Handstand, Front Lever und Planche, mit Figuren und ausführlicher Anleitung.'],
+    ['🏁 Neuer Bereich Hyrox: alle Stationen in Wettkampf-Reihenfolge mit Strecken und Gewichten je Klasse, dazu passende Übungen.'],
+    ['Gesäß-Kickbacks Kabelzug „überkreuzt“ ersetzt durch „seitlich“.'],
+  ] },
+  { v: 221, date: '2026-11-12', items: [
+    ['💬 Feedback geben: unter Optionen → Hilfe & Info. Öffnet dein Mailprogramm mit vorausgefüllter Nachricht an lockyourgains@gmail.com – auf Wunsch mit Fehlerprotokoll, nie mit deinen Trainingsdaten.'],
+  ] },
+  { v: 220, date: '2026-11-12', items: [
+    ['Neues App-Symbol: ein Handy mit Hantel und steigender Verlaufskurve – in der Farbe deiner Farbwelt. Das Handy übernimmt Symbol und Farbe, wenn du die App zum Home-Bildschirm hinzufügst (z. B. beim Umzug auf die neue Adresse); danach bleibt es so, auch wenn du die Farbe änderst.'],
+  ] },
+  { v: 219, date: '2026-11-12', items: [
+    ['✏️ Übung umbenennen: Die App fragt jetzt, ob deine bisherigen Daten (Gewichte, Rekorde, Diagramme) auf den neuen Namen übertragen werden sollen – oder ob sie als neue Übung beginnt. Danach bestätigt sie „Übung X in Y umbenannt“.'],
+    ['Hinweise und Rückfragen erscheinen jetzt in einem eigenen Fenster im Stil der App statt als System-Meldung.'],
+    ['Stil „Schlicht“ neu: dünnere Schrift, schmale Überschriften in Großbuchstaben, feine Linien und eckige Nummern.'],
+  ] },
+  { v: 218, date: '2026-11-12', items: [
+    ['🍎 Das Ernährungstagebuch steht jetzt ganz oben im Reiter Ernährung – mit 📅 Kalender und 📊 Woche & Monat (Kalorien, Eiweiß, Kohlenhydrate, Fett je Tag und im Schnitt).'],
+    ['Beim Ersetzen einer Übung kannst du direkt eine eigene Übung anlegen – sie ersetzt danach gleich die alte.'],
+    ['Neue Übungen: Latziehen mittelbreit, Gesäß-Kickbacks Kabelzug diagonal und überkreuzt.'],
+    ['Erklärtexte sind ab dem dritten Besuch einer Seite eingeklappt – in allen Modi. Antippen von „? Erklärung“ zeigt sie wieder.'],
+  ] },
+  { v: 217, date: '2026-11-12', items: [
+    ['Neuer Name: Die App heißt jetzt LockYourGains – auf dem Home-Bildschirm kurz „Gainslocker“.'],
+    ['Neue Adresse: lockyourgains.github.io. Sicherungen heißen jetzt „Gainslocker-Sicherung …“; ältere „StepUp-Sicherungen“ lassen sich weiter laden.'],
+  ] },
   { v: 216, date: '2026-11-12', items: [
     ['Kleine Gewichte bis 10 kg: Ist der nächste Gewichtsschritt sehr groß, fragt die App einmal, ob du an dem Gerät 1,25 kg feiner einstellen kannst.'],
     ['Nach einem verfehlten Satz bekommen die folgenden Sätze mit gleichem Gewicht höchstens 2 Wdh. mehr als der Satz davor.'],
@@ -6152,7 +6403,7 @@ function deviceText() {
 }
 function errReport() {
   const list = errLoad();
-  return [`StepUp Fehlerprotokoll · App-Version ${APP_V} · ${deviceText()} · Modus ${appMode()}`,
+  return [`${APP_SHORT} Fehlerprotokoll · App-Version ${APP_V} · ${deviceText()} · Modus ${appMode()}`,
     ...list.map((x, i) => `${i + 1}) ${fmtErrTime(x.t)} · ${x.view || '–'} · v${x.v || '?'} · ${x.msg}${x.n > 1 ? ` (${x.n}×)` : ''}${x.at ? `\n   ${x.at}` : ''}`)].join('\n');
 }
 function errCard() {
@@ -6191,7 +6442,7 @@ function beginCheck(id) {
     alert('Dieser Trainingstag hat noch keine Übungen. Lege sie unter „Plan“ an.');
     return;
   }
-  if (draft && !confirm(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
+  if (draft && !askOk(`Es läuft bereits ein Training (${draft.dayName}). Verwerfen und neu beginnen?`)) return;
   if (ownPlan()) { startDay(id); return; }  // eigener Plan: keine Fragen vorab, es wird nichts angepasst
   const pause = pauseInfo();
   if (pause && !activePlan().askEntry) { go('pausecheck', { id, days: pause.days }); return; }
@@ -6296,7 +6547,7 @@ function askSkipRound(day) {
   if (!open.length || open.some(x => x.day.id === day.id)) return true;
   const next = roundAfter(ci);
   const nextLabel = next.week === 1 ? 'Intro-Woche des nächsten Zyklus' : ciLabel(toCycleInfo(next.start, next.week, next.no, cycleLenOf(next.start)));
-  if (!confirm(`„${day.name}“ war in dieser Woche (${ciLabel(ci)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
+  if (!askOk(`„${day.name}“ war in dieser Woche (${ciLabel(ci)}) schon dran. Noch offen: ${open.map(x => x.day.name).join(', ')}.\n\n` +
     `OK = diese Woche abschließen (offene Trainings auslassen) und mit „${day.name}“ die ${nextLabel} beginnen.\nAbbrechen = nicht starten.`)) return false;
   skipRoundFor = day.id;
   return true;
@@ -6383,7 +6634,7 @@ function draftEntries(day) {
   // (Wochen nach der letzten Aufbauwoche, Deload „selbst bestimmen“: Sätze wie in der letzten Aufbauwoche)
   const setsWeek = draft.deload ? draft.week
     : Math.min(bw, volumeWeek({ week: draft.week, cycleStart: draft.cycleStart }, prog.volume));
-  // Ernährungsphase Diät/Minicut mit angepasstem Training: halber Volumenanstieg, 1 Wdh. weniger im Tank
+  // Ernährungsphase Diät/Minicut mit angepasstem Training (v229): Volumen wie sonst eine Woche später, ab Woche 2 ohne Anstieg; Tank 2 → 0,5
   // (nicht im Deload und nicht bei eigenen Plänen)
   const adapt = !draft.deload && !draft.own && nutTrainAdapt();
   draft.nutAdapt = adapt;
@@ -6397,7 +6648,7 @@ function draftEntries(day) {
     const en = { name: ex.name.trim(), ...(ex.ss ? { ss: ex.ss, ssRest: ex.ssRest } : {}) };  // Supersatz (v210)
     // Ziel im Tank aus Zykluswoche und Übungsart (Deload: Wert der letzten Trainingswoche, dann mind. 3)
     const week = draft.deload ? bw : draft.week;
-    const [lo, hi] = rirRange(kindOf(ex), week, bw, groupOf(ex)).map(x => Math.max(0, x - (adapt ? 1 : 0)));
+    const [lo, hi] = adapt ? dietRirRange(kindOf(ex), week) : rirRange(kindOf(ex), week, bw, groupOf(ex));  // Diät: eigene Tank-Regel (v229)
     const rir = (lo + hi) / 2;
     const rirText = lo === hi ? fmtNum(lo) : `${fmtNum(lo)}–${fmtNum(hi)}`;
     // Sätze: automatisch aus dem Muskelgruppen-Volumen, sonst laut Wochenplan der Übung
@@ -6410,6 +6661,7 @@ function draftEntries(day) {
     if (adapt) target.noLoadUp = true;  // Diät/Minicut angepasst: Gewicht nicht steigern, höchstens 1 Wdh. mehr
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
     setupEntry(en, target, (i, n) => techVariant(ex, i, n));  // Ausführung bzw. Intensitätstechnik laut Plan (v211)
+    if (typeof caliApply === 'function') caliApply(en, ex);  // Calisthenics (v225): Wdh./Haltezeit je Satz
     return en;
   });
 }
@@ -6945,12 +7197,12 @@ function markExported(filename) {
 }
 
 // Dateiname der Sicherung (User-Wunsch 2026-11-09): gleich erkennbar und in der Dateien-App leicht zu finden –
-// immer mit „StepUp-Sicherung“ vorn, dann Name und Ortszeit (Datum zuerst, damit sie nach Namen sortiert zeitlich stehen),
-// z. B. „StepUp-Sicherung Alex 2026-11-09 14.30.json“
+// immer mit „Gainslocker-Sicherung“ (bis v216 „StepUp-Sicherung“) vorn, dann Name und Ortszeit (Datum zuerst, damit sie nach Namen sortiert zeitlich stehen),
+// z. B. „Gainslocker-Sicherung Alex 2026-11-09 14.30.json“
 function backupFileName(now = new Date()) {
   const who = String((data.profile && data.profile.name) || '').replace(/[\\/:*?"<>|.]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30).trim();
   const hm = `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}`;
-  return `StepUp-Sicherung ${who ? who + ' ' : ''}${now.toLocaleDateString('sv-SE')} ${hm}.json`;
+  return `${APP_SHORT}-Sicherung ${who ? who + ' ' : ''}${now.toLocaleDateString('sv-SE')} ${hm}.json`;
 }
 
 /* ---------- Sicherung mit Passwort (v197, freiwillig): AES-GCM 256, Schlüssel aus dem Passwort per PBKDF2-SHA256 ---------- */
@@ -6976,7 +7228,7 @@ async function decryptBackup(d, pw) {
 // Verschlüsselte Sicherung öffnen: nach dem Passwort fragen (bis zu 3 Versuche); null = abgebrochen
 async function openEncryptedBackup(raw) {
   for (let i = 0; i < 3; i++) {
-    const pw = prompt(`Diese Sicherung ist mit einem Passwort geschützt.${i ? '\n\nFalsches Passwort – bitte noch einmal.' : ''}\n\nPasswort:`);
+    const pw = await uiPrompt(`Diese Sicherung ist mit einem Passwort geschützt.${i ? '\n\nFalsches Passwort – bitte noch einmal.' : ''}`, '', 'password');
     if (pw === null) return null;
     try { return JSON.parse(await decryptBackup(raw, pw)); } catch (e) { /* falsches Passwort */ }
   }
@@ -6986,10 +7238,10 @@ async function openEncryptedBackup(raw) {
 const backupPwOn = () => !!data.backupPw;  // Einstellung „Sicherungen mit Passwort“ (das Passwort selbst wird nicht gespeichert)
 let backupPw = '';                         // nur im Arbeitsspeicher, solange die App offen ist
 // Passwort für den Export holen: Feld in den Optionen, sonst nachfragen; null = abgebrochen
-function askBackupPw() {
+async function askBackupPw() {
   let pw = backupPw;
   if (pw.length < 4) {
-    pw = prompt('Passwort für diese Sicherung (wird nicht gespeichert – ohne Passwort lässt sich die Datei nicht mehr öffnen):');
+    pw = await uiPrompt('Passwort für diese Sicherung\n\nWird nicht gespeichert – ohne Passwort lässt sich die Datei nicht mehr öffnen.', '', 'password');
     if (pw === null) return null;
     pw = pw.trim();
   }
@@ -7003,7 +7255,7 @@ async function exportData() {
   let json = JSON.stringify({ ...data, exportedAt }, null, 2);
   let filename = backupFileName();
   if (backupPwOn()) {
-    const pw = askBackupPw();
+    const pw = await askBackupPw();
     if (pw === null) return;
     json = await encryptBackup(json, pw, exportedAt);
     filename = filename.replace(/\.json$/, ' (Passwort).json');
@@ -7013,7 +7265,7 @@ async function exportData() {
   // iPhone: Teilen-Menü -> „In Dateien sichern“
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'StepUp-Sicherung' });
+      await navigator.share({ files: [file], title: `${APP_SHORT}-Sicherung` });
       markExported(filename);
       return;
     } catch (e) {
@@ -7048,14 +7300,14 @@ function importData(file) {
     const plans = Array.isArray(d.plans) ? `${d.plans.length} ${d.plans.length === 1 ? 'Plan' : 'Plänen'}` : `${d.days.length} Trainingstagen`;
     const at = d.exportedAt && !isNaN(new Date(d.exportedAt)) ? new Date(d.exportedAt) : null;
     const from = at ? ` vom ${at.toLocaleDateString('de-DE')}, ${at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr,` : '';
-    if (!confirm(`Sicherung${from} mit ${plans} und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`)) return;
+    if (!(await uiConfirm(`Sicherung${from} mit ${plans} und ${d.sessions.length} Trainings laden?\n\nDie aktuellen Daten werden ersetzt.`))) return;
     data = upgradeData({
       app: 'trainingsapp', version: 1,
       plans: d.plans, activePlanId: d.activePlanId,
       days: d.days, volume: d.volume, rirPlan: d.rirPlan,  // ältere Sicherungen mit nur einem Plan
       sessions: d.sessions, bodyweight: d.bodyweight, cycle: d.cycle, steps: d.steps,
       complaints: d.complaints, hintsDismissed: d.hintsDismissed, dayTemplates: d.dayTemplates,
-      cycleShift: d.cycleShift, roundSkips: d.roundSkips, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
+      cycleShift: d.cycleShift, roundSkips: d.roundSkips, caliSnooze: d.caliSnooze, hyrox: d.hyrox, timeLimit: d.timeLimit, home: d.home, tour: d.tour, hintOff: d.hintOff, pauseAsked: d.pauseAsked, welcomeSeen: d.welcomeSeen, nutrition: d.nutrition, intake: d.intake, foodLog: d.foodLog, foods: d.foods, foodClosed: d.foodClosed, foodMeals: d.foodMeals, mcal: d.mcal, cardio: d.cardio, nutPlan: d.nutPlan,
       customExercises: d.customExercises, profile: d.profile, prefatV: d.prefatV, rirV: d.rirV,
       measures: Array.isArray(d.measures) ? d.measures : [],
       painLog: Array.isArray(d.painLog) ? d.painLog : [],
@@ -7066,6 +7318,7 @@ function importData(file) {
     rirMigrate();     // ältere Sicherung: Tank-Ziele −0,5 (v199)
     applyTheme();
     saveData();
+    if (welc) welcomeClose();  // v217: Sicherung aus der Begrüßung geladen (Umzug) – Begrüßung zu
     toast('Sicherung importiert ✔');
     go('start');
   };
@@ -7098,9 +7351,10 @@ function suggestions(query, pool) {
     seen.add(k);
     const n = norm(name);
     if (n === q) continue;
-    const words = n.split(/[^a-z0-9]+/);
+    const words = norm(typeof exSearchText === 'function' ? exSearchText(name) : name).split(/[^a-z0-9]+/);
     // Jedes eingetippte Wort muss ein Wortanfang sein (ab 3 Buchstaben auch Wortteil)
-    const match = qWords.every(qw => words.some(w => w.startsWith(qw)) || (qw.length >= 3 && n.includes(qw)));
+    const full = words.join(' ');
+    const match = qWords.every(qw => words.some(w => w.startsWith(qw)) || (qw.length >= 3 && full.includes(qw)));
     if (match) hits.push({ name, own: own.has(k), start: n.startsWith(q) });
   }
   hits.sort((a, b) => (b.own - a.own) || (b.start - a.start) || a.name.localeCompare(b.name, 'de'));
@@ -7181,7 +7435,7 @@ const actions = {
   // back: Name der Ansicht oder Funktion (params) => [Ansicht, params]
   cancel: () => {
     const c = viewCancel();
-    if (c && confirm(c.ask)) c.run();
+    if (c && askOk(c.ask)) c.run();
   },
   back: () => {
     const b = views[current.view].back;
@@ -7195,6 +7449,7 @@ const actions = {
   'libc-edit': el => { libForm = null; go('libadd', { name: el.dataset.name }); },
   'libc-cancel': () => {
     exRename = null;
+    if (current.params.ret && swapReturn) { const r = swapReturn; swapReturn = null; libForm = null; go(r.view, r.params); return; }
     const name = libForm && libForm.orig;
     libForm = null;
     if (name) go('libex', { name }); else go('library');
@@ -7225,11 +7480,13 @@ const actions = {
     if (like && !c.like) toast('Ähnliche Übung nicht gefunden – bitte aus den Vorschlägen wählen');
     else toast(f.orig ? 'Übung gespeichert ✔' : `${name} angelegt ✔`);
     libOpenGroups.add('own');
+    if (current.params.ret && swapReturn) { swapNewFinish(name); return; }  // v218: aus dem Ersetzen-Menü – gleich tauschen
+    swapReturn = null;
     go('libex', { name });
   },
   'libc-del': el => {
     const name = el.dataset.name;
-    if (!confirm(`„${name}“ aus deinen eigenen Übungen löschen?\n\nIn deinen Plänen und im Verlauf bleibt sie erhalten – sie erscheint nur nicht mehr in der Bibliothek und in den Vorschlägen.`)) return;
+    if (!askOk(`„${name}“ aus deinen eigenen Übungen löschen?\n\nIn deinen Plänen und im Verlauf bleibt sie erhalten – sie erscheint nur nicht mehr in der Bibliothek und in den Vorschlägen.`)) return;
     data.customExercises = data.customExercises.filter(c => nameKey(c.name) !== nameKey(name));
     registerCustomExercises();
     saveData();
@@ -7437,13 +7694,13 @@ const actions = {
   'err-share': async () => {
     const text = errReport();
     if (navigator.share) {
-      try { await navigator.share({ title: 'StepUp Fehlerprotokoll', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+      try { await navigator.share({ title: `${APP_SHORT} Fehlerprotokoll`, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
     try { await navigator.clipboard.writeText(text); toast('Fehlerprotokoll kopiert ✔ – z. B. in eine Nachricht einfügen'); }
-    catch (e) { prompt('Zum Kopieren markieren:', text); }
+    catch (e) { uiCopy(text); }
   },
   'err-clear': () => {
-    if (!confirm('Fehlerprotokoll löschen?')) return;
+    if (!askOk('Fehlerprotokoll löschen?')) return;
     try { localStorage.removeItem(ERR_KEY); } catch (e) { /* egal */ }
     render();
   },
@@ -7513,7 +7770,7 @@ const actions = {
   // Übung tauschen: heute und im Plan (an allen Tagen, an denen sie steht und die neue noch nicht)
   'hint-swap': el => {
     const en = draft.entries[el.dataset.ei], name = el.dataset.name, old = nameKey(en.name);
-    if (en.sets.some(s => s.touched) && !confirm('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem tauschen?')) return;
+    if (en.sets.some(s => s.touched) && !askOk('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem tauschen?')) return;
     for (const d of data.days) {
       if (d.exercises.some(x => nameKey(x.name) === nameKey(name))) continue;
       const i = d.exercises.findIndex(x => nameKey(x.name) === old);
@@ -7603,11 +7860,11 @@ const actions = {
   'tr-save': () => {
     // noch nicht bestätigte Auffälligkeiten einmal gesammelt nachfragen
     const open = draft.entries.flatMap(en => en.sets.map((x, i) => (x.touched ? typoInfo(en, i) : null)).filter(Boolean).map(t => `• ${en.name}: ${t.text}`));
-    if (open.length && !confirm(`Bitte einmal prüfen:\n${open.join('\n')}\n\nOK = so speichern, Abbrechen = zurück`)) return;
+    if (open.length && !askOk(`Bitte einmal prüfen:\n${open.join('\n')}\n\nOK = so speichern, Abbrechen = zurück`)) return;
     saveTraining();
   },
   'tr-cancel': () => {
-    if (!confirm('Training wirklich verwerfen? Die Eingaben gehen verloren.')) return;
+    if (!askOk('Training wirklich verwerfen? Die Eingaben gehen verloren.')) return;
     draft = null; saveDraft(); go('start');
   },
 
@@ -7621,7 +7878,7 @@ const actions = {
   'day-done': () => {
     dayReorder = null;
     const missing = ownPlan() ? [] : findDay(current.params.id).exercises.filter(e => e.name.trim() && e.max10 == null && !isBodyweight(e));
-    if (missing.length && !confirm(
+    if (missing.length && !askOk(
       `Bei ${missing.length === 1 ? '1 Übung' : missing.length + ' Übungen'} fehlt noch „Max. kg bei 10 Wdh.“:\n\n` +
       missing.map(e => '• ' + e.name.trim()).join('\n') +
       '\n\nTrotzdem fertig? (Bei Übungen ohne Gewicht, z. B. Klimmzüge, einfach leer lassen.)'
@@ -7630,7 +7887,7 @@ const actions = {
   },
   'del-day': () => {
     const day = findDay(current.params.id);
-    if (!confirm(`„${day.name}“ löschen? Bereits gespeicherte Trainings bleiben im Verlauf.`)) return;
+    if (!askOk(`„${day.name}“ löschen? Bereits gespeicherte Trainings bleiben im Verlauf.`)) return;
     data.days = data.days.filter(d => d !== day);
     saveData(); go('plan');
   },
@@ -7646,12 +7903,11 @@ const actions = {
     const input = prev.matches('input') ? prev : prev.querySelector('input');
     input.value = el.dataset.name;
     box.hidden = true;
+    if (input.dataset.field === 'ex-name') exNameCommit(input);  // vor blur: das löst sonst „change“ aus (zweimal fragen)
     input.blur();
     if (input.dataset.field === 'ex-name') {
-      findDay(current.params.id).exercises[input.dataset.i].name = el.dataset.name;
       const info = prev.querySelector && prev.querySelector('.info-btn');
       if (info) info.hidden = !libEntry(el.dataset.name);
-      saveData();
     } else if (input.dataset.field === 'chart-name') {
       showChartFor(el.dataset.name);
     } else if (input.dataset.field === 'wiz-add') {
@@ -7722,7 +7978,7 @@ const actions = {
   },
   'added-remove': el => {
     const en = draft.entries[el.dataset.ei];
-    if (en.sets.some(s => s.touched) && !confirm(`„${en.name}“ mit den eingetragenen Sätzen entfernen?`)) return;
+    if (en.sets.some(s => s.touched) && !askOk(`„${en.name}“ mit den eingetragenen Sätzen entfernen?`)) return;
     draft.entries.splice(el.dataset.ei, 1);
     saveDraft(); render();
   },
@@ -7731,7 +7987,7 @@ const actions = {
     const panel = el.closest('.replace');
     const name = panel.querySelector('[data-field="rep-name"]').value.trim();
     if (!name) { alert('Bitte eine Ersatzübung eingeben.'); return; }
-    if (en.sets.some(s => s.touched) && !confirm('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem ersetzen?')) return;
+    if (en.sets.some(s => s.touched) && !askOk('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem ersetzen?')) return;
     replaceExercise(en, name, parseNum(panel.querySelector('[data-field="rep-max"]').value));
     en.replacing = false;
     refreshPrefat();
@@ -7748,7 +8004,7 @@ const actions = {
   'ex-del': el => {
     const day = findDay(current.params.id);
     const ex = day.exercises[el.dataset.i];
-    if (ex.name.trim() && !confirm(`„${ex.name}“ aus dem Plan entfernen?`)) return;
+    if (ex.name.trim() && !askOk(`„${ex.name}“ aus dem Plan entfernen?`)) return;
     day.exercises.splice(el.dataset.i, 1);
     ssClean(day.exercises);  // Partner eines Supersatzes läuft wieder einzeln
     saveData(); render();
@@ -7758,7 +8014,7 @@ const actions = {
   'ex-down': el => { moveExercise(findDay(current.params.id), +el.dataset.i, 1); saveData(); render(); },
   'plan-activate': el => {
     if (data.activePlanId === el.dataset.id) return;
-    if (draft && !confirm(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den Plan wechseln?`)) return;
+    if (draft && !askOk(`Es läuft noch ein Training (${draft.dayName}). Trotzdem den Plan wechseln?`)) return;
     data.activePlanId = el.dataset.id;
     const wasEnded = !!activePlan().endedAt;
     delete activePlan().endedAt;
@@ -7769,7 +8025,7 @@ const actions = {
   'plan-end': () => {
     const p = activePlan();
     if (draft) { alert(`Es läuft noch ein Training (${draft.dayName}). Bitte erst speichern oder verwerfen.`); return; }
-    if (!confirm(`Plan „${p.name}“ beenden?\n\nEr bleibt in der Liste und kann jederzeit wieder aktiviert werden. Trainings, Verlauf und Erfolge bleiben erhalten.`)) return;
+    if (!askOk(`Plan „${p.name}“ beenden?\n\nEr bleibt in der Liste und kann jederzeit wieder aktiviert werden. Trainings, Verlauf und Erfolge bleiben erhalten.`)) return;
     p.endedAt = todayISO();
     data.activePlanId = null;
     saveData(); render();
@@ -7778,22 +8034,22 @@ const actions = {
   // eigener Plan -> ab jetzt mit Zyklen, Deload und Steigerung der App (Tage bleiben „Frei“: Sätze × Wdh. pro Übung)
   'plan-own-off': () => {
     const p = activePlan();
-    if (!confirm(`„${p.name}“ ab jetzt mit der Steigerung der App trainieren?\n\nDann gibt es Zyklen mit Intro-, Aufbau- und Deload-Woche, und die App schlägt Woche für Woche mehr Gewicht bzw. Wiederholungen vor.`)) return;
+    if (!askOk(`„${p.name}“ ab jetzt mit der Steigerung der App trainieren?\n\nDann gibt es Zyklen mit Intro-, Aufbau- und Deload-Woche, und die App schlägt Woche für Woche mehr Gewicht bzw. Wiederholungen vor.`)) return;
     delete p.own;
     p.progression = { volume: true, load: true };
     setRound(newCycleId(), 1, (data.cycle.no || 0) + 1);
     saveData(); render();
     toast('Steigerung eingeschaltet – es beginnt die Intro-Woche');
   },
-  'plan-rename': el => {
+  'plan-rename': async el => {
     const p = data.plans.find(x => x.id === el.dataset.id);
-    const name = prompt('Neuer Name für den Plan:', p.name);
+    const name = await uiPrompt('Neuer Name für den Plan', p.name);
     if (name && name.trim()) { p.name = name.trim(); saveData(); render(); }
   },
   'plan-delete': el => {
     const p = data.plans.find(x => x.id === el.dataset.id);
-    if (!confirm(`Plan „${p.name}“ mit ${p.days.length} Trainingstagen löschen?`)) return;
-    if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.\n\nGespeicherte Trainings, Verlauf und Erfolge bleiben erhalten.')) return;
+    if (!askOk(`Plan „${p.name}“ mit ${p.days.length} Trainingstagen löschen?`)) return;
+    if (!askOk('Wirklich löschen? Das lässt sich nicht rückgängig machen.\n\nGespeicherte Trainings, Verlauf und Erfolge bleiben erhalten.')) return;
     data.plans = data.plans.filter(x => x !== p);
     if (!data.plans.some(x => x.id === data.activePlanId)) {
       data.activePlanId = null;  // aktiven Plan gelöscht -> kein Plan aktiv (nicht einfach einen anderen starten)
@@ -7808,8 +8064,17 @@ const actions = {
     delete day.type;
     saveData(); render();
   },
-  'load-template': () => {
-    const replace = data.days.length && confirm('Vorhandene Trainingstage durch den Standard-Plan ersetzen?\n\n„Abbrechen“ = die 4 Tage zusätzlich anlegen. Gespeicherte Trainings bleiben in beiden Fällen erhalten.');
+  'load-template': async () => {
+    let replace = false;
+    if (data.days.length) {
+      const msg = 'Vorhandene Trainingstage durch den Standard-Plan ersetzen?\n\nOder die 4 Tage zusätzlich anlegen. Gespeicherte Trainings bleiben in beiden Fällen erhalten.';
+      if (window.confirm !== NATIVE_CONFIRM) replace = window.confirm(msg);
+      else {
+        const v = await uiDialog({ msg, confirm: true, choices: [{ label: 'Abbrechen', value: false }, { label: 'Zusätzlich anlegen', value: 'add' }, { label: 'Ersetzen', value: 'rep', primary: true }] });
+        if (!v) return;
+        replace = v === 'rep';
+      }
+    }
     const days = TEMPLATE_DAYS.map(t => ({
       id: uid(),
       name: t.name,
@@ -7823,13 +8088,13 @@ const actions = {
   },
   'vol-del': el => {
     const g = el.dataset.g;
-    if (!confirm(`„${MUSCLES[g] || g}“ entfernen? Übungen dieser Muskelgruppe bekommen ihre Sätze dann wieder von Hand.`)) return;
+    if (!askOk(`„${MUSCLES[g] || g}“ entfernen? Übungen dieser Muskelgruppe bekommen ihre Sätze dann wieder von Hand.`)) return;
     delete data.volume[g];
     if (activePlan().volExtra) delete activePlan().volExtra[g];
     saveData(); go('plan', { volOpen: true });
   },
   'vol-reset': () => {
-    if (!confirm('Alle Sätze pro Muskelgruppe auf die Standardwerte zurücksetzen?')) return;
+    if (!askOk('Alle Sätze pro Muskelgruppe auf die Standardwerte zurücksetzen?')) return;
     data.volume = defaultVolume();
     activePlan().volExtra = {};
     saveData(); go('plan', { volOpen: true });
@@ -7903,7 +8168,7 @@ const actions = {
     const label = selfDeload() ? weekLabel(w) : cycleWeekLabel(w);
     if (ci.week === w && !ci.deload) return;
     const started = roundSessions(ci.cycleStart, ci.week).length > 0;
-    if (!confirm(`Ab jetzt mit der ${label} weitermachen?${started ? `\n\nDie Trainings, die du in der ${ciLabel(ci)} schon gemacht hast, bleiben dort gespeichert.` : ''}`)) return;
+    if (!askOk(`Ab jetzt mit der ${label} weitermachen?${started ? `\n\nDie Trainings, die du in der ${ciLabel(ci)} schon gemacht hast, bleiben dort gespeichert.` : ''}`)) return;
     if (w > ci.week) setRound(ci.cycleStart, w, ci.cycle);
     else setRound(newCycleId(ci.cycleStart), w, w === 1 ? ci.cycle + 1 : ci.cycle);
     delete data.cycle.deloadAt;
@@ -7914,7 +8179,7 @@ const actions = {
   'deload-now': () => {
     const ci = cycleInfo();
     if (ci.deload) return;
-    if (!confirm('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
+    if (!askOk('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
     startDeloadNow();
     saveData(); render();
     toast('Deload-Woche eingelegt');
@@ -7924,7 +8189,7 @@ const actions = {
     const p = activePlan(), mode = el.dataset.m;
     if ((p.deload || 'auto') === mode) return;
     const ci = cycleInfo();
-    if (mode === 'auto' && ci.extra && !confirm(`Du bist gerade in ${weekLabel(ci.week)}, also schon nach den geplanten Trainingswochen.\n\nMit „Automatisch“ beginnt jetzt die Deload-Woche. Fortfahren?`)) return;
+    if (mode === 'auto' && ci.extra && !askOk(`Du bist gerade in ${weekLabel(ci.week)}, also schon nach den geplanten Trainingswochen.\n\nMit „Automatisch“ beginnt jetzt die Deload-Woche. Fortfahren?`)) return;
     const wasDeload = ci.deload;
     if (mode === 'self') p.deload = 'self'; else delete p.deload;
     if (mode === 'self' && wasDeload) { setRound(ci.cycleStart, ci.week, ci.cycle); data.cycle.deloadAt = ci.week; }  // laufender Deload bleibt
@@ -7991,10 +8256,14 @@ const actions = {
     if (inp) { inp.focus(); inp.select(); }
   },
   'ex-rename-cancel': () => { exRename = null; render(); },
-  'ex-rename-ok': () => {
-    const from = exRename, to = document.getElementById('ren-name').value;
-    if (!renameExercise(from, to)) return;
-    if (current.view === 'exercise') go('exercise', { ...current.params, name: to.trim().replace(/\s+/g, ' ') });
+  'ex-rename-ok': async () => {
+    const from = exRename, to = renameCheck(from, document.getElementById('ren-name').value);
+    if (to == null) return;
+    if (to !== from.trim()) {
+      const how = nameKey(to) === nameKey(from) ? 'all' : await askRename(from, to, 'form');
+      if (!how || !renameExercise(from, to, false, how)) return;
+    } else exRename = null;
+    if (current.view === 'exercise') go('exercise', { ...current.params, name: to });
     else render();
   },
   'open-exercise': el => go('exercise', { name: el.dataset.name, from: current.view, fromParams: current.params }),
@@ -8013,7 +8282,7 @@ const actions = {
     render();
   },
   'del-session': el => {
-    if (!confirm('Dieses Training endgültig löschen?')) return;
+    if (!askOk('Dieses Training endgültig löschen?')) return;
     data.sessions = data.sessions.filter(s => s.id !== el.dataset.id);
     saveData(); toast('Training gelöscht');
     if (current.params.week) go('week', { key: current.params.week }); else go('history');
@@ -8023,7 +8292,7 @@ const actions = {
     const day = findDay(draft.dayId);
     if (!day) { alert('Der Trainingstag steht nicht mehr im Plan.'); return; }
     const changed = draft.entries.some(en => en.added || en.replacedFrom || en.sets.some(s => s.touched));
-    if (changed && !confirm('Die Vorschläge werden neu berechnet. Schon eingetragene Werte, ersetzte und hinzugefügte Übungen gehen dabei verloren. Fortfahren?')) return;
+    if (changed && !askOk('Die Vorschläge werden neu berechnet. Schon eingetragene Werte, ersetzte und hinzugefügte Übungen gehen dabei verloren. Fortfahren?')) return;
     const key = el.dataset.key;
     draft.progression = { ...draft.progression, [key]: !draft.progression[key] };
     const comments = new Map(draft.entries.map(en => [nameKey(en.name), en.comment]));
@@ -8131,8 +8400,8 @@ const actions = {
   'backup-pw-mode': el => { data.backupPw = el.dataset.v === '1'; if (!data.backupPw) backupPw = ''; saveData(); render(); },
   import: () => document.getElementById('import-file').click(),
   'reset-trainings': () => {
-    if (!confirm(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
-    if (!confirm('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
+    if (!askOk(`Alle ${data.sessions.length} Trainings, Körpergewicht, Schritte und Ernährungseinträge löschen?\n\nDie Trainingstage mit ihren Übungen bleiben erhalten.`)) return;
+    if (!askOk('Wirklich löschen? Das lässt sich nicht rückgängig machen.')) return;
     Object.assign(data, { sessions: [], bodyweight: [], steps: [], measures: [], intake: [], foodLog: [], foodClosed: {}, cardio: [], complaints: [], painLog: [], hintsDismissed: {}, cycleShift: {}, roundSkips: {} });
     // Max.-Werte stammen aus den gelöschten Trainings -> neu eintragen lassen
     data.plans.forEach(p => p.days.forEach(d => d.exercises.forEach(e => { e.max10 = null; })));
@@ -8143,8 +8412,8 @@ const actions = {
     go('plan');
   },
   'reset-all': () => {
-    if (!confirm('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte, Einstellungen sowie Fortschrittsfotos und Technik-Videos werden entfernt.')) return;
-    if (!confirm('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
+    if (!askOk('Wirklich ALLES löschen?\n\nPlan, Trainings, Körpergewicht, Schritte, Einstellungen sowie Fortschrittsfotos und Technik-Videos werden entfernt.')) return;
+    if (!askOk('Letzte Nachfrage: Das lässt sich nicht rückgängig machen. Fortfahren?')) return;
     data = upgradeData(emptyData());
     if (typeof mediaWipe === 'function') mediaWipe();  // Fotos und Videos (v213)
     registerCustomExercises();
@@ -8227,8 +8496,8 @@ const fields = {
     saveData();
   },
   'ex-name': el => {
-    findDay(current.params.id).exercises[el.dataset.i].name = el.value;
-    saveData();
+    // vorhandene Übung: erst beim Verlassen übernehmen (Rückfrage beim Umbenennen, v219); neuer Platz: sofort
+    if (!String(el.dataset.orig || '').trim()) { findDay(current.params.id).exercises[el.dataset.i].name = el.value; saveData(); }
     showSuggestions(el);
     // i-Knopf nur, wenn es zur eingetippten Übung eine Erklärung gibt
     const info = el.parentElement.querySelector('.info-btn');
@@ -8329,7 +8598,11 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   // Menü „⋯“ im Training schließt bei jedem Tipp außer auf „⋯“ selbst (v200)
   if (trMenuOpen && !(el && el.dataset.action === 'tr-menu')) { trMenuOpen = false; syncTrHead(); }
-  if (el && actions[el.dataset.action]) actions[el.dataset.action](el);
+  if (el && actions[el.dataset.action]) {
+    const keep = actionNow;
+    actionNow = { name: el.dataset.action, el };
+    try { actions[el.dataset.action](el); } finally { actionNow = keep; }
+  }
 });
 
 /* ---------- Wischen ---------- */
@@ -8443,6 +8716,7 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('change', e => {
+  if (e.target.dataset && e.target.dataset.field === 'ex-name') { exNameCommit(e.target); return; }  // v219
   // Auswahllisten: manche Safari-Versionen melden nur „change“, nicht „input“
   if (e.target.matches('select[data-field]') && fields[e.target.dataset.field]) {
     fields[e.target.dataset.field](e.target);
@@ -8509,6 +8783,17 @@ const profileColor = () => {
 const THEME_MODES = { '': 'Automatisch', light: 'Hell', dark: 'Dunkel' };
 
 // Farbe und Hell/Dunkel: data-accent bzw. data-theme am html-Element (ohne data-theme folgt die App dem Handy)
+/* App-Symbol in der Farbwelt (v220, User 2026-11-12): Das Handy übernimmt Symbol und Manifest beim Hinzufügen zum
+   Home-Bildschirm – deshalb zeigen die Verweise immer auf die gerade gewählte Farbwelt (Ordner icons/). Später ändert sich
+   das Symbol auf dem Home-Bildschirm nicht mehr mit (das erlauben iPhone und Android nicht). */
+function iconSync() {
+  const k = PROFILE_COLORS[profileColor()] ? profileColor() : 'blue';
+  const set = (sel, href) => { const el = document.querySelector(sel); if (el && el.getAttribute('href') !== href) el.setAttribute('href', href); };
+  set('link[rel="manifest"]', `icons/manifest${IS_BETA ? '-beta' : ''}-${k}.json`);
+  set('link[rel="apple-touch-icon"]', `icons/apple-touch-icon-${k}.png`);
+  set('link[rel="icon"]', `icons/icon-${k}-192.png`);
+}
+
 function applyTheme() {
   const root = document.documentElement;
   root.dataset.accent = profileColor();
@@ -8517,6 +8802,7 @@ function applyTheme() {
   const size = data.profile && data.profile.size;  // Textgröße (v207): '' | 'l' | 'xl'
   if (size === 'l' || size === 'xl') root.dataset.size = size; else delete root.dataset.size;
   plainSync();
+  iconSync();
   // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
   const [light, dark] = plainOn() ? ['#f4f4f5', '#0e0e10'] : PROFILE_COLORS[profileColor()].bg;  // Schlicht: neutral
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
@@ -8530,6 +8816,8 @@ function applyTheme() {
 // Mitteilungen und Rückfragen. Einfache Zeichen (✔ ✕ ✎ ↑ ↓ ★ …) bleiben – mit U+FE0E immer einfarbig.
 // Behälter, die danach leer sind (z. B. das große Symbol über einer Frage), werden ausgeblendet (.plain-empty).
 const plainOn = () => !!(data.profile && data.profile.look === 'plain');
+// Schlicht (v219): Tagesnummern zweistellig wie „01“
+const dayNoText = i => plainOn() ? String(i + 1).padStart(2, '0') : i + 1;
 const PLAIN_KEEP = new Set([...'✔✓✕✎★☆↑↓⇅⇄↔↕⬆⬇▶◀‹›→←↘↗↩−+']);  // ↘ = Reduktions-Teil-Satz (v212)
 const PLAIN_MAP = { '🗑': '✕', '⏳': '–', '⏭': '–' };  // Symbole, die allein in Knöpfen/Kästchen stehen
 const PLAIN_RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2})[︎️]?\p{Emoji_Modifier}?(?:‍\p{Extended_Pictographic}[︎️]?\p{Emoji_Modifier}?)*( ?)|️|⃣/gu;
@@ -8710,19 +8998,30 @@ function introHtml() {
       <div class="intro-dots" aria-hidden="true">${INTRO.map((_, k) => `<span class="${k === i ? 'on' : ''}"></span>`).join('')}</div>
       <div class="row intro-btns">${last ? '' : '<button class="btn" data-action="intro-skip">Überspringen</button>'}
         <button class="btn primary" data-action="intro-next">${last ? "Los geht's" : 'Weiter ›'}</button></div>
+      <button class="link-btn intro-import" data-action="welcome-import">📥 Ich habe schon eine Sicherung</button>
+      ${IS_BETA ? '<button class="link-btn intro-import" data-action="beta-testdata">🧪 Testdaten laden (Beta)</button>' : ''}
     </div>`;
+}
+
+// App-Symbol (v219): Handy mit Hantel und steigender Verlaufskurve – weiß, Hantel und Kurve in der Akzentfarbe
+function appLogoSvg() {
+  const db = '<g transform="translate(50 33) scale(1.05)"><rect x="-8" y="-1.7" width="16" height="3.4" rx="1"/><rect x="-9.5" y="-7" width="4" height="14" rx="1.3"/>'
+    + '<rect x="5.5" y="-7" width="4" height="14" rx="1.3"/><rect x="-12.5" y="-4.5" width="2.6" height="9" rx="1"/><rect x="9.9" y="-4.5" width="2.6" height="9" rx="1"/></g>';
+  return `<svg class="app-logo" viewBox="0 0 100 100"><rect class="al-phone" x="28" y="12" width="44" height="76" rx="10"/>
+    <g class="al-ink"><rect x="44" y="17.5" width="12" height="3" rx="1.5" opacity=".35"/>${db}
+    <circle cx="36" cy="74" r="3.5"/><circle cx="45" cy="64" r="3.5"/><circle cx="53" cy="68" r="3.5"/><circle cx="64" cy="52" r="4.5"/></g>
+    <path class="al-line" d="M36 74L45 64L53 68L64 52"/></svg>`;
 }
 
 function welcomeHtml() {
   if (welc.step === 0) return introHtml();
-  const icon = `<div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="6.5" width="3.5" height="11" rx="1.2"/>
-        <rect x="16" y="6.5" width="3.5" height="11" rx="1.2"/><path d="M8 12h8M2 9.5v5M22 9.5v5"/></svg></div>`;
+  const icon = `<div class="welcome-icon" aria-hidden="true">${appLogoSvg()}</div>`;
   const two = welcomeNeedsPhase();  // gibt es einen zweiten Schritt?
   const dots = (welc.step === 1 ? two : welcomeNeedsProfile() || welc.fresh)
     ? `<p class="welcome-step">Schritt ${welc.step} von 2</p>` : '';
   if (welc.step === 1) {
     return `${icon}${dots}
-      ${welc.fresh ? `<h2 id="welcome-title">Willkommen bei StepUp Strength</h2>
+      ${welc.fresh ? `<h2 id="welcome-title">Willkommen bei ${APP_NAME}</h2>
       <ul class="welcome-why">
         <li>Für jeden Satz sagt dir die App <b>Gewicht und Wiederholungen</b> – passend zu deiner Kraft.</li>
         <li>Sie <b>lernt aus jedem Training</b> und steigert dich Schritt für Schritt, mit Erholungswochen zur richtigen Zeit.</li>
@@ -8931,7 +9230,7 @@ actions['ss-unpair'] = el => {
 actions['ss-auto'] = () => {
   const day = findDay(current.params.id), pv = ssAutoPreview(day);
   if (!pv) return;
-  if (!confirm(`Diese Übungen als Supersatz koppeln?\n\n${pv.pairs.map(([a, b]) => `• ${a} + ${b}`).join('\n')}\n\nSpart ca. ${pv.save} min pro Training. `
+  if (!askOk(`Diese Übungen als Supersatz koppeln?\n\n${pv.pairs.map(([a, b]) => `• ${a} + ${b}`).join('\n')}\n\nSpart ca. ${pv.save} min pro Training. `
     + 'Die zweite Übung rückt jeweils direkt hinter die erste. Jedes Paar lässt sich jederzeit wieder lösen.')) return;
   day.exercises = pv.list;
   day.ssRuns = 0; day.ssAsked = false;
@@ -9008,14 +9307,14 @@ actions['crep-text'] = async () => {
     try { await navigator.share({ title: 'Beschwerde-Bericht', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
   try { await navigator.clipboard.writeText(text); toast('Bericht kopiert ✔ – z. B. in eine Mail einfügen'); }
-  catch (e) { prompt('Zum Kopieren markieren:', text); }
+  catch (e) { uiCopy(text); }
 };
 actions['pain-pt'] = el => {
   const cap = el.closest('.compl-area') && el.closest('.compl-area').querySelector('.ps-cap');
   if (cap) { cap.textContent = el.dataset.t; cap.hidden = false; }
 };
 actions['pain-del'] = el => {
-  if (!confirm('Diesen Eintrag löschen?')) return;
+  if (!askOk('Diesen Eintrag löschen?')) return;
   data.painLog = data.painLog.filter(z => z.id !== el.dataset.id);
   saveData(); render();
 };
@@ -9108,7 +9407,110 @@ function prefatMigrate() {
 
 // Erst zeichnen, wenn alle Skripte geladen sind (die Startseite nutzt z. B. nutrition.js) –
 // sonst bleibt die Seite beim Öffnen leer, bis man einen Reiter antippt.
+/* ---------- Neue Übung direkt aus einem Ersetzen-Menü (v218, User 2026-11-12) ----------
+   Training (ctx tr), Trainingstag (plan) und Assistent (wiz): Formular „Eigene Übung“ mit Muskelgruppe, Art und Figur der
+   Übung, die ersetzt werden soll; nach dem Speichern zurück und gleich tauschen. */
+let swapReturn = null;
+actions['swap-new'] = el => {
+  const ctx = el.dataset.ctx;
+  let ex = null;
+  if (ctx === 'tr' && draft) { const n = draft.entries[el.dataset.ei].name; ex = planExercise(n) || { name: n }; }
+  else if (ctx === 'plan') ex = findDay(current.params.id).exercises[Number(el.dataset.i)] || null;
+  else if (ctx === 'wiz' && wiz && wiz.swapOpen) ex = { name: wiz.swapOpen.n };
+  const base = ex && ex.name && ex.name.trim() ? ex : null;
+  const panel = el.closest('.replace'), typed = panel && panel.querySelector('input[type="text"]');
+  const tv = typed ? typed.value.trim() : '';
+  swapReturn = { ctx, view: current.view, params: { ...current.params }, ei: el.dataset.ei, i: el.dataset.i };
+  libForm = { name: tv && !builtinExercise(tv) && !customExercise(tv) ? tv : '', kind: base ? kindOf(base) : 'normal',
+    group: base ? groupOf(base) || '' : '', like: base && builtinExercise(base.name) ? base.name : '', note: '', orig: null };
+  go('libadd', { ret: 1 });
+};
+function swapNewFinish(name) {
+  const r = swapReturn;
+  swapReturn = null;
+  go(r.view, r.params);
+  if (r.ctx === 'tr' && draft && draft.entries[r.ei]) {
+    const en = draft.entries[r.ei];
+    if (en.sets.some(s => s.touched) && !askOk('Bereits eingetragene Sätze dieser Übung gehen verloren. Trotzdem ersetzen?')) return;
+    replaceExercise(en, name, null);
+    en.replacing = false;
+    refreshPrefat();
+    saveDraft(); render();
+    toast(`Ersetzt durch ${name}`);
+  } else if (r.ctx === 'plan') {
+    if (planReplaceExercise(findDay(r.params.id), Number(r.i), name)) { render(); toast(`Ersetzt durch ${name}`); }
+  } else if (r.ctx === 'wiz' && wiz && wiz.swapOpen) wizSwap(name);
+}
+
+/* ---------- Beta und Umzug (v217) ---------- */
+// Beta: Schild in der Kopfzeile, eigener Name unter dem Symbol (manifest-beta.json), Titel
+function channelInit() {
+  if (!IS_BETA) return;
+  document.documentElement.classList.add('beta');
+  document.title = APP_NAME + ' Beta';
+  const m = document.querySelector('link[rel="manifest"]');
+  if (m) m.href = 'manifest-beta.json';
+  try { iconSync(); } catch (e) { /* Daten noch nicht geladen – applyTheme holt es nach */ }
+  const a = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (a) a.content = 'Gains Beta';
+  const hd = document.querySelector('header');
+  if (hd && !hd.querySelector('.beta-badge')) hd.insertAdjacentHTML('beforeend', '<span class="beta-badge" aria-label="Beta-Version">BETA</span>');
+}
+function betaCard() {
+  if (!IS_BETA) return '';
+  return `<div class="card beta-card"><p><b>🧪 Beta-Version ${APP_V}</b> – hier testest du Neues, bevor alle es bekommen. Deine Daten hier sind
+      getrennt von der normalen App.</p>
+    <button class="btn" data-action="beta-feedback">💬 Rückmeldung geben</button>
+    <button class="btn" data-action="beta-testdata">🧪 Testdaten laden<small>Max, 6 Monate Training und Ernährung (Mai bis Nov. 2026) – ersetzt die Daten der Beta</small></button></div>`;
+}
+// Beta (v223, User 2026-11-13): simulierte Testperson aus testdaten-max.json laden – läuft wie „Sicherung laden“ (mit Rückfrage)
+actions['beta-testdata'] = async () => {
+  if (!IS_BETA) return;
+  try {
+    const res = await fetch('testdaten-max.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    importData(new File([await res.text()], 'testdaten-max.json', { type: 'application/json' }));
+  } catch (e) { alert('Die Testdaten konnten nicht geladen werden – bitte mit Internetverbindung noch einmal versuchen.'); }
+};
+// Alte Adresse (stepup-strength.github.io): Daten ziehen nicht von selbst mit (jede Adresse hat ihren eigenen Speicher)
+function moveCard() {
+  if (!OLD_HOST) return '';
+  const host = NEW_URL.replace('https://', '').replace(/\/$/, '');
+  return `<div class="card move-card"><h2>📦 Die App zieht um</h2>
+    <p>Sie heißt jetzt <b>${APP_NAME}</b> und hat eine neue Adresse. Deine Daten nimmst du einmal mit – so geht's:</p>
+    <ol><li><b>Sicherung erstellen</b> – speichert alle Trainings, Pläne und Einträge als Datei.
+        <button class="btn primary" data-action="export">💾 Sicherung erstellen</button></li>
+      <li><b>Neue Adresse öffnen</b> <a class="btn" href="${NEW_URL}" target="_blank" rel="noopener">${host} öffnen</a></li>
+      <li>Dort bei der Begrüßung <b>„Ich habe schon eine Sicherung“</b> tippen und die Datei wählen.</li></ol>
+    <p class="hint">iPhone: Öffne die neue Adresse in Safari, füge sie über „Teilen → Zum Home-Bildschirm“ hinzu und lade die Sicherung
+      <b>in der neuen App</b> – sie hat ihren eigenen Speicher. Fortschrittsfotos haben eine eigene Sicherung (Ernährung → Fortschrittsfotos →
+      Fotos sichern). Lösch die alte App erst, wenn drüben alles da ist.</p></div>`;
+}
+actions['beta-feedback'] = async () => {
+  if (typeof LEGAL !== 'undefined' && LEGAL.email) { feedbackMail(true); return; }
+  const text = `Rückmeldung zur ${APP_NAME} Beta (Version ${APP_V} · ${deviceText()} · Modus ${appMode()}):
+
+`;
+  if (typeof LEGAL !== 'undefined' && LEGAL.email) {
+    location.href = `mailto:${LEGAL.email}?subject=${encodeURIComponent(APP_NAME + ' Beta – Rückmeldung')}&body=${encodeURIComponent(text)}`;
+    return;
+  }
+  if (navigator.share) {
+    try { await navigator.share({ title: `${APP_NAME} Beta – Rückmeldung`, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(text); toast('Text kopiert – füg ihn in deine Nachricht ein'); } catch (e) { uiCopy(text, 'Diesen Text kopieren und in deine Nachricht einfügen:'); }
+};
+// Begrüßung: vorhandene Sicherung laden (z. B. beim Umzug von der alten Adresse)
+actions['welcome-import'] = () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/json,.json'; inp.hidden = true;
+  inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) importData(f); });
+  document.body.appendChild(inp);
+  inp.click();
+};
+
 async function boot() {
+  channelInit();
   await storeInit();  // Daten aus IndexedDB (bzw. Umzug dorthin) – erst danach zeichnen
   applyTheme();
   registerCustomExercises();  // Übungsliste und Bibliothek um eigene Übungen ergänzen (library.js ist jetzt geladen)
