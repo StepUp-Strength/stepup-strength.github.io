@@ -4,7 +4,7 @@
 // Wichtig: immer direkt vom Server laden (cache: 'reload' / 'no-cache'), nicht aus dem Browser-Zwischenspeicher –
 // GitHub Pages erlaubt dort 10 Minuten, sonst landen kurz nach einem Update noch alte Dateien im neuen Cache.
 
-const CACHE = 'trainingsapp-v229';
+const CACHE = 'trainingsapp-v249';
 const FILES = [
   './',
   './index.html',
@@ -30,6 +30,13 @@ const FILES = [
   './sports.js',
   './cali.js',
   './zxing.min.js',
+  './fonts/barlow-400.woff2',
+  './fonts/barlow-600.woff2',
+  './fonts/barlow-semicond-600.woff2',
+  './fonts/plex-sans.woff2',
+  './fonts/plex-mono-400.woff2',
+  './fonts/schibsted.woff2',
+  './fonts/arimo.woff2',
   './manifest.json',
   './manifest-beta.json',
   './apple-touch-icon.png',

@@ -27,7 +27,7 @@ function errLog(msg, stack) {
     localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(-ERR_MAX)));
     if (!errToastShown && typeof toast === 'function') {
       errToastShown = true;  // nur einmal pro Sitzung Bescheid geben
-      setTimeout(() => { try { toast('Da ist etwas schiefgelaufen – steht unter Optionen → Hilfe & Info'); } catch (e) { /* egal */ } }, 0);
+      setTimeout(() => { try { toast('Da ist etwas schiefgelaufen. Mehr dazu unter Optionen → Hilfe & Info'); } catch (e) { /* egal */ } }, 0);
     }
   } catch (e) { /* das Protokoll darf selbst nie stören */ }
 }
@@ -195,6 +195,15 @@ function upgradeData(d) {
   if (d.profile === undefined) d.profile = null;  // { name, sex: 'm' | 'f', color: Schlüssel aus PROFILE_COLORS } – beim ersten Öffnen gefragt
   // Farbe wird einmal nach dem Geschlecht vorbelegt (früher „Passend“ = color null) und folgt ihm danach nicht mehr
   if (d.profile && d.profile.sex && !d.profile.color) d.profile.color = d.profile.sex === 'f' ? 'berry' : 'blue';
+  // v234: neue Designs. Bisherige Nutzer behalten ihren Stil (Standard/Schlicht), neue starten mit „Kraftraum“ (currentLook).
+  // Eine früher selbst gewählte Farbwelt (abweichend von der Vorbelegung nach Geschlecht) gilt weiter (colorSet).
+  if (!d.lookV) {
+    if (d.profile) {
+      if (d.profile.look === undefined) d.profile.look = null;
+      if (d.profile.color && d.profile.color !== (d.profile.sex === 'f' ? 'berry' : 'blue')) d.profile.colorSet = true;
+    }
+    d.lookV = 1;
+  }
   if (!Array.isArray(d.customExercises)) d.customExercises = [];  // eigene Übungen: [{ name, kind, group, like, note }]
   if (!Array.isArray(d.dayTemplates)) d.dayTemplates = [];  // selbst erstellte Trainingstage: [{ id, name, intensity, groups }]
   // Periodisierung: buildWeeks Aufbauwochen, danach 1 Deload-Woche – jede Woche ist ein Durchlauf (siehe cycleInfo)
@@ -211,12 +220,13 @@ function upgradeData(d) {
   // Trainings hängen über die dayId am Tag). User-Wunsch 2026-11-02.
   if (!d.renamedInt) {
     const ren = n => typeof n === 'string'
-      ? n.replace(/\s*\b(schwer|leicht)\b/i, (m, w) => ` – ${w.toLowerCase() === 'schwer' ? 'niedrige' : 'hohe'} Wdh.`) : n;
+      ? n.replace(/\s*\b(schwer|leicht)\b/i, (m, w) => ` (${w.toLowerCase() === 'schwer' ? 'niedrige' : 'hohe'} Wdh.)`) : n;
     for (const p of d.plans) for (const day of p.days) day.name = ren(day.name);
     for (const t of d.dayTemplates) t.name = ren(t.name);
     for (const s of d.sessions || []) s.dayName = ren(s.dayName);
     d.renamedInt = true;
   }
+  for (const p of d.plans || []) rirMigratePlan(p);  // v230: neue Tank-Regel
   return d;
 }
 
@@ -337,7 +347,7 @@ async function storeInit() {
       if (localStorage.getItem(STORE_KEY)) localStorage.removeItem(STORE_MODE_KEY);
       else {
         block = true;
-        alert('Deine Daten konnten gerade nicht geladen werden. Bitte schließe die App und öffne sie neu – nichts wurde verändert.');
+        alert('Deine Daten konnten gerade nicht geladen werden. Bitte schließe die App und öffne sie neu. Es wurde nichts verändert.');
       }
     }
   } finally {
@@ -365,7 +375,7 @@ async function persistFill() {
   const el = document.getElementById('persist-info');
   if (!el) return;
   if (!navigator.storage || !navigator.storage.persisted) {
-    el.innerHTML = 'ℹ️ Dein Browser verrät nicht, ob die Daten dauerhaft gespeichert sind – mach regelmäßig eine Sicherung.';
+    el.innerHTML = 'ℹ️ Dein Browser verrät nicht, ob die Daten dauerhaft gespeichert sind. Mach regelmäßig eine Sicherung.';
     return;
   }
   let on = false;
@@ -382,7 +392,7 @@ async function storageInfoFill() {
   if (storeMode !== 'idb') {
     const pct = Math.round(used / LS_LIMIT * 100);
     el.innerHTML = `💾 Deine Daten: ${fmtMB(used)} von ca. 5 MB (${pct} %)${pct >= 80
-      ? ' – <b>der Speicher wird knapp.</b> Sichere deine Daten und lösche ggf. alte Trainings.' : ''}`;
+      ? '. <b>Der Speicher wird knapp.</b> Sichere deine Daten und lösche ggf. alte Trainings.' : ''}`;
     return;
   }
   let free = '';
@@ -391,7 +401,7 @@ async function storageInfoFill() {
     if (est && est.quota) {
       const left = est.quota - (est.usage || 0);
       free = left > 1024 * 1024 * 1024 ? ` · frei: mehr als ${Math.floor(left / 1024 / 1024 / 1024)} GB` : ` · frei: ${fmtMB(left)}`;
-      if ((est.usage || 0) / est.quota >= 0.8) free += ' – <b>der Speicher wird knapp.</b>';
+      if ((est.usage || 0) / est.quota >= 0.8) free += '. <b>Der Speicher wird knapp.</b>';
     }
   } catch (e) { /* ohne Angabe */ }
   el.innerHTML = `💾 Deine Daten: ${fmtMB(used)} · großer App-Speicher${free}`;
@@ -442,13 +452,13 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
    sehen und einzustellen ist (data.profile.mode). Was ausgeblendet ist, läuft mit der Empfehlung der App weiter.
    FEATURE_MODE: ab welchem Modus eine Funktion zu sehen ist (fehlt sie hier: in allen Modi). Abgestimmt mit dem User. */
 const APP_MODES = {
-  e: { rank: 1, icon: '🌱', label: 'Einfach', text: 'Nur das Nötigste – die App entscheidet für dich. Ideal für Neulinge.' },
-  s: { rank: 2, icon: '💪', label: 'Standard', text: 'Das Wichtige mit kurzer Begründung – für Einsteiger und Fortgeschrittene.' },
-  x: { rank: 3, icon: '🦉', label: 'Experte', text: 'Alle Zahlen, Tabellen und Einstellungen – für alte Hasen.' },
+  e: { rank: 1, icon: '🌱', label: 'Einfach', text: 'Nur das Nötigste, die App entscheidet für dich. Ideal für Neulinge.' },
+  s: { rank: 2, icon: '💪', label: 'Standard', text: 'Das Wichtige mit kurzer Begründung, für Einsteiger und Fortgeschrittene.' },
+  x: { rank: 3, icon: '🦉', label: 'Experte', text: 'Alle Zahlen, Tabellen und Einstellungen, für alte Hasen.' },
 };
 const FEATURE_MODE = {
   // Plan-Assistent
-  'wiz-custom': 's', 'wiz-style': 'x', 'wiz-freq': 's', 'wiz-days': 's', 'wiz-name': 's', 'wiz-focus': 's', 'wiz-volume': 's',
+  'wiz-custom': 's', 'wiz-style': 's', 'wiz-freq': 's', 'wiz-days': 's', 'wiz-name': 's', 'wiz-focus': 's', 'wiz-volume': 's',
   'wiz-volume-edit': 'x', 'wiz-rir': 'x', 'wiz-preview': 's', 'wiz-int': 's', 'wiz-deload': 's', 'wiz-prog': 's', 'entry-week': 's',
   // Vor dem Training
   'check-detail': 's', 'first-max': 's', 'cycle-choice': 's',
@@ -518,15 +528,18 @@ function outlierRef(name, planned) {
   return last ? ofVariant(last.sets, '')[0] || null : null;
 }
 
-function fmtSet(s) {
+// name (optional): Halteübungen zeigen Sekunden statt Wdh. (v235)
+const holdSec = name => typeof name === 'string' && typeof isHoldName === 'function' && isHoldName(name);
+function fmtSet(s, name) {
+  const sec = holdSec(name);
   const tank = (s.rir != null && feat('tr-rir-input') ? ` · Tank ${fmtNum(s.rir)}` : '') + (s.variant ? ` · ${VARIANTS[s.variant]}` : '')
     + (s.outlier ? ' · ⚠ zählt nicht (Ausreißer)' : '');
   // Teil-Sätze (v211): Reduktion „→ 65 × 8 → 52,5 × 6“, Myo „+ 4+4+3“
   const subs = !(s.subs || []).length ? '' : s.variant === 'myo' ? ` + ${s.subs.map(x => x.reps).join('+')}`
     : ' ' + s.subs.map(x => `→ ${x.weight != null ? `${fmtNum(x.weight)} × ` : ''}${x.reps}`).join(' ');
-  if (s.weight == null) return `${s.reps} Wdh.${subs}${tank}`;
+  if (s.weight == null) return `${s.reps}${sec ? ' s' : ' Wdh.'}${subs}${tank}`;
   if (s.reps == null) return `${fmtNum(s.weight)} kg`;
-  return `${fmtNum(s.weight)} kg × ${s.reps}${subs}${tank}`;
+  return `${fmtNum(s.weight)} kg × ${s.reps}${sec ? ' s' : ''}${subs}${tank}`;
 }
 
 function sessionsNewestFirst() {
@@ -856,9 +869,9 @@ const DUMBBELL = /kurzhantel|konzentrationscurls|arnold press|goblet/;
 const stepFor = ex => ex.step != null ? ex.step : (DUMBBELL.test(norm(ex.name)) ? 2 : 2.5);
 const STEP_OPTIONS = [1.25, 2, 2.5, 5, 10];
 // „Max. bei 10 Wdh.“ ist ohne Vorermüdung gemeint (User-Wunsch 2026-11-09)
-const MAX_FRESH_NOTE = 'Gemeint ist frisch: so viel, wie du schaffst, wenn die Übung die erste für diese Muskelgruppe im Training ist – nicht nach anderen Übungen für denselben Muskel. Steht sie weiter hinten, zieht die App die Vorermüdung selbst ab.';
-const MAX_UNKNOWN_HINT = 'Du weißt dein Max. bei 10 Wdh. nicht? Kein Problem – lass das Feld leer und taste dich mit den ersten Sätzen an ein Gewicht heran, das sich passend anfühlt. Trag ein, was du geschafft hast (Gewicht, Wdh. und Tank): Die App errechnet daraus den Wert und die weitere Steigerung.';  // wählbare Gewichtssprünge pro Übung
-const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben) – gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen, 10 kg zu Maschinen mit großen Steckgewichten (z. B. Beinpresse).';
+const MAX_FRESH_NOTE = 'Gemeint ist frisch: so viel, wie du schaffst, wenn die Übung die erste für diese Muskelgruppe im Training ist, nicht nach anderen Übungen für denselben Muskel. Steht sie weiter hinten, zieht die App die Vorermüdung selbst ab.';
+const MAX_UNKNOWN_HINT = 'Du weißt dein Max. bei 10 Wdh. nicht? Kein Problem: Lass das Feld leer und taste dich mit den ersten Sätzen an ein Gewicht heran, das sich passend anfühlt. Trag ein, was du geschafft hast (Gewicht, Wdh. und Tank): Die App errechnet daraus den Wert und die weitere Steigerung.';  // wählbare Gewichtssprünge pro Übung
+const STEP_HINT = 'Um so viel geht das Gewicht hoch, wenn die App mehr Gewicht vorschlägt. 1,25 kg braucht kleine Scheiben (z. B. 2 × 0,625 kg oder Mikro-Scheiben). Gut für Übungen, bei denen 2,5 kg auf einmal zu viel ist (z. B. Schulterdrücken, Seitheben). 5 kg passt z. B. zu Maschinen mit 5-kg-Stufen, 10 kg zu Maschinen mit großen Steckgewichten (z. B. Beinpresse).';
 
 const round2 = x => Math.round(x * 100) / 100;
 const roundTo = (w, step, fn = Math.round) => round2(fn(w / step) * step);
@@ -917,10 +930,10 @@ function progression(first, t) {
 }
 
 function resultText(r) {
-  if (r.diff >= 1) return 'Ziel übertroffen – es geht voran';
+  if (r.diff >= 1) return 'Ziel übertroffen, es geht voran';
   if (r.diff >= 0) return 'Ziel erreicht ✓';
-  if (r.deload) return 'Deutlich verfehlt – die App nimmt etwas zurück';
-  return 'Knapp verfehlt – die App bleibt vorsichtig';
+  if (r.deload) return 'Deutlich verfehlt, die App nimmt etwas zurück';
+  return 'Knapp verfehlt, die App bleibt vorsichtig';
 }
 
 // Pro Satz wird man schwächer: so viele Wdh. kostet die Ermüdung von Satz zu Satz
@@ -933,12 +946,13 @@ function capacityAt(cap, weight, newWeight) {
   return 10 + (1 - f) / 0.025;
 }
 
-const isDone = s => parseNum(s.reps) != null && parseNum(s.rir) != null;
+// Halteübungen (noTank, v236): erledigt, sobald selbst eingetragen oder bestätigt – ohne Tank
+const isDone = s => parseNum(s.reps) != null && (s.noTank ? !!s.touched : parseNum(s.rir) != null);
 
 // Tippfehler (User-Regel 2026-11-06): nachfragen, nichts wird geblockt. Trainingsgewicht: mehr als 10 % Unterschied zum Vorschlag
 // (sonst zum letzten Mal), aber nie bei genau einer Gewichtsstufe rauf oder runter – sonst käme die Frage bei kleinen Gewichten bei jedem
 // normalen Sprung. Wdh.: ab 10 Unterschied. Körpergewicht: ab 5 kg.
-const TYPO_WEIGHT_PCT = 0.1, TYPO_KG = 5, TYPO_REPS = 10;
+const TYPO_WEIGHT_PCT = 0.1, TYPO_KG = 5, TYPO_REPS = 10, TYPO_HOLD_S = 15, TYPO_HOLD_PCT = 0.5;
 function typoInfo(en, si) {
   const s = en.sets[si];
   if (!s || s.typoOk === `${s.weight}|${s.reps}`) return null;
@@ -950,8 +964,12 @@ function typoInfo(en, si) {
   if (s.manualWeight && w != null && refW != null && Math.abs(w - refW) > refW * TYPO_WEIGHT_PCT + 1e-9 && w !== wUp(refW, en.target) && w !== wDown(refW, en.target)) {
     return { f: 'tr-weight', text: `${fmtNum(w)} kg? ${rw != null ? 'Vorgeschlagen waren' : 'Letztes Mal waren es'} ${fmtNum(refW)} kg.` };
   }
-  if (s.auto === false && r != null && refR != null && Math.abs(r - refR) >= TYPO_REPS) {
-    return { f: 'tr-reps', text: `${r} Wdh.? ${rr != null ? 'Vorgeschlagen waren' : 'Letztes Mal waren es'} ${refR}.` };
+  // Halteübungen (v232, sim9: sonst fast jedes Training eine Rückfrage): in Sekunden, erst ab 50 % und mindestens 15 s Unterschied
+  const hold = typeof isHoldName === 'function' && isHoldName(en.name);
+  const typoR = hold ? Math.max(TYPO_HOLD_S, refR * TYPO_HOLD_PCT) : TYPO_REPS;
+  if (s.auto === false && r != null && refR != null && Math.abs(r - refR) >= typoR - 1e-9) {
+    const u = hold ? ' s' : '';
+    return { f: 'tr-reps', text: `${r}${hold ? ' s' : ' Wdh.'}? ${rr != null ? 'Vorgeschlagen waren' : 'Letztes Mal waren es'} ${refR}${u}.` };
   }
   return null;
 }
@@ -1021,6 +1039,7 @@ function setInput(field, ei, j, value) {
 // Wdh. nächster Satz = (Wdh. + Tank) − Ziel-Tank − Ermüdung; jeder weitere Satz noch 1 weniger.
 // Durchschnitt Tank aller erledigten Sätze im Vergleich zum Wochenziel
 function avgTankText(en) {
+  if (en.holdSec) return '';
   const idx = en.sets.map((s, i) => isDone(s) ? i : -1).filter(i => i >= 0);
   const done = idx.map(i => parseNum(en.sets[i].rir));
   if (!done.length || !en.target) return '';
@@ -1028,7 +1047,7 @@ function avgTankText(en) {
   const t = idx.reduce((a, i) => a + rirAt(en.target, i), 0) / idx.length;  // Ziel dieser Sätze (v199: je Satz)
   const verdict = Math.abs(avg - t) <= 0.5 ? '✔ im Ziel' : avg > t ? 'leichter als geplant' : 'schwerer als geplant';
   const goal = en.target.rirSplit && !en.target.deload ? fmtNum(Math.round(t * 10) / 10) : targetRirText(en.target);
-  return `Ø Tank bisher: <b>${fmtNum(avg)}</b> (Ziel ${goal}) – ${verdict}`;
+  return `Ø Tank bisher: <b>${fmtNum(avg)}</b> (Ziel ${goal}). ${verdict}`;
 }
 
 // Bezug ist immer der letzte erledigte Satz derselben Ausführungsvariante.
@@ -1042,9 +1061,10 @@ function recalcSets(ei) {
   const bwEl = $view.querySelector(`[data-bwhint="${ei}"]`);
   if (bwEl) { const html = bwHint(en); bwEl.innerHTML = html; bwEl.hidden = !html; }
   updateNextHints(ei);
+  if (en.holdSec) { holdDiffSync(ei); return; }  // Halteübung (v236): nur über/unter anzeigen, nichts neu planen
   if (t.own) return;  // eigener Plan: folgende Sätze nicht anpassen
   const tt = { step: 2.5, ...t };
-  let first = null, firstJ = -1, firstLast = -1, firstCap = null, firstReduced = false;
+  let first = null, firstJ = -1, firstLast = -1, firstCap = null, firstReduced = false, firstFat = FATIGUE;
   for (let j = 0; j < en.sets.length; j++) {
     const s = en.sets[j];
     if (!s.auto || isDone(s)) continue;  // Wdh. selbst geändert oder schon erledigt -> nicht anfassen
@@ -1055,7 +1075,13 @@ function recalcSets(ei) {
     if (last < 0) continue;
     const ttj = tAt(tt, j);  // Tank dieses Satzes (v199)
     const done = en.sets[last];
-    const cap = parseNum(done.reps) + parseNum(done.rir);
+    const cap0 = parseNum(done.reps) + parseNum(done.rir);
+    // v241 (Fehler, User 2026-11-14): Abfall zwischen den Sätzen aus dem Vorschlag übernehmen statt pauschal FATIGUE je Satz.
+    // Satz genau wie geplant → folgende Sätze bleiben unverändert; sonst verschieben sie sich um die Abweichung.
+    const plL = en.planned[last], plJ = en.planned[j];
+    const planDrop = plL && plJ && plL.reps != null && plJ.reps != null && plL.weight === plJ.weight
+      ? (plL.reps + rirAt(t, last)) - (plJ.reps + rirAt(t, j)) : null;
+    const cap = planDrop != null ? cap0 - (planDrop - FATIGUE * (j - last)) : cap0;
     const w = parseNum(done.weight);
     // Ausgangsgewicht: laut Vorschlag – wurde im letzten Satz über den Vorschlag hinaus gesteigert, nie darunter
     const pl = en.planned[last];
@@ -1102,7 +1128,7 @@ function recalcSets(ei) {
         reps: Math.min(p.reps, t.bodyweight && pl && pl.reps != null ? pl.reps : t.reps),
       };
     }
-    if (!first) { first = p; firstJ = j; firstLast = last; firstCap = cap; firstReduced = reduced; }
+    if (!first) { first = p; firstJ = j; firstLast = last; firstCap = cap0; firstReduced = reduced; firstFat = cap0 - cap + FATIGUE * (j - last); }
     const weight = p.weight != null ? fmtNum(p.weight) : s.weight;
     if (weight !== s.weight) { s.weight = weight; setInput('tr-weight', ei, j, weight); }
     if (String(p.reps) !== s.reps) { s.reps = String(p.reps); setInput('tr-reps', ei, j, s.reps); }
@@ -1113,7 +1139,7 @@ function recalcSets(ei) {
     (first.weight != null ? `${fmtNum(first.weight)} kg × ` : '') + `${first.reps} Wdh. ` +
     (firstReduced
       ? `(Ziel um mind. ${MISS_REPS} Wdh. verfehlt → weniger Gewicht statt weniger Wdh.)`
-      : `(${fmtNum(rirAt(t, firstJ))} im Tank, −${FATIGUE} Ermüdung, mind. ${minReps()} Wdh.)`);
+      : `(${fmtNum(rirAt(t, firstJ))} im Tank, −${fmtNum(firstFat)} Ermüdung${firstFat !== FATIGUE * (firstJ - last) ? ' wie im Vorschlag' : ''}, mind. ${minReps()} Wdh.)`);
   const note = $view.querySelector(`[data-note="${ei}"]`);
   if (note) { note.textContent = en.note; note.hidden = false; }
 }
@@ -1203,9 +1229,14 @@ function newCycleId(after = data.cycle.start) {
 // Sonst ('auto'): Deload = Woche buildWeeks + 1.
 const selfDeload = () => activePlan().deload === 'self' && !ownPlan();
 
+// Hyrox-Wettkampf-Woche (sports.js, v232): Krafttrainings dieser Woche leicht wie im Deload, die Woche bleibt eine normale Woche
+const hxLight = () => typeof hxLightNow === 'function' && hasActivePlan() && !ownPlan() && hxLightNow();
+// Deload-Training, das die Woche zur Deload-Woche macht (leichte Trainings der Wettkampf-Woche nicht)
+const dlSession = s => !!s.deload && !s.light;
+
 // Ist diese Woche (Durchlauf) ein Deload? Gespeicherte Trainings wissen es selbst, sonst laut Plan-Einstellung.
 function isDeloadRound(start, week) {
-  if (roundSessions(start, week).some(s => s.deload)) return true;
+  if (roundSessions(start, week).some(dlSession)) return true;
   if (selfDeload()) return start === data.cycle.start && data.cycle.deloadAt === week;
   return week === cycleLenOf(start) + 1;
 }
@@ -1262,10 +1293,10 @@ function cycleLenInfo(n) {
   if (n <= 5) return { tag: 'gängig', text: `${build} Der gängige Zyklus: Von Woche zu Woche wird es spürbar fordernder,
     und die Erholung kommt rechtzeitig, bevor sich zu viel Müdigkeit ansammelt. Passt für die allermeisten.` };
   if (n <= 8) return { tag: 'länger', text: `${build} Ein längerer Zyklus: Start und Höhepunkt bleiben gleich, aber der Weg dorthin
-    verteilt sich auf mehr Wochen – jede Woche wird also nur ein kleineres Stück fordernder. Dafür bleibst du länger am Stück dran,
+    verteilt sich auf mehr Wochen. Jede Woche wird also nur ein kleineres Stück fordernder. Dafür bleibst du länger am Stück dran,
     bevor die Deload-Woche kommt.` };
   return { tag: 'sehr lang', text: `${build} Ein sehr langer Zyklus: Die Steigerung von Woche zu Woche ist nur noch klein, und die
-    Erholungswoche kommt erst spät. Eher für Erfahrene, die ihren Körper gut einschätzen können – achte auf Zeichen von Ermüdung
+    Erholungswoche kommt erst spät. Eher für Erfahrene, die ihren Körper gut einschätzen können. Achte auf Zeichen von Ermüdung
     wie stagnierende Kraft, schlechten Schlaf oder zwickende Gelenke.` };
 }
 
@@ -1315,7 +1346,7 @@ const progChip = (key, on, attrs) =>
 // Ziel im Tank pro Trainingswoche (normale Übungen, als Durchschnitt über die Sätze).
 // [min, max] = Bereich; gerechnet wird mit der Mitte.
 // v199 (User-Wunsch 2026-11-10): generell 0,5 weniger im Tank – vorher [2, 1.5, 1, 0.5]
-const RIR_PLAN = { 4: [1.5, 1, 0.5, 0] };  // Eckwerte Start … Höhepunkt (siehe curveAt)
+const RIR_PLAN = { 4: [2, 1.5, 1, 0.5] };  // v230: Standard der Intro-Woche wieder 2 (Kurve „Deutlich“)  // Eckwerte Start … Höhepunkt (siehe curveAt)
 
 // Sätze und Tank sind als 4 Eckwerte gespeichert (Start, 2, 3, Höhepunkt). Bei einer anderen Zykluslänge verteilt die App
 // den Anstieg gleichmäßig auf die Aufbauwochen der Standardlänge (data.cycle.defWeeks); Wochen darüber hinaus
@@ -1330,9 +1361,9 @@ function curveAt(arr, week, len = curveLen()) {
   return at(i) + (at(i + 1) - at(i)) * f;
 }
 
-// Übungsart: Grundübungen +1 im Tank, Assistenzübungen −1 (näher ans Muskelversagen)
+// Übungsart: Grundübungen +0,5 im Tank, Assistenzübungen −0,5 (User-Regel 2026-11-13, vorher ±1)
 const KINDS = { compound: 'Grundübung', normal: 'Normale Übung', assist: 'Assistenzübung' };
-const KIND_OFFSET = { compound: 1, normal: 0, assist: -1 };
+const KIND_OFFSET = { compound: 0.5, normal: 0, assist: -0.5 };
 // Wie hat sich der Zyklus angefühlt? (User-Regel 2026-11-08): zu schwer +0,5 Wdh. im Tank, zu leicht −0,5, passt so ±0 – für alle
 // Übungen des Plans, summiert über die Zyklen (Claudes Grenze: insgesamt höchstens ±2), nie unter 0 (siehe rirRange).
 // Gefragt beim ersten Deload-Training (dann spürt man die Belastung noch voll), wirksam erst ab dem nächsten Zyklus:
@@ -1380,7 +1411,55 @@ function kindOf(ex) {
 
 // Tank-Ziel als Bereich [min, max] für Übungsart und Woche. Hat die Muskelgruppe eigene Werte
 // (data.rirPlan, aus dem Plan-Assistenten), gelten diese als Basis für normale Übungen.
+/* Tank-Regel (v230, User 2026-11-13): normale Übungen starten in der Intro-Woche bei 2; wie stark der Tank im Zyklus sinkt,
+   wählt man je Plan (Intensitätsverlauf). Neuling +1, Einsteiger +0,5 (kein Abzug für „Alter Hase“).
+   v231 (User 2026-11-13): statt Ambitions-Stufen verschiebt die Volumen-Variante den Tank – Mehr Volumen +0,5, Weniger Volumen −0,5
+   (plan.rirStyle), auch in Diät/Minicut. Verlauf + Variante zusammen höchstens 2 (Obergrenze für normale Übungen);
+   Erfahrungsbonus und Übungsart kommen danach dazu: Grundübungen +0,5, Assistenzübungen −0,5, nie unter 0.
+   Pläne mit selbst bearbeiteter Tabelle: plan.rirMode 'table' (dort keine Obergrenze).
+   v232 (User 2026-11-13, nach Simulation sim9): bei „Weniger Volumen“ nie unter 0,5 im Tank – für alle Übungsarten (vor der
+   Anpassung aus „Wie hat sich der Zyklus angefühlt?“, die gilt weiter). */
+const RIR_NORMAL_MAX = 2, RIR_LOW_FLOOR = 0.5;
+const rirNormalBase = (course, w, style) => Math.min(RIR_NORMAL_MAX, rirCourseVal(course, w) + (style || 0));
+const RIR_COURSES = {
+  flat: { label: 'Gleichbleibend', text: 'Der Tank bleibt den ganzen Zyklus gleich.' },
+  mod: { label: 'Moderat', text: 'Alle 2 Wochen 0,5 weniger im Tank.' },
+  strong: { label: 'Deutlich', text: 'Jede Woche 0,5 weniger im Tank, ab Woche 4 bleibt es dabei.' },
+};
+function rirCourseVal(course, w) {
+  w = Math.max(1, w || 1);
+  if (course === 'flat') return 2;
+  if (course === 'mod') return Math.max(0.5, 2 - 0.5 * Math.floor((w - 1) / 2));
+  return Math.max(0.5, 2 - 0.5 * (w - 1));
+}
+const rirLevelBonus = lv => Math.max(0, typeof LEVELS !== 'undefined' && LEVELS[lv] ? LEVELS[lv].rir || 0 : 0);
+// diet: Verlauf immer „Deutlich“ (Diät-Regel v229), die Volumen-Variante des Plans gilt weiter (v231)
+function rirAutoRange(kind, week, p = {}, diet = false) {
+  const base = rirNormalBase(diet ? 'strong' : p.rirCourse || 'strong', week, p.rirStyle) + rirLevelBonus(p.level);
+  const floor = (p.rirStyle || 0) < 0 ? RIR_LOW_FLOOR : 0;
+  const v = Math.max(0, Math.max(floor, base + KIND_OFFSET[kind || 'normal']) + rirFeelAdj());
+  return [v, v];
+}
+// Bestehende Pläne umstellen: Standard-Tabellen (alle Gruppen gleich, altes Muster ± Verschiebung) → automatisch; selbst bearbeitete bleiben
+function rirMigratePlan(p) {
+  if (p) delete p.ambition;  // v231: Ambitions-Stufen entfallen
+  if (p && p.rirStyle === -1) p.rirStyle = -0.5;  // v231: „Weniger Volumen“ jetzt −0,5
+  if (!p || p.rirMode) return;
+  const arrs = Object.values(p.rirPlan || {});
+  const auto = { rirMode: 'auto', rirCourse: 'strong', rirStyle: 0 };
+  if (!arrs.length) { Object.assign(p, auto); return; }
+  const OLD = [1.5, 1, 0.5, 0];
+  const same = arrs.every(x => Array.isArray(x) && JSON.stringify(x) === JSON.stringify(arrs[0]));
+  let k = null;
+  if (same && arrs[0].length === 4) for (let x = -2; x <= 2; x += 0.5) if (OLD.every((v, i) => Math.abs(Math.max(0, v + x) - arrs[0][i]) < 1e-9)) { k = x; break; }
+  if (k == null) { p.rirMode = 'table'; return; }
+  const oldLv = typeof LEVELS !== 'undefined' && LEVELS[p.level] ? LEVELS[p.level].rir || 0 : 0;
+  Object.assign(p, auto, { rirStyle: k - oldLv <= -0.75 ? -0.5 : 0, rirPlan: {} });
+}
+
 function rirRange(kind, week, buildWeeks, group) {
+  const ap = typeof activePlan === 'function' && data.plans && data.plans.length ? activePlan() : null;
+  if (ap && ap.rirMode === 'auto') return rirAutoRange(kind, week, ap);
   const custom = group && data.rirPlan && data.rirPlan[group];
   let base;
   const arr = custom || RIR_PLAN[4];
@@ -1447,24 +1526,45 @@ function rirMigrate() {
    Tank startet in der Intro-Woche bei 2 und sinkt je Woche um 0,5 – nie unter den Wert von Woche 4 (0,5).
    Grundübungen +0,5, Assistenzübungen −0,5 (statt ±1). Neuling und Einsteiger behalten ihr Plus aus der Erfahrungsstufe,
    der Abzug für „Alter Hase“ entfällt. Eine eigene Tank-Tabelle des Plans gilt in der Diät nicht. */
-const DIET_KIND_OFFSET = { compound: 0.5, normal: 0, assist: -0.5 };
-function dietLevelBonus() {
-  const lv = activePlan() && activePlan().level;
-  const r = typeof LEVELS !== 'undefined' && LEVELS[lv] ? LEVELS[lv].rir || 0 : 0;
-  return Math.max(0, r);
-}
+// v230: dieselbe Regel wie im normalen Zyklus, Verlauf in der Diät immer „Deutlich“, Ambition gilt auch hier
 function dietRirRange(kind, week) {
-  const base = Math.max(0.5, 2 - 0.5 * (Math.max(1, week) - 1)) + dietLevelBonus();
-  const v = Math.max(0, base + DIET_KIND_OFFSET[kind || 'normal'] + rirFeelAdj());
-  return [v, v];
+  return rirAutoRange(kind, week, activePlan() || {}, true);
 }
 const dietAdaptNow = () => typeof nutTrainAdapt === 'function' && nutTrainAdapt() && !ownPlan();
 
 function weekRirText(kind, group) {
   const ci = cycleInfo();
-  if (ci.deload) return `Deload – mind. ${DELOAD_RIR}`;
+  if (ci.deload) return `Deload: mind. ${DELOAD_RIR}`;
   if (dietAdaptNow()) return `${fmtNum(dietRirRange(kind, ci.week)[0])} (${weekLabel(ci.week)}, an die Diät angepasst)`;
   return `${rirLabel(kind, ci.week, ci.buildWeeks, group)} (${weekLabel(ci.week)})`;
+}
+
+// Schutz-Hinweis für selbst bearbeitete Tank-Tabellen (v232, User 2026-11-13 nach Simulation sim9: Tabelle überall 0 →
+// knapp jeder dritte Satz verfehlt die Wdh.). Nur Text, keine Rückfrage. Ab einer Woche mit 0 oder im Schnitt unter 0,75 –
+// so warnt die App nicht vor ihren eigenen Standardwerten (z. B. Weniger Volumen + Deutlich: Schnitt 0,9).
+const RIR_LOW_AVG = 0.75;
+function rirLowNote(tables) {
+  const vals = tables.flatMap(arr => (arr || []).map(b => Array.isArray(b) ? (b[0] + b[1]) / 2 : b)).filter(v => typeof v === 'number' && isFinite(v));
+  if (!vals.length) return '';
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (Math.min(...vals) > 0 && avg >= RIR_LOW_AVG) return '';
+  return `⚠️ Sehr wenig im Tank${Math.min(...vals) <= 0 ? ' (teils 0)' : ''}: So gehen viele Sätze bis ans Muskelversagen. Die geplanten Wdh.
+    werden dann oft verfehlt, und die Erholung dauert länger. Assistenzübungen liegen noch 0,5 darunter. Für die meisten passen 1–2 im Tank.`;
+}
+
+function planIntensityCard(bw) {
+  const p = activePlan();
+  if (!p || p.own || !p.days.length) return '';
+  const chip = (act, k, label, on) => `<button class="vchip ${on ? 'on' : ''}" data-action="${act}" data-k="${k}">${label}</button>`;
+  const low = p.rirMode === 'table' ? rirLowNote(Object.values(p.rirPlan || {})) : '';
+  if (p.rirMode === 'table') return `<div class="int-card"><p class="lbl">Intensität</p><p class="hint">Dieser Plan nutzt eine selbst bearbeitete Tank-Tabelle.</p>
+      ${low ? `<p class="hint rir-low">${low}</p>` : ''}
+      <button class="btn small" data-action="plan-rir-auto">Auf automatische Werte umstellen</button></div>`;
+  if (!feat('tr-rir-input')) return '';  // Einfach: läuft im Hintergrund mit „Deutlich“
+  const prev = [...Array(Math.max(1, Math.min(bw, 8)))].map((_, i) => `${i ? 'W' + (i + 1) : 'Intro'} ${fmtNum(rirAutoRange('normal', i + 1, p)[0])}`).join(' · ');
+  return `<div class="int-card"><p class="lbl">Wie stark soll die Intensität im Zyklus steigen?</p>
+      <div class="variants">${Object.entries(RIR_COURSES).map(([k, x]) => chip('plan-course', k, x.label, (p.rirCourse || 'strong') === k)).join('')}</div>
+      <p class="hint">${esc(RIR_COURSES[p.rirCourse || 'strong'].text)}${p.rirStyle ? ` Dazu ${p.rirStyle > 0 ? '0,5 mehr' : '0,5 weniger'} im Tank aus der Volumen-Variante „${p.volStyle === 'hard' ? 'Beides' : p.rirStyle > 0 ? 'Mehr Volumen' : 'Weniger Volumen'}“${p.rirStyle < 0 ? ' (alle Übungen mindestens 0,5)' : ''}.` : ''} Tank normaler Übungen: ${prev}.</p></div>`;
 }
 
 function rirTable(buildWeeks) {
@@ -1479,7 +1579,7 @@ function rirTable(buildWeeks) {
       h += `<tr><td>${MUSCLES[g] || g}</td>` + plan.map((_, i) =>
         `<td class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${rirLabel('normal', i + 1, buildWeeks, g)}</td>`).join('') + '</tr>';
     }
-    return h + `</table></div><p class="hint">Grundübungen +1, Assistenzübungen −1 (nie unter 0). Deload: mind. ${DELOAD_RIR}.</p>`;
+    return h + `</table></div><p class="hint">Grundübungen +0,5, Assistenzübungen −0,5 (nie unter 0). Deload: mind. ${DELOAD_RIR}.</p>`;
   }
   let h = '<div class="table-wrap"><table class="rir"><tr><th>Ziel im Tank</th>';
   plan.forEach((_, i) => { h += `<th class="${!ci.deload && ci.week === i + 1 ? 'now' : ''}">${i === 0 ? 'Intro' : 'W' + (i + 1)}</th>`; });
@@ -1515,8 +1615,8 @@ function defaultVolume() {
 }
 
 const DAY_TYPES = {
-  'upper-heavy': 'Oberkörper – niedrige Wdh.', 'upper-light': 'Oberkörper – hohe Wdh.',
-  'lower-heavy': 'Unterkörper – niedrige Wdh.', 'lower-light': 'Unterkörper – hohe Wdh.',
+  'upper-heavy': 'Oberkörper (niedrige Wdh.)', 'upper-light': 'Oberkörper (hohe Wdh.)',
+  'lower-heavy': 'Unterkörper (niedrige Wdh.)', 'lower-light': 'Unterkörper (hohe Wdh.)',
 };
 const DAY_GROUPS = {
   upper: ['brust', 'lat', 'trapez', 'schulter_seite', 'schulter_hinten', 'bizeps', 'trizeps'],
@@ -1655,7 +1755,7 @@ function volumeEditor() {
     `<td><input class="vol-inp ${cls}" type="text" inputmode="numeric" pattern="[0-9]*" data-field="${field}" data-g="${g}" data-w="${w}" value="${v}"></td>`;
   let h = `<details class="award-cat vol-editor" open><summary>Sätze pro Muskelgruppe</summary>
     <div class="card">
-    <p class="hint">Am einfachsten die Sätze <b>pro Woche</b> eintragen – die App verteilt sie auf die Trainings. Oder direkt die Sätze <b>pro Training</b> ändern. Die Übungen passen sich automatisch an.</p>
+    <p class="hint">Am einfachsten die Sätze <b>pro Woche</b> eintragen, die App verteilt sie auf die Trainings. Oder direkt die Sätze <b>pro Training</b> ändern. Die Übungen passen sich automatisch an.</p>
     <table class="rir vol"><tr><th></th><th>Intro</th><th>W2</th><th>W3</th><th>W4</th></tr>`;
   for (const g of groups) {
     h += `<tr class="vol-g"><td colspan="5"><button class="vol-del" data-action="vol-del" data-g="${g}"
@@ -1684,7 +1784,7 @@ function volDurText() {
   const dur = days.map(d => [Math.round(estDuration(d, 1, p)), Math.round(estDuration(d, bw, p))]);
   const list = days.map((d, i) => `<b>${esc(d.name)}</b> ca. ${dur[i][0] === dur[i][1] ? fmtDur(dur[i][1]) : `${fmtDur(dur[i][0])} → ${fmtDur(dur[i][1])}`}`).join(' · ');
   let t = `⏱ So lange dauern deine Trainingstage damit etwa (Intro → Höhepunkt): ${list}.`;
-  if (p.timeMax && Math.max(...dur.map(x => x[1])) > p.timeMax * 1.1) t += ` Das ist etwas länger als die ${p.timeMax} min, die du beim Erstellen gewählt hast – die App übernimmt deine Zahlen trotzdem so.`;
+  if (p.timeMax && Math.max(...dur.map(x => x[1])) > p.timeMax * 1.1) t += ` Das ist etwas länger als die ${p.timeMax} min, die du beim Erstellen gewählt hast. Die App übernimmt deine Zahlen trotzdem so.`;
   return t;
 }
 
@@ -1698,13 +1798,13 @@ function volWeekText(g, typed = null) {
   const target = [0, 1, 2, 3].map(w => weeklyTarget(g, w));
   let t = '';
   if (typed && target[typed[0]] !== typed[1]) {
-    t += `→ ${typed[1]} lässt sich nicht gleichmäßig auf ${fmtNum(days.length * per)} Trainings verteilen – es werden ${target[typed[0]]}. `;
+    t += `→ ${typed[1]} lässt sich nicht gleichmäßig auf ${fmtNum(days.length * per)} Trainings verteilen, es werden ${target[typed[0]]}. `;
   }
   t += `${per % 1 ? 'Ø ' : ''}${fmtNum(round1(days.length * per))} Training${days.length * per === 1 ? '' : 's'} pro Woche · Deload ${fmtNum(Math.round(act[4]))}`;
   if ([0, 1, 2, 3].some(w => volExtraFor(g, w))) t += ' · nicht glatt teilbar: einzelne Tage bekommen 1 Satz mehr';
   if (target.some((x, w) => act[w] !== x)) {
     const why = [];
-    if (target.some((x, w) => act[w] < x)) why.push(`höchstens ${MAX_SETS_PER_EX} Sätze je Übung – ggf. Übung ergänzen`);
+    if (target.some((x, w) => act[w] < x)) why.push(`höchstens ${MAX_SETS_PER_EX} Sätze je Übung, ggf. Übung ergänzen`);
     if (target.some((x, w) => act[w] > x)) why.push('jede Übung bekommt mindestens 1 Satz');
     t += ` · ⚠ tatsächlich: ${act.slice(0, 4).join(' · ')} (${why.join('; ')})`;
   }
@@ -1861,11 +1961,13 @@ function entryPairs(entries, withSolo = false) {
 }
 const draftPairs = () => entryPairs(draft ? draft.entries : []);
 // Sätze im Supersatz der Reihe nach: A1, B1, A2, B2 … (übrige Sätze der längeren Übung am Ende)
+// v247 (User 2026-11-14): haben beide unterschiedlich viele Sätze, beginnt die Übung mit mehr Sätzen (B1, A1, B2, A2, B3)
 function ssOrder(p) {
   const a = draft.entries[p.i], b = draft.entries[p.j], out = [];
-  for (let k = 0; k < Math.max(a.sets.length, b.sets.length); k++) {
-    if (k < a.sets.length) out.push([p.i, k]);
-    if (k < b.sets.length) out.push([p.j, k]);
+  const [x, xi, y, yi] = b.sets.length > a.sets.length ? [b, p.j, a, p.i] : [a, p.i, b, p.j];
+  for (let k = 0; k < Math.max(x.sets.length, y.sets.length); k++) {
+    if (k < x.sets.length) out.push([xi, k]);
+    if (k < y.sets.length) out.push([yi, k]);
   }
   return out;
 }
@@ -2057,7 +2159,7 @@ function findWeekEntry(name, dayId, match, occ = 1) {
 function prevExtension(cycleStart) {
   const before = [...new Set(data.sessions.map(s => s.cycleStart).filter(cs => cs && cs < cycleStart))].sort().pop();
   if (!before) return null;
-  const by = Math.max(0, ...data.sessions.filter(s => s.cycleStart === before && !s.deload).map(s => s.week)) - cycleLenOf(before);
+  const by = Math.max(0, ...data.sessions.filter(s => s.cycleStart === before && !dlSession(s)).map(s => s.week)) - cycleLenOf(before);
   return by > 0 ? { from: before, by } : null;
 }
 
@@ -2077,7 +2179,7 @@ function comparisonEntry(name, dayId, ci) {
 // Abstand der Vergleichswoche zur Woche ci in Aufbauwochen (Deloads zählen nicht, die Woche ci zählt mit):
 // trainierte Wochen des alten Zyklus nach der Vergleichswoche + Zyklen dazwischen + Wochen 1 … ci.week
 function cmpGap(cmp, ci) {
-  const weeksOf = cs => new Set(data.sessions.filter(s => s.cycleStart === cs && !s.deload).map(s => s.week));
+  const weeksOf = cs => new Set(data.sessions.filter(s => s.cycleStart === cs && !dlSession(s)).map(s => s.week));
   let gap = [...weeksOf(cmp.cycleStart)].filter(w => w > cmp.week).length + ci.week;
   const between = new Set(data.sessions.map(s => s.cycleStart).filter(cs => cs && cs > cmp.cycleStart && cs < ci.cycleStart));
   for (const cs of between) gap += weeksOf(cs).size;
@@ -2096,7 +2198,7 @@ const cmpPlus = gap => Math.max(1, Math.round(gap / cmpWeeksPerRep()));
 // Erklärung bei versetztem Vergleich (leer ohne Verschiebung)
 function shiftText(start, week) {
   const sh = feat('tr-rir-input') ? cycleShift(start) : null;  // Einfach: läuft im Hintergrund, ohne Erklärtext
-  return sh ? `Vergleich ist Woche ${week + sh.by} des letzten Zyklus (Verlängerung berücksichtigt) – das Gewicht kommt von dort, Wdh. und Tank wie in dieser Woche.` : '';
+  return sh ? `Vergleich ist Woche ${week + sh.by} des letzten Zyklus (Verlängerung berücksichtigt). Das Gewicht kommt von dort, Wdh. und Tank wie in dieser Woche.` : '';
 }
 
 const sameWeekEntry = (name, dayId, ci) =>
@@ -2281,25 +2383,25 @@ function techEnsure(en, i) {
 // Erklärungen (User-Wunsch: ausführlich – was, warum, wann sinnvoll, wann nicht)
 const TECH_INFO = {
   drop: {
-    what: 'Du trainierst den Satz bis kurz vor das Muskelversagen, nimmst sofort etwa 20 % Gewicht weg und machst ohne Pause weiter – ein- bis zweimal, jeweils wieder bis kurz vors Versagen.',
-    why: 'Du sammelst in sehr kurzer Zeit zusätzliche Wiederholungen nahe am Versagen – genau die zählen für den Muskelaufbau. Ein Reduktionssatz bringt ungefähr so viel Reiz wie zwei normale Sätze, dauert aber nur ein bis zwei Minuten statt fünf bis acht.',
-    when: 'Wenn die Zeit knapp ist und du trotzdem genug Reiz setzen willst. Am besten bei Maschinen, am Kabelzug oder mit Kurzhanteln, wo das Gewicht in Sekunden umgesteckt ist – und im letzten Satz einer Übung.',
-    not: 'Nicht bei schweren Grundübungen wie Kniebeuge, Kreuzheben oder Bankdrücken mit der Langhantel: Die Technik leidet, das Verletzungsrisiko steigt. Nicht, solange du die Bewegung noch lernst, nicht im Deload – und nicht bei jeder Übung: Die Ermüdung steigt deutlich, die Erholung dauert länger.',
+    what: 'Du trainierst den Satz bis kurz vor das Muskelversagen, nimmst sofort etwa 20 % Gewicht weg und machst ohne Pause weiter, ein- bis zweimal, jeweils wieder bis kurz vors Versagen.',
+    why: 'Du sammelst in sehr kurzer Zeit zusätzliche Wiederholungen nahe am Versagen. Genau die zählen für den Muskelaufbau. Ein Reduktionssatz bringt ungefähr so viel Reiz wie zwei normale Sätze, dauert aber nur ein bis zwei Minuten statt fünf bis acht.',
+    when: 'Wenn die Zeit knapp ist und du trotzdem genug Reiz setzen willst. Am besten bei Maschinen, am Kabelzug oder mit Kurzhanteln, wo das Gewicht in Sekunden umgesteckt ist, und im letzten Satz einer Übung.',
+    not: 'Nicht bei schweren Grundübungen wie Kniebeuge, Kreuzheben oder Bankdrücken mit der Langhantel: Die Technik leidet, das Verletzungsrisiko steigt. Nicht, solange du die Bewegung noch lernst, nicht im Deload und nicht bei jeder Übung: Die Ermüdung steigt deutlich, die Erholung dauert länger.',
     app: 'Der Hauptsatz behält seine Vorgabe und wird nur mit Reduktionssätzen verglichen. Für jede Stufe schlägt die App etwa 20 % weniger Gewicht vor, als Ziel die Wiederholungen vom letzten Mal plus eine. Zwischen den Stufen läuft keine Pause. Für die Vorermüdung zählt ein Reduktionssatz wie 1,5 Sätze.',
   },
   myo: {
-    what: 'Ein Aktivierungssatz bis kurz vors Muskelversagen, dann nur 3–5 Atemzüge Pause (etwa 20 Sekunden) und ein Mini-Satz mit 3–5 Wiederholungen – mit demselben Gewicht. Das wiederholst du drei- bis fünfmal.',
-    why: 'Nach dem Aktivierungssatz arbeitet der Muskel schon mit allen Fasern – jede Wiederholung der Mini-Sätze ist deshalb eine besonders wirksame. Ein Myo-Satz bringt ungefähr so viel Reiz wie zwei bis drei normale Sätze, in zwei bis drei Minuten statt zehn bis zwölf.',
-    warn: '<b>Wichtig:</b> Ein Myo-Satz bringt deutlich mehr Reiz – aber auch deutlich mehr Ermüdung als ein normaler Satz. Setz ihn bewusst ein, eher für einzelne Übungen und eher zusätzlich zu wenigen normalen Sätzen statt zu vielen.',
+    what: 'Ein Aktivierungssatz bis kurz vors Muskelversagen, dann nur 3–5 Atemzüge Pause (etwa 20 Sekunden) und ein Mini-Satz mit 3–5 Wiederholungen, mit demselben Gewicht. Das wiederholst du drei- bis fünfmal.',
+    why: 'Nach dem Aktivierungssatz arbeitet der Muskel schon mit allen Fasern. Jede Wiederholung der Mini-Sätze ist deshalb eine besonders wirksame. Ein Myo-Satz bringt ungefähr so viel Reiz wie zwei bis drei normale Sätze, in zwei bis drei Minuten statt zehn bis zwölf.',
+    warn: '<b>Wichtig:</b> Ein Myo-Satz bringt deutlich mehr Reiz, aber auch deutlich mehr Ermüdung als ein normaler Satz. Setz ihn bewusst ein, eher für einzelne Übungen und eher zusätzlich zu wenigen normalen Sätzen statt zu vielen.',
     when: 'Wenn die Zeit knapp ist. Gut bei Isolations- und Maschinenübungen mit mittleren bis höheren Wiederholungen (Aktivierungssatz etwa 12–20 Wdh.), z. B. Seitheben, Beinstrecker, Curls oder Kabelübungen.',
     not: 'Nicht bei schweren Grundübungen und niedrigen Wiederholungen, nicht, solange du die Technik noch lernst, nicht im Deload und nicht bei jeder Übung eines Trainings.',
-    app: 'Der Aktivierungssatz ist der Hauptsatz: Er behält seine Vorgabe und wird nur mit Myo-Sätzen verglichen. Die Mini-Sätze haben dasselbe Gewicht, Ziel 3–5 Wiederholungen. Steigerung: insgesamt eine Wiederholung mehr als letztes Mal, bis jeder Mini-Satz 5 hat – danach steigt das Gewicht über den Aktivierungssatz. Zwischen den Mini-Sätzen läuft ein 20-Sekunden-Timer. Für die Vorermüdung zählt ein Myo-Satz wie 2 Sätze.',
+    app: 'Der Aktivierungssatz ist der Hauptsatz: Er behält seine Vorgabe und wird nur mit Myo-Sätzen verglichen. Die Mini-Sätze haben dasselbe Gewicht, Ziel 3–5 Wiederholungen. Steigerung: insgesamt eine Wiederholung mehr als letztes Mal, bis jeder Mini-Satz 5 hat. Danach steigt das Gewicht über den Aktivierungssatz. Zwischen den Mini-Sätzen läuft ein 20-Sekunden-Timer. Für die Vorermüdung zählt ein Myo-Satz wie 2 Sätze.',
   },
 };
 function techInfoHtml(k, open = false) {
   const x = TECH_INFO[k];
   if (!x) return '';
-  return `<details class="tech-info"${open ? ' open' : ''}><summary>ⓘ ${TECHS[k]} – was ist das, und wann lohnt er sich?</summary>
+  return `<details class="tech-info"${open ? ' open' : ''}><summary>ⓘ ${TECHS[k]}: Was ist das, und wann lohnt er sich?</summary>
     <p><b>So geht’s:</b> ${x.what}</p><p><b>Warum:</b> ${x.why}</p>${x.warn ? `<p class="tech-warn">⚠️ ${x.warn}</p>` : ''}
     <p><b>Sinnvoll:</b> ${x.when}</p><p><b>Eher nicht:</b> ${x.not}</p><p><b>So rechnet die App:</b> ${x.app}</p></details>`;
 }
@@ -2322,7 +2424,7 @@ function techRowsHtml(en, ei, si) {
   }).join('');
   const more = s.subs.length < Math.max(...TECH_N[v]);
   h += `<div class="sub-foot">${more ? `<button class="btn small outline" data-action="sub-add" ${at}>+ ${drop ? 'Reduktion' : 'Mini-Satz'}</button>` : ''}
-    <small>${drop ? 'Ohne Pause weiter, je ca. 20 % leichter – bis knapp vors Versagen.' : `Je ${MYO_REST_S} s Pause (3–5 Atemzüge), 3–5 Wdh. – bis knapp vors Versagen.`}</small></div>`;
+    <small>${drop ? 'Ohne Pause weiter, je ca. 20 % leichter, bis knapp vors Versagen.' : `Je ${MYO_REST_S} s Pause (3–5 Atemzüge), 3–5 Wdh., bis knapp vors Versagen.`}</small></div>`;
   return h;
 }
 // Gewichte der Teil-Sätze nachziehen, wenn sich das Gewicht des Hauptsatzes ändert (ohne alles neu zu zeichnen)
@@ -2341,14 +2443,14 @@ function techPlanHtml(ex, i) {
   const t = ex.tech && TECHS[ex.tech.k] ? ex.tech : null;
   const chip = (act, v, label, on) => `<button class="vchip ${on ? 'on' : ''}" data-action="${act}" data-i="${i}" data-v="${v}">${label}</button>`;
   let h = `<div class="variants plan tech-row"><span>Intensitäts­technik</span>${chip('plan-tech', '', 'Keine', !t)}${chip('plan-tech', 'drop', 'Reduktion', t && t.k === 'drop')}${chip('plan-tech', 'myo', 'Myo', t && t.k === 'myo')}</div>`;
-  if (!t) return h + `<details class="tech-info"><summary>ⓘ Intensitätstechniken – was ist das?</summary>
-      <p>Reduktions- und Myo-Sätze holen in kurzer Zeit mehr aus einem Satz heraus – sinnvoll vor allem, wenn die Zeit knapp ist.
+  if (!t) return h + `<details class="tech-info"><summary>ⓘ Intensitätstechniken: Was ist das?</summary>
+      <p>Reduktions- und Myo-Sätze holen in kurzer Zeit mehr aus einem Satz heraus. Sinnvoll vor allem, wenn die Zeit knapp ist.
         Sie ermüden aber auch deutlich mehr. Die App plant sie nie von selbst ein: Du entscheidest je Übung hier im Plan
         (gilt dann dauerhaft, mit Steigerung) oder im Training für einzelne Sätze (Satznummer antippen).</p>
       <p><b>Reduktionssatz:</b> ${TECH_INFO.drop.what}</p><p><b>Myo-Satz:</b> ${TECH_INFO.myo.what}</p></details>`;
   h += `<div class="variants plan"><span>In</span>${chip('plan-tech-at', 'last', 'Letzter Satz', t.at !== 'all')}${chip('plan-tech-at', 'all', 'Alle Sätze', t.at === 'all')}</div>
     <div class="variants plan"><span>${t.k === 'drop' ? 'Reduktionen' : 'Mini-Sätze'}</span>${TECH_N[t.k].map(n => chip('plan-tech-n', n, String(n), t.n === n)).join('')}</div>`;
-  if (techRisky(ex)) h += `<p class="complaint-note">⚠️ ${esc(ex.name)} ist eine Grundübung – hier leidet bei einem ${TECHS[t.k]} schnell die Technik. Besser bei Maschinen-, Kabel- oder Isolationsübungen einsetzen.</p>`;
+  if (techRisky(ex)) h += `<p class="complaint-note">⚠️ ${esc(ex.name)} ist eine Grundübung. Hier leidet bei einem ${TECHS[t.k]} schnell die Technik. Besser bei Maschinen-, Kabel- oder Isolationsübungen einsetzen.</p>`;
   if (t.k === 'myo') h += `<p class="hint tech-warn">⚠️ ${TECH_INFO.myo.warn}</p>`;
   return h + techInfoHtml(t.k);
 }
@@ -2414,7 +2516,7 @@ function lastCommentFor(name) {
 // vorgeschlagen wird – mit denselben Regeln wie proposeSet (refProposal). Liefert HTML je Satz.
 function nextPreview(en) {
   const out = en.sets.map(() => '');
-  if (!en.target || !en.plan || draft.deload || draft.own || draft.week == null) return out;
+  if (en.holdSec || !en.target || !en.plan || draft.deload || draft.own || draft.week == null) return out;
   const done = en.sets.map(s => isDone(s));
   if (!done.some(Boolean)) return out;
   const bw = data.cycle.buildWeeks;
@@ -2549,12 +2651,12 @@ const draftFatPbFlags = (en, abs) => pbFatFlags(en.sets.map(x => isDone(x)
   pbBest(en.name), en.target && en.target.band, en.target ? en.target.fat || 0 : 0, abs);
 const PB_TAG = ' <span class="pb-tag" title="Neue persönliche Bestleistung">★ PB</span>';
 const FPB_TAG = ' <span class="pb-tag fpb" title="Vorermüdet und auf frisch umgerechnet deine beste Leistung bisher">💪 Vorermüdungs-PB</span>';
-const setsWithPb = (sets, flags, fflags = []) => sets.map((x, i) => fmtSet(x) + (flags[i] ? PB_TAG : fflags[i] ? FPB_TAG : '')).join('<br>');
+const setsWithPb = (sets, flags, fflags = [], name) => sets.map((x, i) => fmtSet(x, name) + (flags[i] ? PB_TAG : fflags[i] ? FPB_TAG : '')).join('<br>');
 // Sterne für ein gespeichertes Training (Verlauf, Training ansehen)
 function sessionPbHtml(s, e) {
   const best = pbBest(e.name, s.date, s.id), band = e.target && e.target.band;
   const abs = pbFlags(e.sets, best, band);
-  return setsWithPb(e.sets, abs, pbFatFlags(e.sets, best, band, sessionFat(s, s.entries.indexOf(e)), abs));
+  return setsWithPb(e.sets, abs, pbFatFlags(e.sets, best, band, sessionFat(s, s.entries.indexOf(e)), abs), e.name);
 }
 
 // Ohne Gewichts-/Wdh.-Progression: Sätze einer Variante aus dem letzten Training dieser Übung (ohne Deload)
@@ -2886,7 +2988,7 @@ function restHtml() {
   const left = r.end - Date.now();
   if (left <= -REST_LINGER) return '';
   if (left <= 0) {
-    return `<div class="trh-rest over"><span class="trh-rest-t">Pause vorbei – weiter geht’s 💪</span>
+    return `<div class="trh-rest over"><span class="trh-rest-t">Pause vorbei, weiter geht’s 💪</span>
       <button data-action="rest-skip">OK</button></div>${restNextHtml(r)}`;
   }
   return `<div class="trh-rest"><span class="trh-rest-t">Pause <b id="tr-rest-left">${fmtClock(Math.ceil(left / 1000) * 1000)}</b></span>
@@ -2960,8 +3062,8 @@ function restCard() {
       <p class="lbl">Ton am Ende</p>${seg('sound', c.sound, 'An', 'Aus')}
       ${c.sound ? `<div class="variants rest-tones">${Object.entries(REST_TONES).map(([k, l]) =>
         `<button class="vchip ${c.tone === k ? 'on' : ''}" data-action="rest-tone" data-k="${k}">${l}</button>`).join('')}</div>
-        <p class="hint">Antippen spielt den Ton zur Probe. Lautstärke wie bei anderen Tönen am Handy – im Lautlos-Modus bleibt das iPhone stumm.</p>` : ''}
-      <p class="hint explain">Vibration gibt es nur auf Android – das iPhone erlaubt sie Web-Apps nicht. Ton und Vibration kommen, solange die App
+        <p class="hint">Antippen spielt den Ton zur Probe. Lautstärke wie bei anderen Tönen am Handy. Im Lautlos-Modus bleibt das iPhone stumm.</p>` : ''}
+      <p class="hint explain">Vibration gibt es nur auf Android, das iPhone erlaubt sie Web-Apps nicht. Ton und Vibration kommen, solange die App
         geöffnet und der Bildschirm an ist.</p>`}
     </div>`;
 }
@@ -2999,10 +3101,11 @@ function trMenuHtml() {
   const items = [];
   if (!draft.reorder) items.push(['reorder-toggle', '⇅ Reihenfolge ändern']);
   items.push(['trm-details-all', draft.entries.every(detOpen) ? '▴ Alle Details zuklappen' : '▾ Alle Details aufklappen']);
+  items.push(['trm-swipe', trSwipeOn() ? '↕ Alle Übungen untereinander' : '↔ Eine Übung je Bildschirm (wischen)']);  // v244
   if (!draft.own) items.push(['trm-entry-help', 'ℹ️ So trägst du dein Training ein']);
-  if (prefatToday()) items.push(['trm-prefat', '💤 Vorermüdung – so rechnet die App']);
+  if (prefatToday()) items.push(['trm-prefat', '💤 Vorermüdung: So rechnet die App']);
   return `<div class="trh-menu" role="menu">${items.map(([a, t]) => `<button role="menuitem" data-action="${a}">${t}</button>`).join('')}
-    <p>${lastDur ? `Letztes Mal hat dieser Tag ${fmtDur(lastDur)} gedauert.` : 'Erstes Mal – die Dauer wird gemessen.'}</p></div>`;
+    <p>${lastDur ? `Letztes Mal hat dieser Tag ${fmtDur(lastDur)} gedauert.` : 'Erstes Mal, die Dauer wird gemessen.'}</p></div>`;
 }
 function syncTrHead() {
   const on = current.view === 'training' && !!draft;
@@ -3046,13 +3149,15 @@ function ssSyncNow() {
 function ssHeadHtml(p, first = true) {
   return `<div class="ss-head"><span class="ss-title">🔗 Supersatz<small data-ss-round="${p.i}">${ssRoundText(p)}</small></span>
       <button class="btn small outline" data-action="ss-solo" data-ei="${p.i}">Heute einzeln</button></div>` + (first
-    ? `<p class="hint explain ss-how">Immer im Wechsel: Satz A, Pause, Satz B, Pause, dann wieder A. Der nächste Satz ist markiert,
-      der Pausen-Timer zeigt, was danach dran ist. Ist ein Gerät besetzt: „Heute einzeln“.</p>` : '');
+    ? `<p class="hint explain ss-how">Immer im Wechsel: Satz A, ${ssRestText(p.rest)} Pause, Satz B, ${ssRestText(p.rest)} Pause, dann wieder A.
+      Die Pause ist kürzer als bei einzelnen Übungen, weil sich die eine Muskelgruppe erholt, während die andere arbeitet
+      (2 min, bei zwei Isolationsübungen 90 s). Der nächste Satz ist markiert, der Pausen-Timer zeigt, was danach dran ist.
+      Ist ein Gerät besetzt: „Heute einzeln“.</p>` : '');
 }
 // Paar heute einzeln (z. B. Gerät besetzt): normale Pausen, der Plan bleibt
 function ssSoloHtml(p, hidden) {
   const a = draft.entries[p.i], b = draft.entries[p.j];
-  return `<div class="ss-solo"${hidden ? ' hidden' : ''}><span>🔗 Supersatz heute aus – ${esc(a.name)} und ${esc(b.name)} einzeln mit normalen Pausen</span>
+  return `<div class="ss-solo"${hidden ? ' hidden' : ''}><span>🔗 Supersatz heute aus: ${esc(a.name)} und ${esc(b.name)} einzeln mit normalen Pausen</span>
     <button class="btn small" data-action="ss-unsolo" data-ei="${p.i}">Wieder koppeln</button></div>`;
 }
 
@@ -3076,8 +3181,13 @@ function ssPickHtml(day, i) {
       ${c.length ? `<div class="quick-picks">${c.map(j => { const b = day.exercises[j];
         return `<button class="vchip" data-action="ss-pair" data-i="${i}" data-j="${j}">${esc(b.name)}<small>${ssAntag(ex, b) ? 'Gegenspieler · ' : ''}${ssSaveText(ex, b)}</small></button>`; }).join('')}</div>`
         : '<p class="hint">An diesem Tag passt keine Übung dazu.</p>'}
+      <p class="hint quick-title">… oder eine andere Übung wählen (sie kommt direkt dahinter in den Plan):</p>
+      <input class="inp" type="text" data-field="ss-pick-name" data-i="${i}" autocomplete="off" autocorrect="off" spellcheck="false"
+        placeholder="Übung eintippen, z. B. Face Pulls …">
+      <div class="suggest" hidden></div>
+      <button class="btn primary ss-pick-add" data-action="ss-pick-add" data-i="${i}">🔗 Hinzufügen und koppeln</button>
       <p class="hint">Erlaubt sind Gegenspieler (z. B. Brust und Rücken) und Muskelgruppen, die nichts miteinander zu tun haben
-        (z. B. Bauch und Waden) – nicht zwei Drück- oder zwei Zugübungen und keine schweren Grundübungen der Beine. Pause nach jedem
+        (z. B. Bauch und Waden), nicht zwei Drück- oder zwei Zugübungen und keine schweren Grundübungen der Beine. Pause nach jedem
         Satz: 2 min, bei zwei Isolationsübungen 90 s. Die zweite Übung rückt direkt hinter die erste.</p>
       <div class="row"><button class="btn" data-action="ss-pick-cancel">Abbrechen</button></div>
     </div>`;
@@ -3137,7 +3247,7 @@ function ssCheckCard(s) {
   const b = (v, t) => `<button class="btn ${v === 'ok' ? 'primary' : 'outline'}" data-action="ss-check" data-day="${day.id}" data-v="${v}">${t}</button>`;
   return `<div class="card hints ss-check"><p><b>🔗 Supersätze: Haben die Pausen gepasst?</b></p>
       <p class="hint">Geplant waren für „${esc(day.name)}“ ca. ${fmtDur(est)}${s.duration ? `, gebraucht hast du ${fmtDur(s.duration)}` : ''}.</p>
-      <div class="ss-check-btns">${b('ok', '✔ Passt')}${b('longer', 'Pausen zu kurz – länger')}${b('solo', 'Lieber wieder einzeln')}</div></div>`;
+      <div class="ss-check-btns">${b('ok', '✔ Passt')}${b('longer', 'Pausen zu kurz, länger')}${b('solo', 'Lieber wieder einzeln')}</div></div>`;
 }
 function ssAutoBtnHtml(day) {
   const pv = ssAutoPreview(day);
@@ -3195,7 +3305,7 @@ function complaintTips(name) {
 const SIDES = { l: 'links', r: 'rechts', b: 'beidseits' };
 const areaSided = k => k !== 'ruecken';
 const PAIN_HIGH = 7;
-const COMPL_DISCLAIMER = 'Die App dokumentiert nur – sie bewertet nichts und ersetzt keine Untersuchung. Was deine Einträge bedeuten, '
+const COMPL_DISCLAIMER = 'Die App dokumentiert nur. Sie bewertet nichts und ersetzt keine Untersuchung. Was deine Einträge bedeuten, '
   + 'besprichst du am besten mit deiner Ärztin oder deinem Arzt bzw. in der Physiotherapie.';
 const COMPL_HIGH_NOTE = '🩺 Starke Beschwerden besprichst du am besten bald mit deiner Ärztin oder deinem Arzt.';
 const areaName = (k, side) => (BODY_AREAS[k] || { label: k }).label + (side && SIDES[side] ? ' ' + SIDES[side] : '');
@@ -3294,7 +3404,7 @@ function renderComplaints() {
   if (!complEdit) complEdit = complEditInit();
   const E = complEdit;
   let h = `<div class="card compl-card"><h2>Wo zwickt es heute?</h2>
-      <p class="hint explain">Tipp an, wo es zwickt, und gib – wenn du magst – Seite und Stärke an. Ein Eintrag pro Tag; die Hinweise im Training passen sich sofort an.</p>
+      <p class="hint explain">Tipp an, wo es zwickt, und gib, wenn du magst, Seite und Stärke an. Ein Eintrag pro Tag; die Hinweise im Training passen sich sofort an.</p>
       <div class="group-chips">${Object.entries(BODY_AREAS).map(([k, a]) =>
         `<button class="gchip ${E.areas.has(k) ? 'on' : ''}" data-action="compl-pick" data-k="${k}">${a.label}</button>`).join('')}</div>`;
   for (const k of Object.keys(BODY_AREAS).filter(k => E.areas.has(k))) {
@@ -3307,10 +3417,10 @@ function renderComplaints() {
       placeholder="Notiz für deinen Termin (freiwillig), z. B. „morgens steif, nach dem Training besser“">${esc(E.note)}</textarea>`;
   }
   if ([...E.areas].some(k => E.pain[k] >= PAIN_HIGH)) h += `<p class="compl-doc">${COMPL_HIGH_NOTE}</p>`;
-  h += `<button class="btn primary" data-action="compl-save">${E.areas.size ? (E.today ? 'Eintrag von heute ändern' : 'Heute eintragen') : 'Speichern – nichts zwickt'}</button>
+  h += `<button class="btn primary" data-action="compl-save">${E.areas.size ? (E.today ? 'Eintrag von heute ändern' : 'Heute eintragen') : 'Speichern: nichts zwickt'}</button>
     </div>`;
   const sum = complaintSummary();
-  if (!sum.length) return h + `<p class="hint">Bisher hast du keine Beschwerden angegeben. Die App fragt einmal pro Zyklus vor dem Training nach –
+  if (!sum.length) return h + `<p class="hint">Bisher hast du keine Beschwerden angegeben. Die App fragt einmal pro Zyklus vor dem Training nach,
     und hier kannst du jederzeit selbst etwas eintragen.</p><p class="hint compl-disc">🩺 ${COMPL_DISCLAIMER}</p>`;
   h += `<button class="btn nav compl-rep-btn" data-action="compl-report">📄 Bericht für deinen Termin
     <small>Verlauf, betroffene Übungen und Notizen als Bild oder Text</small></button>`;
@@ -3347,8 +3457,8 @@ function renderComplaints() {
 function complaintsHistBtn() {
   const sum = complaintSummary();
   const now = sum.filter(x => x.now);
-  const txt = !sum.length ? 'Schmerzen und Beschwerden festhalten – z. B. für deinen nächsten Termin'
-    : now.length ? now.map(x => `${areaName(x.k, x.side)} seit ${fmtDate(x.since)}${x.lastP ? ` · ${x.lastP.pain}/10` : ''}`).join(' · ') : 'Zurzeit nichts – alles abgeklungen ✓';
+  const txt = !sum.length ? 'Schmerzen und Beschwerden festhalten, z. B. für deinen nächsten Termin'
+    : now.length ? now.map(x => `${areaName(x.k, x.side)} seit ${fmtDate(x.since)}${x.lastP ? ` · ${x.lastP.pain}/10` : ''}`).join(' · ') : 'Zurzeit nichts, alles abgeklungen ✓';
   return `<button class="btn nav compl-btn" data-action="compl-open" data-from="history">🩹 Beschwerden<small>${txt}</small></button>`;
 }
 
@@ -3394,7 +3504,7 @@ function complReportData(weeks) {
   return { weeks, from, areas, notes, sessions: data.sessions.filter(s => s.date >= from).length, name: ((data.profile || {}).name || '').trim() };
 }
 function complReportText(R) {
-  const L = [`Beschwerde-Tagebuch${R.name ? ` – ${R.name}` : ''}`,
+  const L = [`Beschwerde-Tagebuch${R.name ? `: ${R.name}` : ''}`,
     `Zeitraum: ${fmtDate(R.from)} bis ${fmtDate(new Date().toISOString())} (${R.weeks} Wochen) · ${R.sessions} Trainings`, ''];
   if (!R.areas.length) L.push('Im Zeitraum gibt es keine Einträge.', '');
   for (const a of R.areas) {
@@ -3473,7 +3583,7 @@ function complReportCanvas(R) {
     if (a.exs.length) {
       text('Gezwickt bei', F(700, 34), INK, 62);
       for (const x of a.exs) {
-        text(`${x.name} – ${x.n}×${x.max != null ? `, bis ${x.max}/10` : ''}`, F(500, 32), INK, 46);
+        text(`${x.name}: ${x.n}×${x.max != null ? `, bis ${x.max}/10` : ''}`, F(500, 32), INK, 46);
         if (x.w) text(`Trainingsgewicht: ${shareSetText(x.w.first.set)} (${dShort(x.w.first.date)})${x.w.n > 1 ? ` → ${shareSetText(x.w.last.set)} (${dShort(x.w.last.date)})` : ''}`, F(500, 28), MUTED, 40, IW - 30, X + 30);
       }
     }
@@ -3501,7 +3611,7 @@ function renderComplReport({ weeks = 8 }) {
     <div class="row"><button class="btn primary" data-action="crep-send" disabled>📤 Bild teilen</button>
       <button class="btn" data-action="share-save" disabled>Bild speichern</button></div>
     <button class="btn" data-action="crep-text">📝 Als Text teilen</button>
-    <p class="hint">🔒 Der Bericht enthält Gesundheitsdaten. Teile ihn nur mit Menschen, denen du vertraust – z. B. deiner Ärztin, deinem Arzt
+    <p class="hint">🔒 Der Bericht enthält Gesundheitsdaten. Teile ihn nur mit Menschen, denen du vertraust, z. B. deiner Ärztin, deinem Arzt
       oder in der Physiotherapie. Der Hinweis, dass die App nur dokumentiert, steht im Bericht mit drin.</p>`;
 }
 function complReportDraw({ weeks = 8 }) {
@@ -3729,7 +3839,7 @@ function platesCard() {
       <div class="seg three">${BAR_OPTS.map(b => `<button class="${bar === b ? 'on' : ''}" data-action="plates-bar" data-v="${b}">${b} kg</button>`).join('')}</div>
       <p class="lbl">Deine Scheiben</p>
       <div class="variants plate-chips">${PLATE_ALL.map(p => `<button class="vchip ${have.includes(p) ? 'on' : ''}" data-action="plates-toggle" data-v="${p}">${fmtNum(p)}</button>`).join('')}</div>
-      <p class="hint explain">Danach rechnet die App bei Langhantel-Übungen aus, welche Scheiben auf jede Seite gehören – im Training und beim Aufwärmen.
+      <p class="hint explain">Danach rechnet die App bei Langhantel-Übungen aus, welche Scheiben auf jede Seite gehören, im Training und beim Aufwärmen.
         Passt es nicht genau, steht der Rest in Klammern.</p>
     </div>`;
 }
@@ -3811,18 +3921,26 @@ const explainId = p => p.textContent.replace(/\s+/g, ' ').trim().slice(0, 80);
 function explainFold() {
   if (explainKeep()) return;
   if ((visitsLoad()[visitKey(current.view, current.params)] || 0) <= EXPLAIN_AFTER) return;
+  let n = 0;
   $view.querySelectorAll('.explain').forEach(p => {
     if (explainOpen.has(explainId(p))) return;
     p.classList.add('folded');
     p.insertAdjacentHTML('beforebegin', '<button class="explain-q" data-action="explain-show" aria-expanded="false">? Erklärung</button>');
+    n++;
   });
+  // v239 (User 2026-11-14): beim ersten Zuklappen einmal sagen, was passiert ist
+  if (n && !data.foldHintSeen) {
+    data.foldHintSeen = true;
+    saveData();
+    setTimeout(() => { if ($toast.hidden) toast('Erklärungen sind ab jetzt eingeklappt, damit die Seiten übersichtlich bleiben. Tipp auf „? Erklärung“, um sie wieder zu lesen.'); }, 700);
+  }
 }
 function explainCard() {
   const keep = explainKeep();
   return `<div class="card"><h2>❔ Erklärtexte</h2>
       <div class="seg two"><button class="${keep ? '' : 'on'}" data-action="explain-mode" data-v="0">Einklappen</button>
         <button class="${keep ? 'on' : ''}" data-action="explain-mode" data-v="1">Immer zeigen</button></div>
-      <p class="hint">Längere Erklärungen klappen ab dem dritten Besuch einer Seite zu einem kleinen „? Erklärung“ zusammen – antippen
+      <p class="hint">Längere Erklärungen klappen ab dem dritten Besuch einer Seite zu einem kleinen „? Erklärung“ zusammen. Antippen
         zeigt sie wieder. Warnungen und wichtige Hinweise bleiben immer sichtbar.</p></div>`;
 }
 
@@ -3940,7 +4058,7 @@ function cycleCard(ci) {
     return `<div class="card cycle">
       <h2>Eigener Plan</h2>
       <p class="round-status">🔄 ${roundStatus(ci)}</p>
-      <p class="sub">Ohne Zyklen und ohne Steigerung durch die App – im Training stehen immer deine Werte vom letzten Mal.</p>
+      <p class="sub">Ohne Zyklen und ohne Steigerung durch die App. Im Training stehen immer deine Werte vom letzten Mal.</p>
     </div>`;
   }
   const head = ci.deload
@@ -3949,7 +4067,7 @@ function cycleCard(ci) {
   const self = selfDeload();
   const sub = ci.deload
     ? (feat('tr-rir-input') ? `Halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mind. ${DELOAD_RIR} Wdh. im Tank. Danach beginnt der nächste Zyklus.`
-      : 'Halbe Sätze und etwas leichter – jeder Satz sollte sich locker anfühlen. Danach beginnt der nächste Zyklus.')
+      : 'Halbe Sätze und etwas leichter. Jeder Satz sollte sich locker anfühlen. Danach beginnt der nächste Zyklus.')
     : shiftText(ci.cycleStart, ci.week) && !ci.extra
       ? `${ci.intro ? 'Start-Sätze laut Plan. ' : ''}${shiftText(ci.cycleStart, ci.week)}`
     : ci.intro
@@ -3957,7 +4075,7 @@ function cycleCard(ci) {
         : feat('tr-rir-input') ? `Start-Sätze laut Plan. Werte der letzten Intro-Woche, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
         : 'Start-Sätze laut Plan. Die App schlägt dir passende Werte vor.')
       : ci.extra
-        ? (feat('tr-rir-input') ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche – Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
+        ? (feat('tr-rir-input') ? 'Weiter mit Sätzen und Tank der letzten Aufbauwoche. Gewicht und Wdh. steigen weiter, bis du den Deload einlegst.'
           : 'Weiter wie in der letzten Aufbauwoche, bis du den Deload einlegst.')
         : ci.cycle === 1 ? 'Die App baut auf deinen Werten der Vorwoche auf.'
         : feat('tr-rir-input') ? `Werte derselben Woche im letzten Zyklus, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand.`
@@ -3973,11 +4091,11 @@ function cycleCard(ci) {
       <h2>${head}</h2><span class="chev" aria-hidden="true">▾</span></div>
     ${cyclePills(ci, 'week-open')}
     <p class="round-status">🔄 ${open ? status : status.split(' · offen: ')[0]}</p>
-    ${open ? `<p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()} – egal, wie viele Tage du dafür brauchst.</p>` : ''}
+    ${open ? `<p class="sub">${sub} Eine Woche ist geschafft, sobald ${roundDoneText()}, egal, wie viele Tage du dafür brauchst.</p>` : ''}
     ${off ? `<p class="prog-note">⏸ Diese Woche ${off}</p>` : ''}
     ${self && !ci.deload ? `<button class="btn outline deload-btn" data-action="deload-now">😮‍💨 Deload-Woche einlegen</button>
       ${open ? '<p class="tap-hint">Deload selbst bestimmen: Leg ihn ein, wann du ihn brauchst.</p>' : ''}` : ''}
-    ${open ? `<p class="tap-hint">Woche antippen: Trainings ansehen – künftige Wochen zeigen, was geplant ist</p>
+    ${open ? `<p class="tap-hint">Woche antippen: Trainings ansehen. Künftige Wochen zeigen, was geplant ist</p>
     ${cycleAdjustHtml(ci)}` : ''}
   </div>`;
 }
@@ -4009,7 +4127,7 @@ function modeAskCard() {
   return `<div class="card hints mode-ask"><p><b>✨ Neu: Wähle, wie viel die App zeigt</b></p>
       <div class="mode-opts">${Object.entries(APP_MODES).map(([k, x]) =>
         `<button class="split-opt ${k === 'x' ? 'on' : ''}" data-action="mode-set" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
-      <p class="hint">Bisher siehst du alles (Experte). Deine Daten und dein Plan bleiben in jedem Modus gleich – auch die Steigerung im
+      <p class="hint">Bisher siehst du alles (Experte). Deine Daten und dein Plan bleiben in jedem Modus gleich, auch die Steigerung im
         Training. Wechseln kannst du jederzeit in den Optionen.</p>
       <button class="btn" data-action="mode-set" data-m="x">So lassen</button></div>`;
 }
@@ -4023,7 +4141,7 @@ function modeUpCard() {
   const next = m === 'e' ? 's' : 'x';
   return `<div class="card hints"><p><b>${APP_MODES[next].icon} Du trainierst jetzt schon eine ganze Weile regelmäßig</b></p>
       <p class="hint">Möchtest du mehr Einstellungen und Erklärungen sehen? Im Modus „${APP_MODES[next].label}“: ${APP_MODES[next].text}
-        Deine Daten bleiben, wie sie sind – zurück geht es jederzeit in den Optionen.</p>
+        Deine Daten bleiben, wie sie sind. Zurück geht es jederzeit in den Optionen.</p>
       <div class="row"><button class="btn primary" data-action="mode-set" data-m="${next}">Zu „${APP_MODES[next].label}“ wechseln</button>
         <button class="btn" data-action="mode-up-no">Nein, danke</button></div></div>`;
 }
@@ -4040,7 +4158,7 @@ function backupCard() {
   if (data.sessions.length < 4 || !backupDue() || daysSinceISO(data.backupSnooze) < BACKUP_SNOOZE) return '';
   return `<div class="card hints"><p><b>💾 Zeit für eine Sicherung</b></p>
       <p class="hint">${backupAgoText()}
-        Alles liegt nur auf diesem Handy – geht es verloren oder wird die App gelöscht, sind die Daten weg.</p>
+        Alles liegt nur auf diesem Handy. Geht es verloren oder wird die App gelöscht, sind die Daten weg.</p>
       <div class="row"><button class="btn primary" data-action="export">Jetzt sichern</button>
         <button class="btn" data-action="backup-later">Später</button></div></div>`;
 }
@@ -4068,7 +4186,7 @@ function installStepsHtml() {
   if (isAndroid()) {
     if (installEvt) return '<button class="btn primary" data-action="install-now">📲 Jetzt installieren</button>';
     return `<ol class="install-steps"><li>Oben rechts auf das Menü <b>⋮</b> tippen.</li>
-      <li><b>„App installieren“</b> oder <b>„Zum Startbildschirm hinzufügen“</b> wählen.</li><li>Bestätigen – fertig.</li></ol>`;
+      <li><b>„App installieren“</b> oder <b>„Zum Startbildschirm hinzufügen“</b> wählen.</li><li>Bestätigen, fertig.</li></ol>`;
   }
   const move = hasOwnData() ? `<li><b>Zuerst sichern:</b> Auf dem iPhone hat die App auf dem Home-Bildschirm einen eigenen Speicher und
       startet dort leer. Exportiere deshalb jetzt eine Sicherung und importiere sie danach dort unter Optionen → Deine Daten → „Sicherung importieren“.
@@ -4079,7 +4197,7 @@ function installStepsHtml() {
     <li>Oben rechts auf <b>„Hinzufügen“</b> tippen. Ab jetzt die App über das Symbol auf dem Home-Bildschirm öffnen.</li></ol>`;
 }
 const installWhy = () => isIOS()
-  ? 'Dann öffnet sie im Vollbild wie eine normale App – und das iPhone löscht deine Daten nicht, wenn du die App mal länger als 7 Tage nicht öffnest. Bei Websites in Safari tut es das.'
+  ? 'Dann öffnet sie im Vollbild wie eine normale App, und das iPhone löscht deine Daten nicht, wenn du die App mal länger als 7 Tage nicht öffnest. Bei Websites in Safari tut es das.'
   : 'Dann öffnet sie im Vollbild wie eine normale App, hat ein eigenes Symbol, und dein Handy behandelt deine Daten als dauerhaft.';
 
 // Startbildschirm: nur auf dem Handy im Browser, mit „Später“ und „Nicht mehr zeigen“
@@ -4112,7 +4230,7 @@ function iosMoveCard() {
 function backupAfterTrainingCard() {
   if (data.sessions.length < 2 || !backupDue()) return '';
   return `<div class="card hints backup-after"><p><b>💾 Gleich mitsichern?</b></p>
-      <p class="hint">${backupAgoText()} Ein Tipp genügt – auf dem iPhone dann „In Dateien sichern“ wählen.</p>
+      <p class="hint">${backupAgoText()} Ein Tipp genügt. Auf dem iPhone dann „In Dateien sichern“ wählen.</p>
       <button class="btn primary" data-action="export">Jetzt sichern</button></div>`;
 }
 
@@ -4124,17 +4242,17 @@ const MOTIV_OPTS = { soft: ['🤗', 'Freundlich', 'Mit Lob, ohne Druck'], hard: 
   off: ['🔕', 'Gar nicht', 'Keine solchen Hinweise'] };
 const motivMode = () => { const m = (data.profile || {}).motiv; return MOTIV_OPTS[m] ? m : 'soft'; };
 const MOTIV = {
-  weekPart: { soft: (d, t) => `${d} von ${t} Trainings diese Woche – stark! 💪`,
-    hard: (d, t) => `${d} von ${t}. ${t - d === 1 ? 'Eins fehlt noch' : `${t - d} fehlen noch`} – zieh's durch.` },
+  weekPart: { soft: (d, t) => `${d} von ${t} Trainings diese Woche. Stark! 💪`,
+    hard: (d, t) => `${d} von ${t}. ${t - d === 1 ? 'Eins fehlt noch' : `${t - d} fehlen noch`}. Zieh's durch.` },
   weekDone: { soft: () => 'Woche geschafft! Gönn dir die Erholung.',
-    hard: (d, t) => `${d === t ? `${d} von ${t}.` : 'Woche komplett.'} Genau so – nächste Woche wieder.` },
-  pb: { soft: (ex, more) => `Neue Bestleistung bei ${ex}${more} – richtig gut!`,
-    hard: (ex, more) => `Neue Bestleistung bei ${ex}${more} – du siehst: Die harte Arbeit zahlt sich aus!` },
-  back: { soft: day => `Schön, dass du da bist! Als Nächstes wartet <b>${day}</b> – wann immer es dir passt.`,
-    hard: (day, n) => `${n} Tage ohne Training. <b>${day}</b> wartet – heute ist ein guter Tag dafür.` },
+    hard: (d, t) => `${d === t ? `${d} von ${t}.` : 'Woche komplett.'} Genau so, nächste Woche wieder.` },
+  pb: { soft: (ex, more) => `Neue Bestleistung bei ${ex}${more}. Richtig gut!`,
+    hard: (ex, more) => `Neue Bestleistung bei ${ex}${more}. Du siehst: Die harte Arbeit zahlt sich aus!` },
+  back: { soft: day => `Schön, dass du da bist! Als Nächstes wartet <b>${day}</b>, wann immer es dir passt.`,
+    hard: (day, n) => `${n} Tage ohne Training. <b>${day}</b> wartet. Heute ist ein guter Tag dafür.` },
   short: { soft: () => 'Wenig Zeit heute? Die App kürzt das Training auf deine Minuten.',
-    hard: () => 'Wenig Zeit ist kein Grund auszulassen – die App kürzt das Training auf deine Minuten.' },
-  deload: { soft: () => 'Leichte Woche – dein Körper baut jetzt auf. Genieß es.',
+    hard: () => 'Wenig Zeit ist kein Grund auszulassen. Die App kürzt das Training auf deine Minuten.' },
+  deload: { soft: () => 'Leichte Woche. Dein Körper baut jetzt auf. Genieß es.',
     hard: () => 'Deload ist Teil des Plans. Leicht trainieren, nicht auslassen.' },
 };
 const motivText = (k, ...a) => MOTIV[k][motivMode() === 'hard' ? 'hard' : 'soft'](...a);
@@ -4197,8 +4315,8 @@ function motivCard() {
       <h2>Motivation</h2>
       <div class="seg three">${Object.entries(MOTIV_OPTS).map(([k, [, l]]) => `<button class="${m === k ? 'on' : ''}" data-action="motiv-set" data-m="${k}">${l}</button>`).join('')}</div>
       <p class="hint explain">${m === 'off' ? 'Keine Lob- oder Erinnerungs-Texte. Zahlen und Hinweise zum Training bleiben.'
-        : m === 'hard' ? 'Klare Ansagen nach dem Training und nach einer Pause – z. B. „2 von 3. Eins fehlt noch – zieh\'s durch.“'
-        : 'Lob nach dem Training und eine freundliche Einladung nach einer Pause – z. B. „2 von 3 Trainings diese Woche – stark!“'}</p>
+        : m === 'hard' ? 'Klare Ansagen nach dem Training und nach einer Pause, z. B. „2 von 3. Eins fehlt noch. Zieh\'s durch.“'
+        : 'Lob nach dem Training und eine freundliche Einladung nach einer Pause, z. B. „2 von 3 Trainings diese Woche. Stark!“'}</p>
     </div>`;
 }
 
@@ -4218,10 +4336,10 @@ function timeLimitHtml() {
           <button class="${timeEdit.once ? '' : 'on'}" data-action="time-once" data-v="0">Bis ich es ändere</button></div>
         ${ssOn() ? `<p class="lbl">🔗 Supersätze</p><div class="seg two"><button class="${timeEdit.ss !== false ? 'on' : ''}" data-action="time-ss" data-v="1">Erst Supersätze</button>
           <button class="${timeEdit.ss === false ? 'on' : ''}" data-action="time-ss" data-v="0">Ohne</button></div>
-          <p class="hint">Reicht die Zeit nicht, koppelt die App zuerst passende Übungen im Wechsel – das spart Pausen. Erst wenn es dann
+          <p class="hint">Reicht die Zeit nicht, koppelt die App zuerst passende Übungen im Wechsel, das spart Pausen. Erst wenn es dann
           immer noch nicht passt, fallen Sätze weg.</p>` : ''}
-        <p class="hint">Die App kürzt das Training passend: Jede geplante Muskelgruppe bekommt zuerst 1–2 Sätze – mit einer
-          Grundübung, wenn es eine gibt –, dann folgen die übrigen Sätze der Grundübungen, danach normale Übungen und zuletzt
+        <p class="hint">Die App kürzt das Training passend: Jede geplante Muskelgruppe bekommt zuerst 1–2 Sätze (mit einer
+          Grundübung, wenn es eine gibt), dann folgen die übrigen Sätze der Grundübungen, danach normale Übungen und zuletzt
           Isolationsübungen. Gerechnet wird mit 1 Minute pro Satz plus Pause (Grundübung 4, normale Übung 3, Isolation 2 Minuten).</p>
         <div class="row"><button class="btn" data-action="time-cancel">Abbrechen</button>
           <button class="btn primary" data-action="time-save">Übernehmen</button></div>
@@ -4248,7 +4366,7 @@ function skipHtml(ci) {
   }
   return `<div class="card skip-panel">
       <p><b>Welche Tage lässt du in dieser Woche aus?</b></p>
-      <p class="hint">Die ausgewählten Tage zählen für ${ciLabel(ci)} als erledigt – ohne Training und ohne Werte. Danach geht es
+      <p class="hint">Die ausgewählten Tage zählen für ${ciLabel(ci)} als erledigt, ohne Training und ohne Werte. Danach geht es
         mit dem nächsten offenen Tag weiter, und sind alle Tage erledigt, mit der nächsten Woche. Du kannst einen ausgelassenen
         Tag trotzdem noch trainieren, dann zählt er ganz normal.</p>
       <div class="group-chips skip-chips">${cands.map(d => `<button class="gchip ${skipPick.has(d.id) ? 'on' : ''}" data-action="skip-pick" data-id="${d.id}">
@@ -4273,8 +4391,8 @@ function startHintCard() {
 function renderStart() {
   const hint = startHintCard();
   let h = (typeof sportSwitch === 'function' ? sportSwitch('kraft') : '')  // v224 Beta-Entwurf: Kraft | Hyrox
-    + greeting() + moveCard() + betaCard()  // v217: Umzugshilfe (alte Adresse) bzw. Beta-Hinweis
-    + (typeof caliUpCards === 'function' ? caliUpCards() : '');  // v225: Calisthenics – nächste Stufe? (nur nach Rückfrage)
+    + greeting() + moveCard();  // v217: Umzugshilfe (alte Adresse); v240: Beta-Hinweis steht in den Optionen
+  const caliUp = typeof caliUpCards === 'function' ? caliUpCards() : '';  // v225: Calisthenics – nächste Stufe? (nur nach Rückfrage)
   if (draft) {
     h += `<div class="card highlight">
       <h2>Laufendes Training: ${esc(draft.dayName)}</h2>
@@ -4283,17 +4401,17 @@ function renderStart() {
     </div>`;
   }
   if (!hasActivePlan()) {
-    return h + hint + `<div class="card no-plan">
+    return h + caliUp + hint + `<div class="card no-plan">
         <div class="check-emoji" aria-hidden="true">🏁</div>
         <h2>${data.plans.length ? 'Kein Plan aktiv' : 'Noch kein Plan'}</h2>
         <p class="hint">${data.plans.length ? 'Erstelle einen neuen Plan oder aktiviere einen bisherigen im Reiter „Plan“. Deine Trainings und Erfolge bleiben erhalten.'
-          : 'Erstelle deinen ersten Trainingsplan – der Assistent führt dich Schritt für Schritt hindurch.'}</p>
+          : 'Erstelle deinen ersten Trainingsplan. Der Assistent führt dich Schritt für Schritt hindurch.'}</p>
         <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>
         ${data.plans.length ? '<button class="btn center" data-action="tab" data-tab="plan">Bisherigen Plan aktivieren</button>' : ''}
       </div>`;
   }
   if (!data.days.length) {
-    return h + hint + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
+    return h + caliUp + hint + `<p class="hint">Noch kein Trainingsplan vorhanden. Lege zuerst deine Trainingstage und Übungen an.</p>
       <button class="btn primary" data-action="tab" data-tab="plan">Trainingsplan anlegen</button>`;
   }
   const limit = data.timeLimit && data.timeLimit.min;
@@ -4310,7 +4428,7 @@ function renderStart() {
     // noch nicht erstellter Tag (User-Wunsch 2026-11-10): Hinweis statt Training, antippen = Übungen eintragen
     if (!day.exercises.some(e => e.name.trim())) {
       return `<button class="btn nav day-btn pending" data-action="own-resume" data-id="${day.id}">
-        <span class="day-no">⏳</span><span class="day-txt">${esc(day.name)}<small>Noch nicht erstellt – antippen, um die Übungen einzutragen</small></span></button>`;
+        <span class="day-no">⏳</span><span class="day-txt">${esc(day.name)}<small>Noch nicht erstellt. Antippen, um die Übungen einzutragen</small></span></button>`;
     }
     const last = sessions.find(s => s.dayId === day.id);
     const dur = lastDuration(day.id);
@@ -4318,7 +4436,7 @@ function renderStart() {
     // ausgelassen: ohne Training in dieser Woche, nur übersprungen
     const skipped = done && skippedIds.includes(day.id) && !roundSessions(ci.cycleStart, ci.week).some(s => s.dayId === day.id);
     // geschätzte Dauer dieser Woche (Sätze wie im Training) und zuletzt gemessene Dauer
-    const est = estDuration(day, ci.week, activePlan(), ci.deload);
+    const est = estDuration(day, ci.week, activePlan(), ci.deload || hxLight());
     const estTxt = !est ? '' : limit && est > limit ? `⏱ gekürzt auf ca. ${fmtDur(limit)} (sonst ${estText(est)})` : estText(est);
     const info = `${day.exercises.length} Übung${day.exercises.length === 1 ? '' : 'en'}` + (estTxt ? ` · ${estTxt}` : '') +
       (last ? ` · zuletzt ${fmtDate(last.date)}` : '') + (dur ? ` · ⏱ ${fmtDur(dur)}` : '');
@@ -4328,58 +4446,131 @@ function renderStart() {
       <span class="day-txt">${next ? '<span class="badge next-badge">▶ Steht als Nächstes an</span>' : ''}${esc(day.name)}${skipped ? '<span class="badge skip">diese Woche ausgelassen</span>'
         : done ? '<span class="badge done">diese Woche erledigt</span>' : ''}<small>${info}</small></span></button>`;
   };
-  // 1. nächster Tag ganz oben (bei laufendem Training steht dort die Karte „Fortsetzen“)
-  if (nextDay) h += dayBtn(nextDay, data.days.indexOf(nextDay));
-  // Zeitlimit: aktiv bzw. in Bearbeitung direkt unter dem nächsten Tag, sonst als kleiner Knopf unten
-  const tlShown = !draft && (timeEdit || limit);
+  // v240 (User 2026-11-14): 1. Zyklus ganz oben, 2. Hinweise, 3. alle Trainingstage untereinander in Plan-Reihenfolge
+  // (der nächste bleibt hervorgehoben), Zeitlimit direkt darunter
+  h += cycleCard(ci) + caliUp + (typeof hxTaperCard === 'function' ? hxTaperCard(ci) : '') + hint
+    + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
+  h += `<h2 class="start-days-h">Trainingstage <small class="hint">· ${esc(activePlan().name)}</small></h2>`
+    // v246 (User 2026-11-14): „Wenig Zeit?“ hängt direkt am nächsten Trainingstag (ohne nächsten Tag wie bisher unten)
+    + data.days.map((d, i) => dayBtn(d, i) + (d === nextDay && !draft ? `<div class="tl-attach">${timeLimitHtml()}</div>` : '')).join('');
+  const tlAttached = !draft && !!nextDay;
+  const tlShown = !draft && !tlAttached && (timeEdit || limit);
   if (tlShown) h += timeLimitHtml();
-  // 2. eine Hinweis-Karte, 3. Zyklus und Co.
-  h += hint + cycleCard(ci) + (typeof reviewStartCard === 'function' ? reviewStartCard() : '') + hintsCard();
   h += nutStartLine();  // Ernährungsphase kurz anzeigen (nutrition.js)
-  // 4. übrige Tage
-  const rest = data.days.filter(d => d !== nextDay);
-  if (rest.length) {
-    h += `<h2 class="start-days-h">${nextDay ? 'Weitere Trainingstage' : 'Welcher Trainingstag?'} <small class="hint">· ${esc(activePlan().name)}</small></h2>`
-      + rest.map(d => dayBtn(d, data.days.indexOf(d))).join('');
-  }
   // 5. kleine Knöpfe „Wenig Zeit?“ und „Tage auslassen“ nebeneinander (aufgeklappte Auswahl darunter in voller Breite)
   if (!draft) {
-    const tb = tlShown ? '' : timeLimitHtml(), sk = skipHtml(ci);
+    const tb = tlShown || tlAttached ? '' : timeLimitHtml(), sk = skipHtml(ci);
     if (skipPick) h += (tb ? `<div class="start-mini">${tb}</div>` : '') + sk;
     else if (tb || sk) h += `<div class="start-mini">${tb}${sk}</div>`;
   }
   if (typeof cardioStartHtml === 'function') h += `<h2>Cardio</h2>${cardioStartHtml()}`;
+  // v240: Plan beenden steht hier statt im Plan-Reiter
+  h += `<button class="btn outline center plan-end-btn" data-action="plan-end">⏹ Aktuell laufenden Plan beenden</button>`;
   return h;
 }
 
 // Werte früherer Trainings: je Satz eine Zeile; mehrere Spalten nebeneinander (z. B. letzter Zyklus | Vorwoche)
-function setRows(cols, head = false) {
+function setRows(cols, head = false, name) {
   const n = Math.max(...cols.map(c => c.sets.length));
   return `<table class="last-sets${cols.length === 1 ? ' one' : ''}">${head ?`<tr><th></th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>` : ''}` +
     Array.from({ length: n }, (_, i) => `<tr><td class="no">${i + 1}</td>${cols.map(c =>
-      `<td>${c.sets[i] ? fmtSet(c.sets[i]) : ''}</td>`).join('')}</tr>`).join('') + '</table>';
+      `<td>${c.sets[i] ? fmtSet(c.sets[i], name) : ''}</td>`).join('')}</tr>`).join('') + '</table>';
 }
 
 // Im Training: was das Zeitlimit gekürzt hat
+/* v245 (User 2026-11-14): Zeitlimit prüfen und frei anpassen. Beim Start zeigt die Karte „So wird heute gekürzt“ jede Übung des
+   ganzen Trainings mit − / + (0 = fällt weg) und der geschätzten Dauer; „Ganzes Training“ holt alles zurück – auch mitten im Training.
+   draft.timeFull = Übungen vor dem Kürzen (Kopie), draft.timePick = { Index in timeFull: Sätze } während der Bearbeitung,
+   draft.timeOk = bestätigt (dann nur noch die kleine Zeile mit „Anpassen“). Eingetragene Sätze bleiben immer erhalten. */
+const tcDone = en => en ? en.sets.filter(isDone).length : 0;
+const tcFind = full => draft.entries.find(e => nameKey(e.name) === nameKey(full.name)) || null;
+function tcMinutes(list) {  // list: [{ en, n }]
+  const items = list.filter(x => x.n > 0).map(x => {
+    const kind = kindOf(planExercise(x.en.name) || { name: x.en.name });
+    return { n: x.n, rest: REST_MIN[kind] || 3, extra: techMinutes(x.en.sets.slice(0, x.n)) };
+  });
+  return seqMinutes(items, new Map());
+}
+function tcPickInit() {
+  draft.timePick = {};
+  draft.timeFull.forEach((f, k) => { const cur = tcFind(f); draft.timePick[k] = cur ? cur.sets.length : 0; });
+}
+function timeEditHtml() {
+  if (!draft.timePick) tcPickInit();
+  const full = draft.timeFull, pick = draft.timePick;
+  const est = tcMinutes(full.map((f, k) => ({ en: f, n: pick[k] })));
+  const rows = full.map((f, k) => {
+    const n = pick[k], max = f.sets.length, min = tcDone(tcFind(f));
+    return `<div class="tc-row${n ? '' : ' off'}"><span class="tc-name">${esc(f.name)}<small>${n ? `${n} von ${max} Sätzen` : 'fällt heute weg'}</small></span>
+      <button class="icon-btn" data-action="tc-step" data-k="${k}" data-d="-1" ${n <= min ? 'disabled' : ''} aria-label="Ein Satz weniger">−</button>
+      <b>${n}</b>
+      <button class="icon-btn" data-action="tc-step" data-k="${k}" data-d="1" ${n >= max ? 'disabled' : ''} aria-label="Ein Satz mehr">＋</button></div>`;
+  }).join('');
+  const c = draft.timeCut || {};
+  return `<div class="card time-edit">
+      <h2>⏱ So wird heute gekürzt</h2>
+      <p class="hint">Zeitlimit ${draft.timeLimit} min${c.before ? `, das ganze Training dauert ca. ${fmtDur(c.before)}` : ''}. Passt es so? Mit − und ＋
+        änderst du die Sätze je Übung, 0 heißt: fällt heute weg.</p>
+      <div class="tc-list">${rows}</div>
+      <p class="tc-est">Geschätzt: <b>ca. ${fmtDur(est)}</b>${est > draft.timeLimit + 2 ? ` <small>(${Math.round(est - draft.timeLimit)} min über dem Limit)</small>` : ''}</p>
+      <div class="row"><button class="btn" data-action="tc-full">Ganzes Training</button>
+        <button class="btn primary" data-action="tc-ok">✔ Passt so</button></div>
+    </div>`;
+}
+// Auswahl übernehmen: vorhandene Übungen behalten (mit Werten), Sätze ergänzen bzw. unberührte am Ende streichen, weggefallene wieder einfügen
+function tcApply(pick) {
+  const full = draft.timeFull;
+  const keep = [];
+  for (const en of draft.entries) {
+    const k = full.findIndex(f => nameKey(f.name) === nameKey(en.name));
+    if (k < 0) { keep.push(en); continue; }  // heute hinzugefügte Übung
+    const n = Math.max(pick[k], tcDone(en));
+    if (!n) continue;
+    const f = full[k];
+    while (en.sets.length > n && !isDone(en.sets[en.sets.length - 1]) && !en.sets[en.sets.length - 1].touched) en.sets.pop();
+    for (let j = en.sets.length; j < n; j++) { en.sets.push(JSON.parse(JSON.stringify(f.sets[j] || f.sets[f.sets.length - 1]))); if (f.planned[j]) en.planned[j] = { ...f.planned[j] }; }
+    en.planned.length = Math.min(en.planned.length, en.sets.length);
+    en.target = { ...en.target, sets: en.sets.length };
+    keep.push(en);
+  }
+  full.forEach((f, k) => {
+    if (!pick[k] || keep.some(e => nameKey(e.name) === nameKey(f.name))) return;
+    const en = JSON.parse(JSON.stringify(f));
+    en.sets.length = Math.min(en.sets.length, pick[k]);
+    en.planned.length = Math.min(en.planned.length, pick[k]);
+    en.target = { ...en.target, sets: en.sets.length };
+    let at = 0;
+    for (let q = k - 1; q >= 0; q--) { const i = keep.findIndex(e => nameKey(e.name) === nameKey(full[q].name)); if (i >= 0) { at = i + 1; break; } }
+    keep.splice(at, 0, en);
+  });
+  draft.entries = keep;
+  refreshPrefat();
+}
+
 function timeCutNote() {
   const c = draft.timeCut;
   if (!draft.timeLimit) return '';
+  if (draft.timeFull && !draft.timeOk) return timeEditHtml();
+  const btns = draft.timeFull ? `<span class="tc-btns"><button class="btn small" data-action="tc-edit">Anpassen</button>
+    <button class="btn small" data-action="tc-full">Ganzes Training</button></span>` : '';
   const ss = (draft.ssToday || []).length ? `<br><small>🔗 Heute im Supersatz: ${draft.ssToday.map(([a, b]) => `${esc(a)} + ${esc(b)}`).join(' · ')}</small>` : '';
-  if (ss && !c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min – mit Supersätzen passt das Training ohne Kürzen.${ss}</p>`;
-  if (!c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min – das Training passt schon so, nichts gekürzt.</p>`;
+  if (ss && !c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min: Mit Supersätzen passt das Training ohne Kürzen.${ss}</p>`;
+  if (!c) return `<p class="intro-note time-note">⏱ Zeitlimit ${draft.timeLimit} min: Das Training passt schon so, nichts gekürzt.</p>`;
   return `<p class="intro-note time-note">⏱ Auf ca. ${fmtDur(c.after)} gekürzt (Zeitlimit ${c.limit} min, sonst ca. ${fmtDur(c.before)}).
     ${c.cut.length ? `<br><small>Weniger Sätze: ${c.cut.map(x => `${esc(x.name)} ${x.from} → ${x.to}`).join(' · ')}</small>` : ''}
-    ${c.dropped.length ? `<br><small>Heute ausgelassen: ${c.dropped.map(esc).join(' · ')}</small>` : ''}${ss}</p>`;
+    ${c.dropped.length ? `<br><small>Heute ausgelassen: ${c.dropped.map(esc).join(' · ')}</small>` : ''}${ss}${btns}</p>`;
 }
 
 function renderTraining() {
   if (!draft) return '<p class="hint">Kein laufendes Training.</p>';
   let h = draft.own
-    ? (activePlan().cali ? '<p class="intro-note">Calisthenics: Die App steigert pro Woche um 1 Wdh. bzw. 5 Sekunden je Satz, bis das Stufenziel erreicht ist. Nicht geschafft? Dann bleibt das Ziel gleich.</p>'
-      : '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts – Gewicht und Wdh. änderst du selbst.</p>')
+    ? (activePlan().cali ? '<p class="intro-note">Calisthenics: Die App steigert pro Woche um 1 Wdh. bzw. 5 Sekunden je Satz, bis das Stufenziel erreicht ist. Nicht geschafft? Dann bleibt das Ziel gleich. Zweimal hintereinander deutlich darunter? Dann gilt als Nächstes, was du geschafft hast.</p>'
+      : '<p class="intro-note">Eigener Plan: Vorgeschlagen sind immer deine Werte vom letzten Mal (beim ersten Mal Sätze × Wdh. aus deinem Plan). Die App steigert nichts. Gewicht und Wdh. änderst du selbst.</p>')
+    : draft.light
+    ? `<p class="deload-note">🏁 Wettkampf-Woche. Leichtes Training wie im Deload: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mindestens ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.</p>`
     : draft.deload
     ? `<p class="deload-note">${feat('tr-rir-input') ? `Deload-Woche: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank. Keine Steigerung.`
-      : 'Deload-Woche: halbe Sätze und etwas leichter – jeder Satz sollte sich locker anfühlen.'}</p>`
+      : 'Deload-Woche: halbe Sätze und etwas leichter. Jeder Satz sollte sich locker anfühlen.'}</p>`
     : draft.intro
       ? `<p class="intro-note">Intro-Woche: ${draft.cycleNo === 1 ? 'Du steigst etwas leichter ein und findest deine Gewichte.'
         : `Start-Sätze laut Plan. ${shiftText(draft.cycleStart, 1)
@@ -4389,14 +4580,14 @@ function renderTraining() {
   h = timeCutNote() + h;
   h += draft.own
     ? `<p class="sub">${fmtDate(draft.date, true)}<br>Trag nach jedem Satz ein, was du geschafft hast${feat('tr-rir-input')
-      ? ' und wie viele Wdh. noch im Tank waren' : ' und tippe an, wie er sich angefühlt hat'} – damit gilt der Satz als erledigt.</p>`
+      ? ' und wie viele Wdh. noch im Tank waren' : ' und tippe an, wie er sich angefühlt hat'}. Damit gilt der Satz als erledigt.</p>`
     : `<p class="sub">${fmtDate(draft.date, true)}</p>` + entryHelpHtml() + prefatHelpHtml();
   if (feat('tr-prog')) h += progressionCard();
 
   // Reihenfolge nur für dieses Training ändern (der Plan bleibt, wie er ist)
   if (draft.reorder) {
     return h + `<div class="card"><h2>Reihenfolge heute</h2><ul class="list reorder">` +
-      draft.entries.map((en, ei) => `<li class="bw-row">
+      draft.entries.map((en, ei) => `<li class="bw-row${ei === draft.reorderFrom ? ' ord-from' : ''}">
         <span>${ei + 1}. ${esc(en.name)}</span>
         <button class="icon-btn" data-action="tr-move" data-ei="${ei}" data-dir="-1" aria-label="Nach oben" ${ei === 0 ? 'disabled' : ''}>↑</button>
         <button class="icon-btn" data-action="tr-move" data-ei="${ei}" data-dir="1" aria-label="Nach unten" ${ei === draft.entries.length - 1 ? 'disabled' : ''}>↓</button>
@@ -4425,6 +4616,7 @@ function renderTraining() {
       <div class="ex-head">
         <h2>${pr ? `<span class="ss-badge" aria-label="Übung ${pr.role} im Supersatz">${pr.role}</span>` : ''}${libEntry(en.name) ? `<button class="lib-link" data-action="lib-open" data-name="${esc(en.name)}"
           aria-label="Ausführung ansehen">${exTitleHtml(en.name)} <span class="info-dot">i</span></button>` : exTitleHtml(en.name)}</h2>
+        <button class="det-btn ord-btn" data-action="reorder-toggle" data-ei="${ei}" aria-label="Reihenfolge ändern">⇅</button>
         <button class="det-btn" data-action="ex-details" data-ei="${ei}" aria-expanded="${det}">Details${hasComment && !det ? ' · 💬' : ''}
           <span class="chev" aria-hidden="true">▾</span></button>
         ${det ? `<div class="ex-tools">
@@ -4465,7 +4657,7 @@ function renderTraining() {
     if (last && (last.ss || pr) && last.ss !== !!pr) h += `<p class="last ss-last">🔗 Letztes Mal ${last.ss ? 'im Supersatz' : 'einzeln'} trainiert</p>`;
     if (en.replacing) h += renderReplace(en, ei);
     const bandEx = body && en.target && en.target.band;
-    if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen – ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
+    if (bandEx) h += `<p class="bw-note">🎗️ Bandübung: Steigerung über die Wiederholungen. Ab etwa ${BAND_MAX_REPS} Wdh. kommt das nächststärkere Band.</p>` + bandRow(en, ei);
     else if (body) h += `<p class="bw-note">🧍 Eigengewichtsübung: Steigerung über die ${typeof isHoldName === 'function' && isHoldName(en.name) ? 'Haltezeit (Sekunden)' : 'Wiederholungen'}.</p>`;
     if (en.target && !en.target.own) { const bh = bwHint(en); h += `<p class="bw-hint" data-bwhint="${ei}"${bh ? '' : ' hidden'}>${bh}</p>`; }
     if (en.caliInfo && typeof caliTargetHtml === 'function') {
@@ -4477,13 +4669,14 @@ function renderTraining() {
       // Heute: wirklich vorgeschlagene Wdh. (User-Regel 2026-11-06), nicht der Startwert des Plans
       const pr = (en.planned || []).map(x => x && x.reps).filter(x => x != null);
       const today = pr.length ? (Math.min(...pr) === Math.max(...pr) ? pr[0] : `${Math.max(...pr)}–${Math.min(...pr)}`) : t.reps;
-      h += feat('tr-tank-target')
-        ? `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${t.deload || !t.rirSplit ? `Ø ${targetRirText(t)} im Tank` : `Tank ${rirSeqText(t)}`}</p>`
-        : `<p class="target">Heute: ${t.sets} × ${today} Wdh. · ${feelTargetText(t)}</p>`;
+      h += en.holdSec ? `<p class="target">Heute: ${t.sets} × ${today} s halten · nächste Woche mehr, wenn du es schaffst (bis ${HOLD_MAX} s)</p>${holdHintHtml(en)}`
+        : feat('tr-tank-target')
+        ? `<p class="target">Heute: ${t.sets} × ${today} ${holdSec(en.name) ? 's' : 'Wdh.'} · ${t.deload || !t.rirSplit ? `Ø ${targetRirText(t)} im Tank` : `Tank ${rirSeqText(t)}`}</p>`
+        : `<p class="target">Heute: ${t.sets} × ${today} ${holdSec(en.name) ? 's' : 'Wdh.'} · ${feelTargetText(t)}</p>`;
       if (feat('tr-prefat') && (t.fat || 0) >= PREFAT_SHOW - 1e-9) {
         const pi = preFatigueInfo(draftPrefatList(), ei);
         const parts = [pi.same ? `${fmtNum(pi.same)} ${pi.same === 1 ? 'Satz' : 'Sätze'} ${MUSCLES[pi.g] || ''}` : '', pi.help ? `${fmtNum(pi.help)} ${pi.help === 1 ? 'Satz' : 'Sätze'} für Hilfsmuskeln` : ''].filter(Boolean);
-        h += `<p class="prefat-note">💤 Vorermüdet: ${parts.join(' und ')} vorher – die App rechnet mit etwa ${Math.round(t.fat * 100)} % weniger Kraft als frisch.</p>`;
+        h += `<p class="prefat-note">💤 Vorermüdet: ${parts.join(' und ')} vorher, die App rechnet mit etwa ${Math.round(t.fat * 100)} % weniger Kraft als frisch.</p>`;
       }
     }
     // Scheiben-Rechner (v204): bei Langhantel-Übungen immer sichtbar, rechnet beim Eintippen mit (platesSync)
@@ -4509,7 +4702,7 @@ function renderTraining() {
     // Einfach-Modus: „Kennenlern-Woche“ statt Max.-Abfrage – die App errechnet das Max. aus dem Geschafften
     if (!feat('tr-max') && t && !t.own && !body && t.max10 == null) {
       h += `<p class="first-max-hint">🆕 Kennenlernen: Nimm ein Gewicht, mit dem du die Wiederholungen sicher schaffst, und sag nach jedem
-        Satz, wie er sich angefühlt hat – die App passt das Gewicht danach an.</p>`;
+        Satz, wie er sich angefühlt hat. Die App passt das Gewicht danach an.</p>`;
     }
     if (withMax && en.stepOpen && det) h += stepPick(en, ei);
     if (en.variantOpen && det) {
@@ -4519,41 +4712,41 @@ function renderTraining() {
     }
     if (en.weekFirst && feat('tr-compare') && det) {
       h += `<div class="compare">Plan des 1. Trainings dieser Woche (${fmtDate(en.weekFirst.date)}):
-        ${setRows([{ sets: en.weekFirst.sets }])}<b>2. Training der Woche: höchstens dieser Plan – keine Steigerung dagegen</b></div>`;
+        ${setRows([{ sets: en.weekFirst.sets }], false, en.name)}<b>2. Training der Woche: höchstens dieser Plan, keine Steigerung dagegen</b></div>`;
     }
     // Werte vom letzten Mal: immer sichtbar, auch bei zugeklappten Details (User-Wunsch 2026-11-11, v206)
     if (!feat('tr-compare')) {
       // Einfach: eine Zeile mit den Werten vom letzten Mal
-      h += last ? `<p class="last">Letztes Mal: ${last.sets.map(x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps}` : `${x.reps} Wdh.`).join(' · ')}</p>`
-        : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+      h += last ? `<p class="last">Letztes Mal: ${last.sets.map(x => fmtSet({ weight: x.weight, reps: x.reps }, en.name)).join(' · ')}</p>`
+        : '<p class="last">Erstes Mal, noch keine Werte.</p>';
     } else if (en.compare) {
       const rule = en.compare.shifted && !en.rule
         ? 'Verlängerung berücksichtigt: Gewicht aus dieser Woche, Wdh. und Tank wie in der aktuellen Woche'
         : en.rule === 'brake'
         ? `Vorwoche deutlich verfehlt (mind. ${MISS_REPS} Wdh. unter Plan) → weniger Gewicht, Wdh. wie geplant`
         : en.rule === 'lower'
-          ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden – Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
+          ? 'Heute: pro Satz der niedrigere Vorschlag aus beiden. Ziel: Satz 1 eine Wdh. mehr als in der Vorwoche, die übrigen Sätze bestätigen'
           : en.rule === 'week'
             ? 'Heute: begrenzt durch das 1. Training dieser Woche'
           : en.rule === 'diet'
-            ? 'Diät: Gewicht wie zuletzt – höchstens 1 Wdh. mehr, dafür näher am Muskelversagen'
-            : `Heute: je Satz +${en.compare.plus || 1} Wdh. – oder mehr Gewicht, wenn es die Leistung hergibt`;
+            ? 'Diät: Gewicht wie zuletzt, höchstens 1 Wdh. mehr, dafür näher am Muskelversagen'
+            : `Heute: je Satz +${en.compare.plus || 1} Wdh. oder mehr Gewicht, wenn es die Leistung hergibt`;
       const occ = draft.occurrence > 1 || en.compare.occ > 1 ? `, ${en.compare.occ || 1}. Training` : '';
       const cols = [{ label: `Letzter Zyklus<small>${weekLabel(en.compare.week)}${occ} · ${fmtDate(en.compare.date)}</small>`, sets: en.compare.rawSets || en.compare.sets }];
       if (en.prevWeek) cols.push({ label: `Vorwoche<small>${weekLabel(en.prevWeek.week)} · ${fmtDate(en.prevWeek.date)}</small>`, sets: en.prevWeek.rawSets || en.prevWeek.sets });
       const conv = [en.compare, en.prevWeek].some(x => x && x.rawSets);
-      h += `<div class="compare">${setRows(cols, true)}<b>${rule}</b>${conv && feat('tr-prefat') ? '<br><small>Damals stand die Übung an anderer Stelle im Training – die App hat die Werte auf die heutige Vorermüdung umgerechnet.</small>' : ''}</div>`;
+      h += `<div class="compare">${setRows(cols, true, en.name)}<b>${rule}</b>${conv && feat('tr-prefat') ? '<br><small>Damals stand die Übung an anderer Stelle im Training. Die App hat die Werte auf die heutige Vorermüdung umgerechnet.</small>' : ''}</div>`;
     } else {
       h += last
-        ? `<div class="last">Letztes Mal (${fmtDate(last.date)}):${setRows([{ sets: last.sets }])}</div>`
-        : en.target && en.target.own ? '<p class="last">Erstes Mal – Werte aus deinem Plan.</p>'
+        ? `<div class="last">Letztes Mal (${fmtDate(last.date)}):${setRows([{ sets: last.sets }], false, en.name)}</div>`
+        : en.target && en.target.own ? '<p class="last">Erstes Mal: Werte aus deinem Plan.</p>'
         : en.target && en.target.max10 == null && !body ? ''  // dann steht oben schon der Hinweis „Erstes Mal“
-          : '<p class="last">Erstes Mal – noch keine Werte.</p>';
+          : '<p class="last">Erstes Mal, noch keine Werte.</p>';
     }
     // Einfach: kein Erklärtext zur Anpassung (Fachbegriffe) – die angepassten Werte stehen direkt in den Feldern
     h += `<p class="adjust ${feat('tr-rir-input') ? '' : 'simple-off'}" data-note="${ei}" ${en.note ? '' : 'hidden'}>${esc(en.note)}</p>`;
     const rirInput = feat('tr-rir-input');
-    h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">${typeof holdHead === 'function' ? holdHead(en.name) : 'Wdh.'}</span><span class="head">${rirInput ? 'Tank' : 'Gefühl'}</span>`;
+    h += `<div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">${typeof holdHead === 'function' ? holdHead(en.name) : 'Wdh.'}</span><span class="head">${en.holdSec ? 'Ziel' : rirInput ? 'Tank' : 'Gefühl'}</span>`;
     const tankHint = si => !en.target || en.target.own ? '–' : en.target.deload || !en.target.rirSplit
       ? targetRirText(en.target).replace('mind. ', '≥') : fmtNum(rirAt(en.target, si));  // Tank je Satz (v199)
     const next = feat('tr-next') ? nextPreview(en) : [];
@@ -4566,7 +4759,7 @@ function renderTraining() {
       const star = `<span class="pb-star" data-pb="${ei}-${si}"${pb[si] ? '' : ' hidden'}>★ PB</span>`
         + `<span class="pb-star fpb" data-fpb="${ei}-${si}" title="Vorermüdungs-PB"${fpb[si] ? '' : ' hidden'}>💪 PB</span>`;
       h += (feat('tr-variants') ? `<button class="setno ${v ? 'has-v' : ''} ${st}${nowC}" data-action="set-variant" data-ei="${ei}" data-si="${si}" data-setno="${ei}-${si}"
-          aria-label="Satz ${si + 1}: ${VARIANTS[v]} – antippen zum Wechseln">${pr ? pr.role : ''}${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
+          aria-label="Satz ${si + 1}: ${VARIANTS[v]}, antippen zum Wechseln">${pr ? pr.role : ''}${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</button>`
           : `<span class="setno ${st}${nowC}" data-setno="${ei}-${si}">${pr ? pr.role : ''}${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}${star}</span>`) + `
         ${body ? (en.target && en.target.band ? `<span class="bw-cell">Band<small>${BAND_LEVELS[en.target.band]}</small></span>`
           : `<span class="bw-cell">Körper${bodyKg != null ? `<small>${fmtNum(bodyKg)} kg</small>` : ''}</span>`)
@@ -4574,13 +4767,14 @@ function renderTraining() {
           data-field="tr-weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}">`}
         <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="–" class="${st}"
           data-field="tr-reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}">
-        ${rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint(si)}"
+        ${en.holdSec ? `<span class="hold-cell" data-holddiff="${ei}-${si}">${holdDiffHtml(en, ei, si)}</span>`
+          : rirInput ? `<input type="text" inputmode="decimal" autocomplete="off" placeholder="${tankHint(si)}"
           class="tank" data-field="tr-rir" data-ei="${ei}" data-si="${si}" value="${esc(s.rir)}">`
           : `<button class="feel-btn ${s.rir !== '' && s.rir != null ? 'set' : ''}" data-action="tr-feel-open" data-ei="${ei}" data-si="${si}"
             aria-label="Wie hat sich Satz ${si + 1} angefühlt?">${feelIcon(en, s, si)}</button>`}
         <div class="next-hint" data-next="${ei}-${si}">${next[si] || ''}</div>
         <div class="typo-hint" data-typo="${ei}-${si}">${typoHtml(en, ei, si)}</div>
-        ${!rirInput && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
+        ${!rirInput && !en.holdSec && en.feelOpen === si ? `<div class="feel-pick">${FEELS.map(f =>
           `<button class="vchip" data-action="tr-feel" data-ei="${ei}" data-si="${si}" data-f="${f.k}">${f.icon}<small>${f.label}</small></button>`).join('')}</div>` : ''}`
         + techRowsHtml(en, ei, si);  // Teil-Sätze einer Intensitätstechnik (v211)
     });
@@ -4610,12 +4804,12 @@ function entryHelpHtml() {
   const last = simple
     ? `<li>Tippe im letzten Feld an, <b>wie schwer dir der Satz gefallen ist</b>:
         <ul class="feel-legend">
-          <li>😊 <b>locker</b> – es wären noch deutlich mehr gegangen (4 oder mehr)</li>
-          <li>💪 <b>gut</b> – genau richtig: noch so viele, wie bei der Übung steht</li>
-          <li>😤 <b>hart</b> – es ging gerade noch (vielleicht noch 1)</li>
-          <li>🔥 <b>ging nichts mehr</b> – keine einzige Wdh. mehr</li>
+          <li>😊 <b>locker</b>: Es wären noch deutlich mehr gegangen (4 oder mehr)</li>
+          <li>💪 <b>gut</b>: genau richtig, noch so viele, wie bei der Übung steht</li>
+          <li>😤 <b>hart</b>: Es ging gerade noch (vielleicht noch 1)</li>
+          <li>🔥 <b>ging nichts mehr</b>: keine einzige Wdh. mehr</li>
         </ul></li>`
-    : '<li>Trag im letzten Feld ein, <b>wie viele Wdh. noch im Tank waren</b> – wie viele du noch geschafft hättest, bevor nichts mehr ging (0 = gar keine mehr).</li>';
+    : '<li>Trag im letzten Feld ein, <b>wie viele Wdh. noch im Tank waren</b>, also wie viele du noch geschafft hättest, bevor nichts mehr ging (0 = gar keine mehr).</li>';
   return `<div class="entry-help">
     <b class="entry-help-title">So trägst du dein Training ein</b>
     <ol>
@@ -4623,7 +4817,7 @@ function entryHelpHtml() {
       <li>Versuch, diese Vorgabe zu erfüllen. Nimmst du ein anderes Gewicht oder schaffst mehr oder weniger Wdh., trag die echten Werte ein.</li>
       ${last}
     </ol>
-    <p class="entry-help-key"><b>Wichtig:</b> Daraus berechnet die App deine weiteren Vorgaben – für die nächsten Sätze und fürs nächste Training.
+    <p class="entry-help-key"><b>Wichtig:</b> Daraus berechnet die App deine weiteren Vorgaben, für die nächsten Sätze und fürs nächste Training.
       Gib es deshalb ehrlich an${simple ? ', auch wenn es sich nicht wie „gut“ angefühlt hat' : ' und schätz lieber, statt einfach das Ziel einzutragen'}.</p>
     <button class="btn ${known ? 'outline' : 'primary'}" data-action="${known ? 'entry-help-toggle' : 'entry-help-ok'}">${known ? 'Zuklappen' : '✔ Verstanden'}</button>
   </div>`;
@@ -4649,21 +4843,21 @@ function feelIcon(en, s, si = 0) {
 const feelTargetText = t => {
   const r = Math.round(rirAt(t, 0)), last = Math.round(rirAt(t, Math.max(0, (t.sets || 1) - 1)));
   if (r <= 0) return 'jeder Satz bis „ging nichts mehr“ 🔥';
-  const tail = last < r ? (last <= 0 ? ' – in den letzten Sätzen bis „ging nichts mehr“ 🔥' : ` – in den letzten Sätzen noch etwa ${last}`) : '';
+  const tail = last < r ? (last <= 0 ? ', in den letzten Sätzen bis „ging nichts mehr“ 🔥' : `, in den letzten Sätzen noch etwa ${last}`) : '';
   return `hör auf, wenn noch etwa ${r} Wdh. gegangen wären (= 💪 gut)${tail}`;
 };
 
 // Aufklappbare Erklärung der Knöpfe „Volumen“ und „Gewicht & Wdh.“ (where: 'today' = nur dieses Training, 'plan' = Zyklus/Wochen)
 function progHelpHtml(where) {
-  const scope = where === 'today' ? 'Gilt nur für dieses Training – der Plan bleibt, wie er ist.'
+  const scope = where === 'today' ? 'Gilt nur für dieses Training. Der Plan bleibt, wie er ist.'
     : 'Die Grundeinstellung gilt für den ganzen Zyklus; in der Tabelle darunter kannst du einzelne Wochen abweichend schalten (umrandet = eigene Einstellung der Woche). Im Training selbst lässt sich beides zusätzlich nur für dieses eine Training ändern.';
   return `<details class="prog-help"><summary>ⓘ Was bedeuten die Knöpfe?</summary>
     <p>Antippen schaltet um: <b>✓ = an</b> (die App steigert), <b>✕ = aus</b> (es bleibt, wie es ist).</p>
-    <p><b>Volumen</b> – die Zahl der Sätze. <b>An:</b> Von Woche zu Woche kommen Sätze dazu, von der Intro-Woche bis zum Höhepunkt
-      am Ende des Zyklus. <b>Aus:</b> Die Sätze bleiben wie in der Vorwoche. In der Intro-Woche gibt es den Knopf nicht – dort gelten die Start-Sätze.</p>
-    <p><b>Gewicht & Wdh.</b> – die Vorschläge im Training. <b>An:</b> Hast du dein Ziel geschafft, schlägt die App beim nächsten Mal
+    <p><b>Volumen</b>: die Zahl der Sätze. <b>An:</b> Von Woche zu Woche kommen Sätze dazu, von der Intro-Woche bis zum Höhepunkt
+      am Ende des Zyklus. <b>Aus:</b> Die Sätze bleiben wie in der Vorwoche. In der Intro-Woche gibt es den Knopf nicht. Dort gelten die Start-Sätze.</p>
+    <p><b>Gewicht & Wdh.</b>: die Vorschläge im Training. <b>An:</b> Hast du dein Ziel geschafft, schlägt die App beim nächsten Mal
       etwas mehr Gewicht oder mehr Wiederholungen vor. <b>Aus:</b> Es stehen deine Werte vom letzten Mal da, „Max. bei 10 Wdh.“ bleibt
-      unverändert – das Ziel im Tank läuft trotzdem weiter.</p>
+      unverändert. Das Ziel im Tank läuft trotzdem weiter.</p>
     <p><b>Wann ausschalten?</b> Z. B. wenn du krank warst, schlecht geschlafen hast, wenig Zeit hast, eine neue Technik lernst oder
       nach einer Verletzung vorsichtig sein willst. Normalerweise bleibt beides an.</p>
     <p class="hint">${scope}</p></details>`;
@@ -4676,7 +4870,7 @@ function progressionCard() {
   const keys = draft.week > 1 ? ['volume', 'load'] : ['load'];
   const notes = [];
   if (draft.week > 1 && !p.volume) notes.push('Sätze wie in der Vorwoche.');
-  if (!p.load) notes.push('Gewicht und Wdh. wie beim letzten Mal – keine Steigerung, „Max. bei 10 Wdh.“ bleibt.');
+  if (!p.load) notes.push('Gewicht und Wdh. wie beim letzten Mal, keine Steigerung, „Max. bei 10 Wdh.“ bleibt.');
   return `<div class="card prog-card"><div class="prog-row"><b>Progression heute</b>
       <div class="variants">${keys.map(k => progChip(k, p[k], 'data-action="prog-today"')).join('')}</div></div>
       ${notes.length ? `<p class="hint">${notes.join(' ')}</p>` : ''}
@@ -4710,7 +4904,7 @@ function renderReplace(en, ei) {
   const quick = relatedExercises(en.replacedFrom || en.name);
   return `<div class="replace">
     <p class="lbl">Ersatzübung</p>
-    ${quick.length ? `<p class="hint quick-title">Schnellauswahl – ähnliche Übungen:</p>
+    ${quick.length ? `<p class="hint quick-title">Schnellauswahl, ähnliche Übungen:</p>
       <div class="quick-picks">${quick.map(q => `<button class="vchip" data-action="rep-quick" data-ei="${ei}" data-name="${esc(q)}">${esc(q)}</button>`).join('')}</div>
       <p class="hint quick-title">… oder selbst suchen:</p>` : ''}
     <input class="inp" type="text" data-field="rep-name" data-ei="${ei}"
@@ -4722,7 +4916,7 @@ function renderReplace(en, ei) {
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off"
         data-field="rep-max" data-ei="${ei}" placeholder="kg">
     </label>
-    ${feat('tr-max') ? `<p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>` : ''}
+    ${feat('tr-max') ? `<p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt. Trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>` : ''}
     ${t ? `<p class="hint">Übernimmt das Ziel: ${t.sets} × ${t.reps} Wdh.${feat('tr-rir-input') ? ` · ${t.rir} im Tank` : ''}. Der Plan bleibt unverändert.</p>` : ''}
     <div class="row">
       <button class="btn" data-action="rep-cancel" data-ei="${ei}">Abbrechen</button>
@@ -4742,7 +4936,7 @@ function renderAddExercise() {
       <span>Max. kg bei 10 Wdh.<br><small class="hint">frisch, ohne Vorermüdung</small></span>
       <input class="inp kg" type="text" inputmode="decimal" autocomplete="off" data-field="rep-max" placeholder="kg">
     </label>
-    <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt – trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
+    <p class="hint rep-max-hint" hidden>Für diese Übung ist noch kein Max. bei 10 Wdh. bekannt. Trag es ein, wenn du es weißt. ${MAX_UNKNOWN_HINT}</p>
     <label class="row"><span>Sätze</span>
       <select class="inp sel" id="add-sets">${[1, 2, 3, 4, 5, 6].map(n =>
         `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n}</option>`).join('')}</select>
@@ -4760,8 +4954,7 @@ function renderPlan() {
   const c = data.cycle;
   const active = activePlan();
   let h = feat('plans-multi') ? '<h2>Meine Pläne</h2>' : '<h2>Mein Plan</h2>';
-  // v225 Calisthenics (Beta)
-  if (typeof caliOn === 'function' && caliOn()) h = `<button class="btn nav cali-entry" data-action="cali-open" data-from="plan">🤸 Calisthenics<small>Plan nach deinem Schwerpunkt oder selbst zusammengestellt · Skill-Stufen</small></button>` + h;
+  // v225 Calisthenics (Beta) – v240: Einstieg nur noch im Plan-Assistenten (User 2026-11-14)
   // Einfach: nur der aktive Plan („Neuen Plan erstellen“ ersetzt ihn)
   for (const p of data.plans.filter(x => feat('plans-multi') || x.id === active.id)) {
     const isActive = p.id === active.id;
@@ -4787,9 +4980,9 @@ function renderPlan() {
       : 'Noch kein Plan vorhanden. Erstelle deinen ersten Plan.'}</p>
       <button class="btn primary" data-action="wiz-start">✨ Neuen Plan erstellen</button>${libBtn}`;
   }
-  // v207: Neuer Plan / Beenden dezent – bei aktivem Plan selten gebraucht
-  h += `<div class="row plan-btns"><button class="btn outline" data-action="wiz-start">✨ Neuer Plan</button>
-      <button class="btn outline" data-action="plan-end">⏹ Beenden</button></div>
+  // v240 (User 2026-11-14): „Neuen Plan erstellen“ in voller Breite; Beenden steht unten im Trainings-Reiter
+  h += `<button class="btn outline center plan-new-btn" data-action="wiz-start">✨ Neuen Plan erstellen</button>
+    ${active.cali && typeof caliOn === 'function' && caliOn() ? '<button class="btn nav" data-action="cali-skills-plan">🤸 Skill-Stufen<small>Wo du in jeder Calisthenics-Leiter stehst</small></button>' : ''}
     ${libBtn}
     <h2>Trainingstage · ${esc(active.name)}</h2>`;
   if (!data.days.length) {
@@ -4810,15 +5003,15 @@ function renderPlan() {
   h += '</div>';
   if (active.equip === 'home') h += homeEqCard();
   if (data.days.some(d => estDuration(d, 1, active))) {
-    h += `<p class="hint explain">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz – Grundübungen 4, normale Übungen 3,
+    h += `<p class="hint explain">Geschätzte Trainingsdauer: je Satz 1 Minute, dazu Pause nach jedem Satz: Grundübungen 4, normale Übungen 3,
       Isolationsübungen 2 Minuten (ohne Aufwärmen)${ssOn() ? '; im Supersatz 2 Minuten nach jedem Satz, bei zwei Isolationsübungen 90 Sekunden' : ''}.</p>`;
   }
   if (active.own) {
     return h + `<button class="btn center" data-action="add-day">+ Trainingstag hinzufügen</button>
       <h2>Steigerung</h2>
       <div class="card">
-        <p class="per-week-title">✋ Eigener Plan – ohne Steigerung durch die App</p>
-        <p class="hint">Keine Zyklen, keine Deload-Woche, keine Vorschläge für mehr Gewicht, Wiederholungen oder Sätze. Im Training stehen immer deine Werte vom letzten Mal – beim ersten Mal Sätze × Wdh. und Startgewicht aus deinem Plan.</p>
+        <p class="per-week-title">✋ Eigener Plan, ohne Steigerung durch die App</p>
+        <p class="hint">Keine Zyklen, keine Deload-Woche, keine Vorschläge für mehr Gewicht, Wiederholungen oder Sätze. Im Training stehen immer deine Werte vom letzten Mal, beim ersten Mal Sätze × Wdh. und Startgewicht aus deinem Plan.</p>
         <button class="btn outline" data-action="plan-own-off">📈 Doch die Steigerung der App nutzen</button>
       </div>${overloadHtml(true)}`;
   }
@@ -4834,7 +5027,7 @@ function renderPlan() {
       <p class="hint">Die Tage laufen über die Wochen der Reihe nach weiter: ${(() => {
         const list = activeDays(active);
         const wk = w => Array.from({ length: active.rotate }, (_, i) => list[((w - 1) * active.rotate + i) % list.length].name).join(' · ');
-        return list.length ? `Woche 1: ${esc(wk(1))} – Woche 2: ${esc(wk(2))} …` : '';
+        return list.length ? `Woche 1: ${esc(wk(1))} · Woche 2: ${esc(wk(2))} …` : '';
       })()} Kommt ein Tag 2× in einer Woche dran, liegt das 2. Training nie über dem Plan des 1.</p>
     </div>` : ''}
     <h2>Steigerung</h2>${overloadHtml()}
@@ -4844,30 +5037,30 @@ function renderPlan() {
 
 // Aufklappbare Erklärung „Progressive Overload“ – own = eigener Plan (die App steigert nicht selbst)
 function overloadHtml(own = false) {
-  return `<details class="card lib-guide overload"><summary>📈 Progressive Overload – das Prinzip dahinter</summary>
+  return `<details class="card lib-guide overload"><summary>📈 Progressive Overload: das Prinzip dahinter</summary>
     <p><b>Progressive Overload</b> heißt „schrittweise steigende Belastung“ und ist <b>das</b> Grundprinzip für Kraft- und
       Muskelaufbau: Dein Körper wird nur stärker, wenn er etwas mehr leisten muss, als er gewohnt ist.</p>
     <h3>Warum das funktioniert</h3>
     <p>Ein Training, das dich ein Stück über das Gewohnte hinaus fordert, ist für den Körper ein Signal: „Das reicht noch nicht.“
-      In der Erholung danach passt er sich an – Muskeln, Sehnen und Knochen werden kräftiger, damit dieselbe Belastung beim nächsten
+      In der Erholung danach passt er sich an. Muskeln, Sehnen und Knochen werden kräftiger, damit dieselbe Belastung beim nächsten
       Mal leichter fällt. Bleibt das Training immer gleich, hat er keinen Grund mehr, sich anzupassen, und der Fortschritt bleibt stehen.
       Deshalb muss die Anforderung über die Wochen langsam mitwachsen.</p>
     <h3>Womit sich steigern lässt</h3>
     <ul><li><b>Wiederholungen:</b> mit demselben Gewicht ein, zwei Wiederholungen mehr.</li>
-      <li><b>Gewicht:</b> sind die Wiederholungen geschafft, geht es eine kleine Stufe schwerer – dafür wieder mit etwas weniger Wiederholungen.</li>
+      <li><b>Gewicht:</b> sind die Wiederholungen geschafft, geht es eine kleine Stufe schwerer, dafür wieder mit etwas weniger Wiederholungen.</li>
       <li><b>Sätze:</b> von Woche zu Woche kommen Sätze dazu (Volumen).</li>
-      <li><b>Anstrengung:</b> die Sätze werden etwas näher an deine Grenze gebracht${feat('tr-rir-input') ? ' – es bleibt weniger im Tank' : ''}.</li></ul>
+      <li><b>Anstrengung:</b> die Sätze werden etwas näher an deine Grenze gebracht${feat('tr-rir-input') ? ', es bleibt weniger im Tank' : ''}.</li></ul>
     <p>Beispiel: 40 kg × 10 → 40 kg × 11 → 40 kg × 12 → 42,5 kg × 10 → …</p>
     <h3>Worauf es ankommt</h3>
-    <ul><li><b>Kleine Schritte:</b> nicht jedes Mal alles auf einmal – lieber langsam und dafür lange steigern.</li>
+    <ul><li><b>Kleine Schritte:</b> nicht jedes Mal alles auf einmal, lieber langsam und dafür lange steigern.</li>
       <li><b>Saubere Technik zuerst:</b> mehr Gewicht zählt nur, wenn die Ausführung gleich gut bleibt.</li>
       <li><b>Erholung gehört dazu:</b> stärker wirst du in der Pause, nicht im Training. Deshalb gibt es die leichte Deload-Woche.</li>
-      <li><b>Nicht jede Einheit ist ein Rekord:</b> Schlechter Schlaf oder Stress drücken die Leistung – entscheidend ist der Trend über Wochen.</li></ul>
+      <li><b>Nicht jede Einheit ist ein Rekord:</b> Schlechter Schlaf oder Stress drücken die Leistung. Entscheidend ist der Trend über Wochen.</li></ul>
     <h3>${own ? 'Bei deinem eigenen Plan' : 'So macht es die App'}</h3>
-    <p>${own ? 'Die App steigert hier nicht selbst – im Training stehen deine Werte vom letzten Mal. Das Prinzip gilt trotzdem: Steigere selbst, '
+    <p>${own ? 'Die App steigert hier nicht selbst. Im Training stehen deine Werte vom letzten Mal. Das Prinzip gilt trotzdem: Steigere selbst, '
         + 'z. B. erst die Wiederholungen bis zum oberen Ende deines Bereichs und dann das Gewicht um eine kleine Stufe.'
       : 'Sie übernimmt das für dich: Hast du dein Ziel geschafft, schlägt sie beim nächsten Training etwas mehr Wiederholungen oder Gewicht vor. '
-        + 'Im Zyklus kommen Woche für Woche Sätze dazu, und die Sätze werden etwas fordernder – bis zur Deload-Woche. Der nächste Zyklus '
+        + 'Im Zyklus kommen Woche für Woche Sätze dazu, und die Sätze werden etwas fordernder, bis zur Deload-Woche. Der nächste Zyklus '
         + 'startet dann auf etwas höherem Niveau. Um wie viel kg das Gewicht steigt, stellst du pro Übung ein (1,25 bis 10 kg).'}</p>
   </details>`;
 }
@@ -4910,8 +5103,8 @@ function cycleLenHtml(ci) {
       ${lenOn ? `<p class="lbl chips-title">Gilt für</p><div class="variants cyc-scope">${chip('all', 'Alle Zyklen')}${chip('this', 'Nur diesen Zyklus')}</div>` : ''}
       <p class="hint">${scope === 'all'
         ? `${cycleLenInfo(val).text} Einstellbar sind 4 bis ${CYCLE_MAX} Trainingswochen. Gilt ab sofort, auch für den laufenden Zyklus.`
-        : `<b>Kürzer:</b> Der Deload kommt früher – praktisch, wenn er genau in den Urlaub fallen soll. <b>Länger:</b> Zusätzliche
-          Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter) – z. B. wenn du wegen des Urlaubs Trainings
+        : `<b>Kürzer:</b> Der Deload kommt früher. Praktisch, wenn er genau in den Urlaub fallen soll. <b>Länger:</b> Zusätzliche
+          Wochen auf dem Höchststand (gleiche Sätze, Gewicht und Wdh. steigen weiter), z. B. wenn du wegen des Urlaubs Trainings
           verpasst hast. Gilt nur für diesen Zyklus; der nächste hat wieder ${wk(def)}.`}</p>`;
 }
 
@@ -4929,9 +5122,9 @@ function cycleAdjustHtml(ci) {
         <p class="hint">Alle eingetragenen Trainings bleiben gespeichert. Wie soll es weitergehen?</p>
         ${ci.deload ? '' : `<button class="btn primary" data-action="cyc-end" data-m="deload">😮‍💨 Mit Deload-Woche abschließen</button>
         <p class="hint">Empfohlen: ${trained ? 'Nach dieser Woche' : 'Ab jetzt'} kommt die leichte Deload-Woche zum Erholen, danach beginnt der nächste Zyklus.</p>`}
-        <button class="btn" data-action="cyc-end" data-m="new">⏭ Neuer Zyklus – mit der Intro-Woche</button>
-        <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche – z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
-        ${ci.deload ? '' : `<button class="btn" data-action="cyc-end" data-m="newdl">🩹 Neuer Zyklus – mit der Deload-Woche starten</button>
+        <button class="btn" data-action="cyc-end" data-m="new">⏭ Neuer Zyklus mit der Intro-Woche</button>
+        <p class="hint">Der nächste Zyklus beginnt sofort mit der Intro-Woche, z. B. nach einem Urlaub, in dem du dich schon erholt hast.</p>
+        ${ci.deload ? '' : `<button class="btn" data-action="cyc-end" data-m="newdl">🩹 Neuer Zyklus, mit der Deload-Woche starten</button>
         <p class="hint">Nach Krankheit oder längerer Pause: Du steigst ab sofort mit der leichten Deload-Woche wieder ein (halbe Sätze,
           15 % weniger Gewicht oder weniger Wdh.), danach geht es mit der Intro-Woche weiter.</p>`}
         <button class="btn center" data-action="cyc-end-cancel">Abbrechen</button>
@@ -4941,7 +5134,7 @@ function cycleAdjustHtml(ci) {
   // unter Periodisierung (User-Wunsch 2026-11-03)
   const jump = !feat('plan-week-jump') ? '' : `<p><b>Mit welcher Woche weitermachen?</b></p>
       ${cyclePills(ci, 'cycle-jump')}
-      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen – z. B. nach Krankheit oder längerer Pause
+      <p class="hint">Antippen, um ab jetzt mit einer anderen Woche weiterzumachen, z. B. nach Krankheit oder längerer Pause
         direkt mit der Deload-Woche oder wieder mit der Intro-Woche. Bisherige Trainings bleiben gespeichert.</p>
       <hr class="cyc-sep">`;
   return `<div class="cyc-adjust">
@@ -4961,16 +5154,17 @@ function periodCard(c, active) {
   let h = '<h2>Periodisierung</h2><div class="card">';
   if (feat('cycle-adjust')) h += '<p class="hint explain">Woche wechseln, Zykluslänge, Verlängern/Verkürzen und „Zyklus beenden“ findest du im Reiter Training an der Zykluskarte unter „⚙️ Zyklus anpassen“.</p>';
   if (cfg) {
-    h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald ${roundDoneText(active)} – egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
+    h += `<p class="hint">Eine Woche ist ein Durchlauf: geschafft, sobald ${roundDoneText(active)}, egal, ob du dafür 6, 7 oder 9 Tage brauchst.</p>
       <p class="lbl chips-title">Deload</p>
       <div class="variants">${[['auto', 'Automatisch'], ['self', 'Selbst bestimmen']].map(([m, l]) =>
         `<button class="vchip ${(active.deload || 'auto') === m ? 'on' : ''}" data-action="plan-deload" data-m="${m}">${l}</button>`).join('')}</div>
       <p class="hint explain">${selfDeload()
-        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein – auf dem Startbildschirm, z. B. unter „⚙️ Zyklus anpassen“ über „Deload“.'
+        ? 'Kein automatischer Deload: Nach den Trainingswochen geht es Woche für Woche weiter (Sätze und Tank wie in der letzten Aufbauwoche, Gewicht und Wdh. steigen weiter). Den Deload legst du selbst ein, auf dem Startbildschirm, z. B. unter „⚙️ Zyklus anpassen“ über „Deload“.'
         : 'Nach den Trainingswochen folgt automatisch 1 Deload-Woche.'}
         Deload: halbe Sätze, 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche, mindestens ${DELOAD_RIR} Wdh. im Tank, keine Steigerung. Anschließend beginnt der nächste Zyklus.</p>`;
   }
   if (feat('plan-week-prog')) h += progressionTable();
+  h += planIntensityCard(c.buildWeeks);  // v230: Ambition und Intensitätsverlauf
   if (feat('plan-rir')) h += rirTable(c.buildWeeks);
   h += '</div>';
   if (feat('plan-volume')) h += volumeEditor();
@@ -5030,8 +5224,8 @@ function planCompare(ex, day) {
   if (!ex.name.trim() || ci.deload) return '';
   const cmp = comparisonEntry(ex.name, day.id, ci);
   if (!cmp) return '';
-  return `<p class="compare">Diese Woche (${weekLabel(ci.week)}) – Vergleich letzter Zyklus:<br>
-    ${cmp.sets.map(fmtSet).join(' · ')}<br><b>Ziel: je Satz +${cmp.plus || 1} Wdh. bzw. nächste Gewichtsstufe – ab Woche 2 höchstens Vorwoche mit Satz 1 +1 Wdh.</b></p>`;
+  return `<p class="compare">Diese Woche (${weekLabel(ci.week)}), Vergleich mit dem letzten Zyklus:<br>
+    ${cmp.sets.map(x => fmtSet(x, ex.name)).join(' · ')}<br><b>Ziel: je Satz +${cmp.plus || 1} Wdh. bzw. nächste Gewichtsstufe. Ab Woche 2 höchstens Vorwoche mit Satz 1 +1 Wdh.</b></p>`;
 }
 
 // Kontrolle im Plan: Sätze pro Muskelgruppe und Woche für diesen Trainingstag
@@ -5060,7 +5254,7 @@ function bodyweightRow(ex, i) {
   return `<div class="variants plan"><span>Gewicht</span>${[[0, 'Nur Körpergewicht'], [1, 'Mit Zusatzgewicht']].map(([v, l]) =>
       `<button class="vchip ${!!ex.bwLoad === !!v ? 'on' : ''}" data-action="ex-bwload" data-i="${i}" data-v="${v}">${l}</button>`).join('')}</div>
     <p class="hint kind-hint">${ex.bwLoad
-      ? 'Gewichtsprogression an: Trag im Training dein Zusatzgewicht ein – es wird wie bei anderen Übungen gesteigert.'
+      ? 'Gewichtsprogression an: Trag im Training dein Zusatzgewicht ein. Es wird wie bei anderen Übungen gesteigert.'
       : 'Eigengewichtsübung: kein Gewicht, Steigerung nur über die Wiederholungen, kein Aufwärmsatz.'}</p>`;
 }
 
@@ -5085,7 +5279,7 @@ function planSwapHtml(day, ex, i) {
   const quick = [...(prev ? [prev] : []), ...related.filter(q => !prev || nameKey(q) !== nameKey(prev))].slice(0, 6);
   return `<div class="replace">
       <p class="lbl">${ex.name.trim() ? `„${esc(ex.name)}“ ersetzen` : 'Übung wählen'}</p>
-      ${quick.length ? `<p class="hint quick-title">Schnellauswahl – ähnliche Übungen (antippen tauscht sofort):</p>
+      ${quick.length ? `<p class="hint quick-title">Schnellauswahl, ähnliche Übungen (antippen tauscht sofort):</p>
         <div class="quick-picks">${quick.map(q => `<button class="vchip ${q === prev ? 'swap-prev' : ''}" data-action="plan-swap-pick" data-i="${i}" data-name="${esc(q)}">${q === prev ? '↩ ' : ''}${esc(q)}${q === prev ? '<small>vorher im Plan</small>' : ''}</button>`).join('')}</div>
         <p class="hint quick-title">… oder selbst suchen:</p>` : ''}
       <input class="inp" type="text" data-field="plan-swap-name" data-i="${i}" autocomplete="off" autocorrect="off" spellcheck="false"
@@ -5151,7 +5345,7 @@ function exSlotRename(day, i, from, to) {
   if (!ex.kind && kindOf({ name: to }) !== kind) ex.kind = kind;
   if (!ex.group && group && groupOf({ name: to }) !== group) ex.group = group;
   saveData();
-  toast(`Übung „${from}“ in „${to}“ umbenannt ✔ – die bisherigen Daten bleiben bei „${from}“`);
+  toast(`Übung „${from}“ in „${to}“ umbenannt ✔. Die bisherigen Daten bleiben bei „${from}“`);
 }
 
 function renameExercise(from, to, ask = true, mode = 'all') {
@@ -5161,7 +5355,7 @@ function renameExercise(from, to, ask = true, mode = 'all') {
   const kf = nameKey(from), kt = nameKey(to), all = mode !== 'new';
   const custom = customExercise(from), builtin = builtinExercise(from);
   const n = exSessionCount(from);
-  if (ask && !askOk(`„${from.trim()}“ wirklich in „${to}“ umbenennen?\n\nDer neue Name gilt überall – in allen Plänen und im Verlauf.`
+  if (ask && !askOk(`„${from.trim()}“ wirklich in „${to}“ umbenennen?\n\nDer neue Name gilt überall, in allen Plänen und im Verlauf.`
     + (n ? ` Deine ${n === 1 ? 'bisherigen Einträge aus 1 Training werden' : `bisherigen Einträge aus ${n} Trainings werden`} auf den neuen Namen übertragen (Gewichte, Rekorde, Diagramme).` : '')
     + (builtin && kt !== kf ? `\n\nDie Übung erscheint danach unter „★ Eigene Übungen“; Figur und Tipps von „${from.trim()}“ bleiben verknüpft.` : ''))) return false;
   // Art und Muskelgruppe festhalten, bevor sich der Name ändert (sonst würde neu geraten)
@@ -5187,7 +5381,7 @@ function renameExercise(from, to, ask = true, mode = 'all') {
   registerCustomExercises();
   saveData();
   exRename = null;
-  toast(`Übung „${from.trim()}“ in „${to}“ umbenannt ✔${!n || kt === kf ? '' : all ? ` – ${trainingsText(n)} übertragen` : ` – die bisherigen Daten bleiben bei „${from.trim()}“`}`);
+  toast(`Übung „${from.trim()}“ in „${to}“ umbenannt ✔${!n || kt === kf ? '' : all ? `, ${trainingsText(n)} übertragen` : `. Die bisherigen Daten bleiben bei „${from.trim()}“`}`);
   return true;
 }
 
@@ -5231,7 +5425,7 @@ function planReplaceExercise(day, i, name) {
   const hadSs = !!ex.ss;
   ssClean(day.exercises);  // Supersatz (v210): passt die neue Übung nicht mehr als Paar, wird es gelöst
   saveData();
-  toast(hadSs && !ex.ss ? `Ersetzt durch „${name}“ – der Supersatz ist gelöst, weil die Übungen nicht als Paar passen` : `Ersetzt durch „${name}“ ✔`);
+  toast(hadSs && !ex.ss ? `Ersetzt durch „${name}“. Der Supersatz ist gelöst, weil die Übungen nicht als Paar passen` : `Ersetzt durch „${name}“ ✔`);
   return true;
 }
 
@@ -5274,7 +5468,7 @@ function dayReorderHtml(day) {
         <button class="icon-btn" data-action="ex-down" data-i="${i}" aria-label="Nach unten" ${i === n - 1 ? 'disabled' : ''}>↓</button>
       </li>`).join('')}</ul>
     <button class="btn primary" data-action="day-reorder">✔ Fertig</button>
-    <p class="hint">Die Reihenfolge bleibt im Plan, bis du sie wieder änderst – in allen kommenden Trainings dieses Tages.${dayPairs(day.exercises, true).size ? ' 🔗 Supersätze wandern als Paar.' : ''}
+    <p class="hint">Die Reihenfolge bleibt im Plan, bis du sie wieder änderst, in allen kommenden Trainings dieses Tages.${dayPairs(day.exercises, true).size ? ' 🔗 Supersätze wandern als Paar.' : ''}
       Ein schon begonnenes Training behält seine Reihenfolge.</p></div>`;
 }
 
@@ -5284,7 +5478,7 @@ function renderDay({ id }) {
   if (ownPlan()) {
     return `<label class="lbl">Name des Trainingstags
         <input class="inp" type="text" data-field="day-name" value="${esc(day.name)}"></label>
-      <p class="hint">Eigener Plan: Sätze und Wiederholungen legst du pro Übung selbst fest – die App steigert nichts.</p>
+      <p class="hint">Eigener Plan: Sätze und Wiederholungen legst du pro Übung selbst fest. Die App steigert nichts.</p>
       <h2>Übungen</h2>${dayReorderHtml(day)}${dayReorder === day.id ? '' : day.exercises.map(ownExerciseCard).join('')}
       <button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>
       <button class="btn primary" data-action="day-done">✔ Fertig</button>
@@ -5300,7 +5494,7 @@ function renderDay({ id }) {
       `<button class="vchip ${(dayIntensity(day) || '') === t ? 'on' : ''}" data-action="day-type" data-t="${t}">${label}</button>`).join('')}
     </div>` : ''}
     <p class="hint explain">${!feat('day-reprange') ? 'Sätze, Wiederholungen und Gewichte rechnet die App automatisch aus.' : dayIntensity(day)
-      ? `${{ heavy: 'Niedrig: mehr Gewicht, weniger Wiederholungen', light: 'Hoch: weniger Gewicht, mehr Wiederholungen' }[dayIntensity(day)]} – beides sind intensive Trainingstage, nur mit unterschiedlicher Belastung.
+      ? `${{ heavy: 'Niedrig: mehr Gewicht, weniger Wiederholungen', light: 'Hoch: weniger Gewicht, mehr Wiederholungen' }[dayIntensity(day)]}. Beides sind intensive Trainingstage, nur mit unterschiedlicher Belastung.
         Sätze und Wiederholungen werden automatisch aus Muskelgruppe, Übungsart und Zykluswoche berechnet.`
       : 'Frei: Sätze und Wiederholungen legst du pro Übung selbst fest.'}</p>
     ${feat('day-volume') ? volumeSummary(day) : ''}
@@ -5367,7 +5561,7 @@ function renderDay({ id }) {
   });
   h += `${ssAutoBtnHtml(day)}${feat('plan-add-ex') ? '<button class="btn center" data-action="add-ex">+ Übung hinzufügen</button>' : ''}
     <button class="btn primary" data-action="day-done">✔ Fertig</button>
-    <p class="hint explain">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg – pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
+    <p class="hint explain">${feat('tr-max') ? `Änderungen werden automatisch gespeichert. „Max. kg bei 10 Wdh.“ wird nach jedem Training automatisch angepasst. ${MAX_FRESH_NOTE} Steigerung: Kurzhantel-Übungen 2 kg, alle anderen 2,5 kg. Pro Übung änderbar auf 1,25 / 2 / 2,5 / 5 / 10 kg. ${STEP_HINT}`
       : 'Übung tauschen: Namen antippen und eine andere eintippen. Änderungen werden automatisch gespeichert.'}</p>
     <div class="spacer"></div>
     <button class="btn danger" data-action="del-day">Trainingstag löschen</button>`;
@@ -5410,7 +5604,7 @@ function calendarHtml(key, marks) {
 
 // Knopf eines gespeicherten Trainings (Verlauf, Kalendertag)
 const sessionBtn = s => `<button class="btn nav" data-action="open-session" data-id="${s.id}">
-    ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.deload ? ' · Deload' : ''}</small></button>`;
+    ${fmtDate(s.date)}<small>${esc(s.dayName)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}${s.light ? ' · leicht (Wettkampf-Woche)' : s.deload ? ' · Deload' : ''}</small></button>`;
 
 // Verlauf: Kalender mit Trainings (und Cardio), angetippter Tag, Trainings des Monats, Übungen
 function renderHistory() {
@@ -5512,7 +5706,7 @@ function renderLibrary() {
     <div id="lib-groups" ${libQuery.trim() ? 'hidden' : ''}>
     <p class="hint explain">Jede Übung mit animierter Ausführung, Zielmuskeln und Tipps. Muskelgruppe antippen zum Aufklappen.</p>
     ${feat('custom-ex') ? '<button class="btn outline lib-add-btn" data-action="libc-new">＋ Eigene Übung hinzufügen</button>' : ''}
-    <p class="hint explain">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an – danach kannst du sie
+    <p class="hint explain">Dir fehlt eine Übung, z. B. ein besonderes Gerät in deinem Studio? Leg sie einmal an, danach kannst du sie
       jederzeit wieder aufrufen: im Plan, im Plan-Assistenten und beim Ersetzen oder Hinzufügen im Training.</p>`;
   if (data.customExercises.length) {
     const open = libOpenGroups.has('own');
@@ -5630,14 +5824,14 @@ function renderLibAdd(p) {
   const f = libForm;
   const chip = (action, key, val, label) => `<button class="vchip ${f[key] === val ? 'on' : ''}" data-action="${action}" data-v="${val}">${label}</button>`;
   const kindInfo = {
-    compound: 'große, schwere Mehrgelenkübung, meist mit Langhantel (z. B. Kniebeugen, Bankdrücken) – mit mehreren Aufwärmsätzen und 1 Wdh. mehr im Tank',
-    normal: 'die meisten Maschinen-, Kabel- und Kurzhantelübungen – 1 Aufwärmsatz, Tank wie geplant',
-    assist: 'kleine Isolationsübung (z. B. Seitheben, Curls, Waden) – ohne Aufwärmen und 1 Wdh. näher am Muskelversagen',
+    compound: 'große, schwere Mehrgelenkübung, meist mit Langhantel (z. B. Kniebeugen, Bankdrücken), mit mehreren Aufwärmsätzen und 0,5 Wdh. mehr im Tank',
+    normal: 'die meisten Maschinen-, Kabel- und Kurzhantelübungen: 1 Aufwärmsatz, Tank wie geplant',
+    assist: 'kleine Isolationsübung (z. B. Seitheben, Curls, Waden), ohne Aufwärmen und 0,5 Wdh. näher am Muskelversagen',
   };
   return `${p.name ? '' : `<div class="card">
       <h2>So legst du eine eigene Übung an</h2>
       <ol class="lib-steps">
-        <li><b>Name:</b> so, wie du die Übung wiedererkennst – z. B. „Rudermaschine Gym80 einarmig“.</li>
+        <li><b>Name:</b> so, wie du die Übung wiedererkennst, z. B. „Rudermaschine Gym80 einarmig“.</li>
         <li><b>Muskelgruppe:</b> Aus ihr bekommt die Übung ihre Sätze im Wochenvolumen deines Plans.</li>
         <li><b>Übungsart:</b> bestimmt das Aufwärmen und wie nah du ans Muskelversagen gehst.</li>
         <li><b>Ähnliche Übung</b> (freiwillig): Dann zeigt die Bibliothek deren Figur und Tipps zur Ausführung.</li>
@@ -5645,7 +5839,7 @@ function renderLibAdd(p) {
       </ol>
       <p class="hint explain">Danach ist die Übung dauerhaft gespeichert und du kannst sie einfach immer wieder abrufen: in der Bibliothek
         (unter „★ Eigene Übungen“ und bei ihrer Muskelgruppe), bei der Übungsauswahl im Plan und im Plan-Assistenten sowie beim
-        „⇄ Ersetzen“ und „+ Übung hinzufügen“ im Training – einfach die ersten Buchstaben eintippen, dann erscheint sie in den Vorschlägen.
+        „⇄ Ersetzen“ und „+ Übung hinzufügen“ im Training. Einfach die ersten Buchstaben eintippen, dann erscheint sie in den Vorschlägen.
         Sie ist auch in deiner Sicherung enthalten. Steigerung und Max. bei 10 Wdh. rechnet die App wie bei jeder anderen Übung.</p>
     </div>`}
     <div class="card libc-form">
@@ -5703,9 +5897,18 @@ function renderWeek({ key }) {
     h += `<div class="stats two"><div class="stat"><span>Trainings</span><b>${sessions.length}</b></div>
       <div class="stat"><span>Bewegt</span><b>${fmtTons(tons)}</b></div></div>`;
   }
+  // v240 (User 2026-11-14): Trainings mit Haken und „absolviert“; in vergangenen Wochen auch ausgelassene Tage
   for (const s of sessions) {
-    h += `<button class="btn nav" data-action="open-session" data-id="${s.id}" data-week="${esc(key)}">
-      ${esc(s.dayName)}<small>${fmtDate(s.date)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}</small></button>`;
+    h += `<button class="btn nav day-btn done week-ses" data-action="open-session" data-id="${s.id}" data-week="${esc(key)}">
+      <span class="day-no">✓</span><span class="day-txt">${esc(s.dayName)}<span class="badge done">absolviert</span>
+      <small>${fmtDate(s.date)} · ${s.entries.length} Übungen · ${fmtTons(sessionTonnage(s))}${s.duration ? ' · ⏱ ' + fmtDur(s.duration) : ''}</small></span></button>`;
+  }
+  if (!isNow && !ahead) {
+    for (const id of roundSkipped(start, week)) {
+      const d = findDay(id);
+      if (d && !sessions.some(s => s.dayId === id)) h += `<div class="btn nav day-btn skipped week-ses"><span class="day-no">⏭</span>
+        <span class="day-txt">${esc(d.name)}<span class="badge skip">ausgelassen</span></span></div>`;
+    }
   }
   if (!sessions.length && !ahead && !isNow) h += '<p class="hint">In dieser Woche wurde nicht trainiert.</p>';
   if (isNow && data.days.length) h += `<p class="hint">🔄 ${roundStatus(ci)}</p>`;
@@ -5741,7 +5944,7 @@ function weekPlanHtml(week, deload, only = null) {
       ${est ? `<small>${estText(est)}</small>` : ''}</p><ul class="week-plan-list">${items}</ul></div>`;
   }
   return h + `<p class="hint">${deload ? 'Deload: halbe Sätze, etwa 15 % weniger Gewicht oder weniger Wdh. als in der letzten Trainingswoche.'
-    : 'Sätze × Wiederholungen laut Plan. Die Gewichte schlägt die App im Training vor – passend zu dem, was du davor geschafft hast.'}</p>`;
+    : 'Sätze × Wiederholungen laut Plan. Die Gewichte schlägt die App im Training vor, passend zu dem, was du davor geschafft hast.'}</p>`;
 }
 
 // Arbeitskopie beim Bearbeiten eines gespeicherten Trainings (Werte als Text wie in den Eingabefeldern)
@@ -5763,7 +5966,7 @@ function renderSessionEdit(s) {
   let h = `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}</p>`;
   sessionEdit.entries.forEach((e, ei) => {
     h += `<section class="card"><h2>${esc(s.entries[ei].name)}</h2>
-      <div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">Wdh.</span><span class="head">Tank</span>`;
+      <div class="setgrid"><span class="head">Satz</span><span class="head">kg</span><span class="head">${holdSec(s.entries[ei].name) ? 'Sek.' : 'Wdh.'}</span><span class="head">Tank</span>`;
     e.sets.forEach((st, si) => {
       const v = variantOf(st);
       h += `<span class="setno ${v ? 'has-v' : ''}">${si + 1}${v ? `<small>${VARIANTS[v]}</small>` : ''}</span>
@@ -5851,7 +6054,7 @@ function renderSession({ id, fresh, edit, week }) {
       <div class="stat"><span>Dauer</span><b>${s.duration ? fmtDur(s.duration) : '–'}</b></div></div>
     <button class="btn ${fresh ? 'primary' : 'outline'} share-btn" data-action="share-open" data-id="${s.id}">📤 Ergebnis teilen</button>`;
   const progNote = s.progression ? ` · ${progOffText(s.progression)}` : '';
-  let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
+  let h = top + `<p class="sub">${fmtDate(s.date, true)}<br>${esc(s.dayName)}${s.light ? ' · leichtes Training in der Wettkampf-Woche (keine Steigerung)' : s.deload ? ' · Deload-Woche (keine Steigerung)' : progNote}` +
     (s.readiness ? `<br>Tagesform: ${readinessText(s.readiness)}` : '') + (s.timeLimit ? `<br>⏱ auf ${s.timeLimit} min gekürzt` : '') + '</p>' +
     `${feat('session-edit') ? `<button class="btn outline" data-action="se-edit" data-id="${s.id}">✎ Training bearbeiten</button>` : ''}<ul class="list">`;
   for (const e of s.entries) {
@@ -5879,9 +6082,11 @@ const APP_SHORT = 'Gainslocker';   // Kurzname: unter dem Symbol und in Dateinam
 const CHANNEL_TEST = (() => { try { return localStorage.getItem('trainingsapp-kanal') || ''; } catch (e) { return ''; } })();
 const IS_BETA = /-beta\.github\.io$/i.test(location.hostname) || CHANNEL_TEST === 'beta';
 const OLD_HOST = /^stepup-strength\.github\.io$/i.test(location.hostname) || CHANNEL_TEST === 'alt';
-const NEW_URL = 'https://lockyourgains.github.io/';
+// v249 (User 2026-11-14): Umzugsmeldung vorerst aus (MOVE_ON); wenn sie wieder an soll, zeigt sie auf die Beta-Seite
+const MOVE_ON = false;
+const NEW_URL = 'https://lockyourgains-beta.github.io/';
 let shareUrl = null, shareFile = null;
-const shareSetText = x => x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps != null ? x.reps : '–'}` : `${x.reps != null ? x.reps : '–'} Wdh.`;
+const shareSetText = (x, name) => { const u = holdSec(name); return x.weight != null ? `${fmtNum(x.weight)} kg × ${x.reps != null ? x.reps : '–'}${u ? ' s' : ''}` : `${x.reps != null ? x.reps : '–'}${u ? ' s' : ' Wdh.'}`; };
 function shareData(s) {
   const heavier = (a, b) => (b.weight || 0) > (a.weight || 0) || ((b.weight || 0) === (a.weight || 0) && (b.reps || 0) > (a.reps || 0)) ? b : a;
   const pbs = [], tops = [];
@@ -5929,7 +6134,7 @@ function shareCanvas(s) {
   g.fillStyle = '#fff'; g.font = F(800, 92);
   for (const line of wrap(s.dayName, W - 2 * X).slice(0, 2)) { g.fillText(fit(line, W - 2 * X), X, y); y += 104; }
   g.font = F(500, 42); g.fillStyle = 'rgba(255,255,255,.88)';
-  const wk = s.deload ? 'Deload-Woche' : s.week ? weekLabel(s.week) : '';
+  const wk = s.deload && !s.light ? 'Deload-Woche' : s.week ? weekLabel(s.week) : '';
   g.fillText(fit(fmtDate(s.date, true) + (wk ? ` · ${wk}` : ''), W - 2 * X), X, y);
   y += 80;
   // Kacheln
@@ -5956,7 +6161,7 @@ function shareCanvas(s) {
     y += 120;
     g.fillStyle = 'rgba(255,255,255,.14)'; rr(X, y - 94, W - 2 * X, 106, 28); g.fill();
     g.font = F(800, 44); g.fillStyle = '#fff';
-    const val = shareSetText(it.set), vw = g.measureText(val).width;
+    const val = shareSetText(it.set, it.name), vw = g.measureText(val).width;
     g.fillText(val, W - X - 36 - vw, y - 27);
     g.font = F(600, 40); g.fillStyle = 'rgba(255,255,255,.92)';
     g.fillText(fit(it.name, W - 2 * X - 108 - vw), X + 36, y - 27);
@@ -5976,7 +6181,7 @@ function renderShare({ id }) {
   return `<div class="share-wrap"><img class="share-img" id="share-img" alt="Bild deines Trainings ${esc(s.dayName)}"></div>
     <div class="row"><button class="btn primary" data-action="share-send" disabled>📤 Teilen</button>
       <button class="btn" data-action="share-save" disabled>Bild speichern</button></div>
-    <p class="hint explain">Das Bild zeigt nur Trainingstag, Dauer, bewegtes Gewicht, Sätze und deine Bestleistungen – kein Körpergewicht und
+    <p class="hint explain">Das Bild zeigt nur Trainingstag, Dauer, bewegtes Gewicht, Sätze und deine Bestleistungen, kein Körpergewicht und
       keine Gesundheitsdaten. Die Farben kommen aus deiner Farbwelt (Optionen → Aussehen).</p>`;
 }
 function shareDraw({ id }) {
@@ -6026,7 +6231,7 @@ function renderEntryWeek({ id, w }) {
       <p class="sub">${esc(findDay(id).name)} · erstes Training mit „${esc(activePlan().name)}“</p>
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">📅</span><h2>Mit welcher Woche startest du?</h2></div>
       <p class="hint wiz-q-explain">Normalerweise beginnst du mit der Intro-Woche. Nach Krankheit oder einer längeren Pause
-        kannst du z. B. direkt mit der leichten Deload-Woche einsteigen – oder, wenn du schon gut im Training bist, mit einer
+        kannst du z. B. direkt mit der leichten Deload-Woche einsteigen oder, wenn du schon gut im Training bist, mit einer
         späteren Woche.</p>
       <p class="lbl chips-title">Einstieg mit</p>
       <div class="pills">${Array.from({ length: bw + 1 }, (_, i) => i + 1).map(n => {
@@ -6051,9 +6256,9 @@ function renderCycleChoice({ id, by }) {
       <p class="sub">${esc(findDay(id).name)} · erstes Training im neuen Zyklus</p>
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🔁</span><h2>Woran soll sich der neue Zyklus orientieren?</h2></div>
       <p class="hint wiz-q-explain">Dein letzter Zyklus wurde um <b>${wk(by)}</b> verlängert (bis Woche ${bw + by}). Soll sich der neue Zyklus
-        Woche für Woche nach dem alten richten – oder die Verlängerung mit berücksichtigen?</p>
+        Woche für Woche nach dem alten richten oder die Verlängerung mit berücksichtigen?</p>
       ${opt(1, 'Verlängerung berücksichtigen', `Der Vergleich verschiebt sich um ${wk(by)}: ${pairs}. Das Gewicht kommt aus der versetzten Woche, Wiederholungen und Tank bleiben so, wie sie für die jeweilige Woche vorgesehen sind.`)}
-      ${opt(0, 'Woche für Woche wie im letzten Zyklus', `Intro ↔ Intro, W2 ↔ W2 … – jede Woche wird mit derselben Woche des letzten Zyklus verglichen, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand`)}
+      ${opt(0, 'Woche für Woche wie im letzten Zyklus', `Intro ↔ Intro, W2 ↔ W2 …: Jede Woche wird mit derselben Woche des letzten Zyklus verglichen, je Satz +1 Wdh. pro ${cmpWeeksPerRep()} Wochen Abstand`)}
     </div>
     <p class="hint">Gilt für den ganzen neuen Zyklus.</p>`;
 }
@@ -6066,7 +6271,7 @@ function renderFirstMax({ id, exIds }) {
       <p class="sub">${esc(day.name)} · ${list.length === 1 ? '1 neue Übung' : `${list.length} neue Übungen`}</p>
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏋️</span><h2>Wie viel schaffst du bei 10 Wiederholungen?</h2></div>
       <p class="hint wiz-q-explain"><b>Max. bei 10 Wdh.</b> (auch „10 RM“) ist das Gewicht, mit dem du eine Übung gerade so
-        <b>10-mal sauber</b> schaffst – eine 11. Wiederholung ginge nicht mehr. Daraus berechnet die App deine Gewichte für jedes Training.</p>
+        <b>10-mal sauber</b> schaffst. Eine 11. Wiederholung ginge nicht mehr. Daraus berechnet die App deine Gewichte für jedes Training.</p>
       <p class="hint wiz-q-explain">${MAX_FRESH_NOTE}</p>
       ${list.map(ex => `<div class="fm-row">
         <span class="fm-name">${esc(ex.name)}${libInfoBtn(ex.name)}</span>
@@ -6075,7 +6280,7 @@ function renderFirstMax({ id, exIds }) {
       </div>`).join('')}
     </div>
     <div class="first-max-note"><span aria-hidden="true">💡</span><p><b>Du weißt es nicht genau?</b> Dann lass das Feld einfach leer
-      und trag im Training ganz normal ein, was du im Satz geschafft hast – Gewicht, Wiederholungen und wie viele noch im Tank
+      und trag im Training ganz normal ein, was du im Satz geschafft hast: Gewicht, Wiederholungen und wie viele noch im Tank
       gewesen wären. Die App berechnet das Max. bei 10 Wdh. danach selbst. Bei Übungen ohne Gewicht (z. B. Klimmzüge) ebenfalls leer lassen.</p></div>
     <div class="row"><button class="btn" data-action="cancel">Abbrechen</button>
       <button class="btn primary" data-action="first-max-done">Weiter</button></div>`;
@@ -6146,8 +6351,8 @@ function modeCard() {
       <h2>Modus</h2>
       <div class="seg three mode-seg">${Object.entries(APP_MODES).map(([k, x]) =>
         `<button class="${m === k ? 'on' : ''}" data-action="mode-set" data-m="${k}">${x.label}</button>`).join('')}</div>
-      <p class="hint mode-desc"><b>${APP_MODES[m].icon} ${APP_MODES[m].label}:</b> ${APP_MODES[m].text} Ein Wechsel ändert nichts an deinen Daten –
-        die Trainingssteuerung ist in allen Modi dieselbe.</p>
+      <p class="hint mode-desc"><b>${APP_MODES[m].icon} ${APP_MODES[m].label}:</b> ${APP_MODES[m].text} Ein Wechsel ändert nichts an deinen Daten.
+        Die Trainingssteuerung ist in allen Modi dieselbe.</p>
     </div>`;
 }
 
@@ -6169,14 +6374,14 @@ function prefatHelpHtml() {
   const L = prefatLearn(), pct = fmtNum(Math.round(L.rate * 1000) / 10);
   const sure = L.w < 5 ? 'noch wenig Daten' : L.w < 15 ? 'mittlere Sicherheit' : 'gut abgesichert';
   return `<div class="entry-help">
-    <b class="entry-help-title">Vorermüdung – so rechnet die App</b>
+    <b class="entry-help-title">Vorermüdung: So rechnet die App</b>
     <p>Hat eine Muskelgruppe vorher im Training schon gearbeitet, ist sie bei der nächsten Übung nicht mehr ganz frisch. Die App rechnet
       je Satz, den dieselbe Muskelgruppe vorher gemacht hat, mit <b>${pct} % weniger Kraft</b> (je Satz für einen Hilfsmuskel halb so viel,
       insgesamt höchstens ${Math.round(PREFAT_MAX * 100)} %). Bei vorermüdeten Übungen steht der Abzug direkt unter der Vorgabe.</p>
     <p class="hint">${L.n ? `Dein persönlicher Wert, gelernt aus ${L.n} ${L.n === 1 ? 'Vergleich' : 'Vergleichen'} deiner Trainings (${sure}): dieselbe Übung an
       verschiedenen Stellen im Training. Gestartet wird mit 5 %.`
       : 'Startwert. Sobald eine Übung an verschiedenen Stellen im Training stand (z. B. an Tag A vorn, an Tag B weiter hinten), lernt die App deinen eigenen Wert.'}
-      „Max. bei 10 Wdh.“ ist immer der Frisch-Wert – steht eine Übung weiter hinten, zieht die App die Vorermüdung selbst ab.</p>
+      „Max. bei 10 Wdh.“ ist immer der Frisch-Wert. Steht eine Übung weiter hinten, zieht die App die Vorermüdung selbst ab.</p>
     <button class="btn outline" data-action="prefat-help-toggle">Zuklappen</button>
   </div>`;
 }
@@ -6186,7 +6391,7 @@ function prefatHelpHtml() {
 const SIZES = { '': 'Normal', l: 'Groß', xl: 'Sehr groß' };
 const OPT_SECS = {
   look: { icon: '🎨', title: 'Aussehen', render: () => appearanceCard(),
-    sub: () => { const p = data.profile || {}; return [PROFILE_COLORS[profileColor()].label, THEME_MODES[p.theme || ''], LOOKS[p.look || ''], `Schrift ${SIZES[p.size || '']}`].join(' · '); } },
+    sub: () => { const p = data.profile || {}; return [PROFILE_COLORS[profileColor()].label, THEME_MODES[p.theme || ''], LOOKS[currentLook()], `Schrift ${SIZES[p.size || '']}`].join(' · '); } },
   train: { icon: '🏋️', title: 'Training', render: () => motivCard() + restCard() + platesCard() + (typeof tourCard === 'function' ? tourCard() : '') + explainCard() + hintOffCard(),
     sub: () => `Motivation ${MOTIV_OPTS[motivMode()][1].toLowerCase()} · Pausen-Timer ${restCfg().off ? 'aus' : 'an'} · Langhantel ${barKg()} kg` },
   me: { icon: '👤', title: 'Profil & Ernährung', render: () => profileCard() + (typeof nutHintsCard === 'function' ? nutHintsCard() : '') + (typeof mcOptionsCard === 'function' ? mcOptionsCard() : ''),
@@ -6200,14 +6405,14 @@ const OPT_SECS = {
 function renderData() {
   const rows = Object.entries(OPT_SECS).map(([k, s]) => `<button class="btn nav opt-row ${s.warn && s.warn() ? 'warn' : ''}" data-action="opt-open" data-sec="${k}">
       <span class="opt-ico" aria-hidden="true">${s.icon}</span><span class="opt-txt">${s.title}<small>${esc(s.sub())}</small></span></button>`).join('');
-  return modeCard() + `<div class="opt-list">${rows}</div><p class="hint app-version" id="app-version"></p>`;
+  return betaCard() + modeCard() + `<div class="opt-list">${rows}</div><p class="hint app-version" id="app-version"></p>`;
 }
 views.opt = { title: p => (OPT_SECS[p.sec] || { title: 'Optionen' }).title, tab: 'data', back: 'data',
   render: p => OPT_SECS[p.sec] ? OPT_SECS[p.sec].render() : '<p class="hint">Bereich nicht gefunden.</p>',
   after: () => { showAppVersion(); storageInfoFill(); persistFill(); } };
 function infoSecHtml() {
   const mail = typeof LEGAL !== 'undefined' && LEGAL.email;
-  return `${mail ? `<button class="btn nav fb-btn" data-action="about-feedback">💬 Feedback geben<small>Fehler, Ideen oder Fragen – per E-Mail an ${esc(LEGAL.email)}</small></button>` : ''}
+  return `${mail ? `<button class="btn nav fb-btn" data-action="about-feedback">💬 Feedback geben<small>Fehler, Ideen oder Fragen per E-Mail an ${esc(LEGAL.email)}</small></button>` : ''}
     ${whatsNewOptionsCard()}${errCard()}
     <button class="btn nav about-btn" data-action="about">ℹ️ Über die App<small>Gesundheitshinweis, Datenschutz, Rechte${typeof legalReady === 'function' && legalReady() ? ', Impressum' : ''}</small></button>
     <p class="hint app-version" id="app-version"></p>`;
@@ -6222,7 +6427,7 @@ function dataSecHtml() {
       <div class="seg two"><button class="${backupPwOn() ? '' : 'on'}" data-action="backup-pw-mode" data-v="0">Ohne Passwort</button>
         <button class="${backupPwOn() ? 'on' : ''}" data-action="backup-pw-mode" data-v="1">Mit Passwort</button></div>
       ${backupPwOn() ? `<input class="inp" type="password" data-field="backup-pw" autocomplete="new-password" placeholder="Passwort (mind. 4 Zeichen)" value="${esc(backupPw)}">` : ''}
-      <p class="hint explain">Freiwillig. Mit Passwort wird die Sicherungsdatei verschlüsselt – wer sie in die Hände bekommt, kann sie ohne Passwort
+      <p class="hint explain">Freiwillig. Mit Passwort wird die Sicherungsdatei verschlüsselt. Wer sie in die Hände bekommt, kann sie ohne Passwort
         nicht lesen. Das Passwort wird nirgends gespeichert: Vergisst du es, lässt sich die Sicherung nicht mehr öffnen.
         ${backupPwOn() ? 'Leer gelassen fragt die App beim Exportieren nach dem Passwort.' : ''}</p>
     </div>
@@ -6231,12 +6436,12 @@ function dataSecHtml() {
     <button class="btn center" data-action="import">Sicherung importieren</button>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
     <p class="hint explain">${data.lastExportName ? `Letzte Sicherung: <b>${esc(data.lastExportName)}</b>. ` : ''}Sicherungen heißen immer
-      „Gainslocker-Sicherung …“ mit Datum und Uhrzeit – such beim Importieren in der Dateien-App einfach nach „Gainslocker“.
+      „Gainslocker-Sicherung …“ mit Datum und Uhrzeit. Such beim Importieren in der Dateien-App einfach nach „Gainslocker“.
       Beim Importieren werden die aktuellen Daten durch die Sicherung ersetzt.</p>
     <h2>Daten löschen</h2>
     <button class="btn danger" data-action="reset-trainings">Trainings löschen, Plan behalten</button>
     <button class="btn danger" data-action="reset-all">Alles zurücksetzen</button>
-    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht, Körpermaße und Schritte – die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
+    <p class="hint">„Trainings löschen“ entfernt alle gespeicherten Trainings, Körpergewicht, Körpermaße und Schritte. Die Trainingstage mit ihren Übungen bleiben (${feat('tr-max') ? 'das „Max. kg bei 10 Wdh.“ wird geleert' : 'die gemerkten Gewichte werden geleert'}). „Alles zurücksetzen“ macht die App wieder wie neu. Vorher am besten eine Sicherung exportieren.</p>
 `;
 }
 
@@ -6245,36 +6450,101 @@ function dataSecHtml() {
 // Einträge: [Text, feat?] – feat blendet aus, was im Modus nicht zu sehen ist ('!x' = nur, wenn x NICHT sichtbar).
 // data.seenV = zuletzt gesehene Version; neu Angefangene sehen nichts, bisherige Nutzer beim ersten Mal alles ab v197.
 const CHANGES = [
+  { v: 248, date: '2026-11-14', items: [
+    ['Neuer Stil „Puristen“ unter Optionen → Aussehen: so schlicht wie eine Tabelle in Excel oder Google Sheets. Gitterlinien, eckige Zellen, Tabellen-Grün und keine Emojis.'],
+  ] },
+  { v: 247, date: '2026-11-14', items: [
+    ['Plan-Assistent: Erst fragt die App, wie stark die Intensität im Zyklus steigen soll, dann nach mehr Volumen oder mehr Intensität. Neu ist die Variante „Beides“ für Hartgesottene: 20 % mehr Sätze und 0,5 Wdh. weniger im Tank.', 'tr-rir-input'],
+    ['Plan-Assistent: Gleich am Anfang steht jetzt, dass du alles später im Plan noch komplett ändern kannst.', 'tr-rir-input'],
+    ['Supersätze in der Plan-Vorschau stehen zusammen in einer Karte, jede Übung mit ihren eigenen Knöpfen. Haben beide unterschiedlich viele Sätze, beginnst du im Training mit der Übung mit mehr Sätzen.', 'supersets'],
+  ] },
+  { v: 246, date: '2026-11-14', items: [
+    ['„⏱ Wenig Zeit?“ steht jetzt direkt unter dem Trainingstag, der als Nächstes dran ist.'],
+  ] },
+  { v: 245, date: '2026-11-14', items: [
+    ['„Wenig Zeit?“: Beim Start zeigt die App jetzt, wie gekürzt wird. Mit − und ＋ änderst du die Sätze je Übung selbst, mit „Ganzes Training“ holst du alles zurück, auch mitten im Training. Eingetragene Sätze bleiben erhalten.'],
+    ['Supersatz im Training: Die Erklärung nennt jetzt die Pausenlänge und warum sie kürzer ist als bei einzelnen Übungen.', 'supersets'],
+  ] },
+  { v: 244, date: '2026-11-14', items: [
+    ['Im Training hat jede Übungskarte jetzt den Knopf ⇅: ein Tipp, und du änderst die Reihenfolge für heute. „Untereinander oder Wischen“ kannst du auch direkt im Menü ⋯ oben rechts umschalten.'],
+  ] },
+  { v: 243, date: '2026-11-14', items: [
+    ['Ernährungstagebuch: Was du gegessen hast, steht jetzt oben im Stil des Tagesziels, mit großer Kalorienzahl, Makro-Kacheln mit Fortschritt und dem Anteile-Balken. „Aus Health“ und „Von Hand“ findest du dort auch. Der Reiter Ernährung zeigt dafür nur noch „Essen eintragen“ und dein Tagesziel. Kalender und Woche & Monat gibt es im Tagebuch.'],
+  ] },
+  { v: 242, date: '2026-11-14', items: [
+    ['Supersatz im Plan: Neben den passenden Übungen des Tages kannst du jetzt jede Übung eintippen. Sie kommt direkt hinter die erste und wird gleich gekoppelt.', 'supersets'],
+  ] },
+  { v: 241, date: '2026-11-14', items: [
+    ['Fehler behoben: Hast du einen Satz genau wie vorgeschlagen geschafft, ändert die App die folgenden Sätze nicht mehr. Bisher konnte z. B. Satz 2 von 6 auf 8 Wdh. springen, weil die Neuberechnung im Training pauschal nur 1 Wdh. Ermüdung zwischen den Sätzen ansetzte und nicht deinen Abfall vom letzten Mal.'],
+  ] },
+  { v: 240, date: '2026-11-14', items: [
+    ['Trainings-Reiter neu sortiert: Der Zyklus steht ganz oben, darunter alle Trainingstage untereinander. Der nächste Tag bleibt hervorgehoben. „Aktuell laufenden Plan beenden“ steht jetzt unten im Trainings-Reiter.'],
+    ['Plan-Reiter: Der Knopf heißt jetzt „Neuen Plan erstellen“ und geht über die ganze Breite.'],
+    ['Woche im Zyklus antippen: Erledigte Trainings haben einen Haken und den Vermerk „absolviert“, ausgelassene Tage stehen auch dabei.'],
+  ] },
+  { v: 239, date: '2026-11-14', items: [
+    ['Am Anfang erklärt die App alles ausführlich. Damit die Seiten danach übersichtlich bleiben, klappen die Erklärungen nach dem zweiten Lesen zu „? Erklärung“ zusammen. Ein Tipp darauf zeigt sie wieder. Beim ersten Zuklappen sagt dir die App das jetzt auch.'],
+  ] },
+  { v: 238, date: '2026-11-14', items: [
+    ['Reiter Ernährung aufgeräumt: Ganz oben der Knopf „Essen eintragen“, direkt darunter „Heute gegessen“ und dein Tagesziel. Das Ernährungstagebuch gibt es nur noch einmal, und die Erklärungen unter dem Tagesziel klappen nach dem zweiten Lesen zu.'],
+  ] },
+  { v: 237, date: '2026-11-14', items: [
+    ['Ernährung → Woche & Monat: neues Säulendiagramm für Kalorien, Eiweiß, Kohlenhydrate und Fett. Eine Säule je Tag, gestrichelt der Durchschnitt. Säule antippen zeigt den Wert des Tages.'],
+  ] },
+  { v: 236, date: '2026-11-14', items: [
+    ['Halteübungen wie Plank, Seitstütz oder Wandsitzen haben jetzt ein Ziel in Sekunden: Start bei 30 s, jede Woche mehr, wenn du es schaffst (wer länger hält, startet nächstes Mal dort), bis 2 Minuten. Statt des Tanks zeigt die App, ob du über oder unter dem Ziel lagst. Mit ✓ bestätigst du einen Satz, der genau gepasst hat.'],
+  ] },
+  { v: 235, date: '2026-11-13', items: [
+    ['Halteübungen wie Plank oder Wandsitzen zeigen jetzt überall Sekunden statt Wiederholungen: im Verlauf, beim letzten Mal, in Vergleichen, im Diagramm und im Bild zum Teilen.'],
+  ] },
+  { v: 234, date: '2026-11-13', items: [
+    ['Drei neue Designs unter Optionen → Aussehen → Stil: „Kraftraum“ (sportlich, große Zahlen), „Logbuch“ (Zeilen statt Karten) und „Schwarzweiß“. Sie sehen auf iPhone und Android gleich aus. Kraftraum und Logbuch passen sich deiner Farbwelt an. Die bisherigen Stile „Standard“ und „Schlicht“ bleiben wählbar.'],
+  ] },
+  { v: 233, date: '2026-11-13', items: [
+    ['Ruhigere Texte: weniger Gedankenstriche und kein Fett mehr mitten im Satz. Inhalte und Regeln sind gleich geblieben.'],
+  ] },
+  { v: 232, date: '2026-11-13', items: [
+    ['Halteübungen wie Plank oder Hang: Die Rückfrage „Vertippt?“ kommt jetzt in Sekunden und erst bei einem großen Unterschied zum Vorschlag (mindestens die Hälfte und 15 Sekunden).'],
+    ['„Weniger Volumen“: Alle Übungen behalten jetzt mindestens 0,5 Wdh. im Tank, auch Assistenzübungen und in einer Diät.', 'tr-rir-input'],
+    ['Eigene Tank-Tabelle: Steht sehr wenig im Tank (eine Woche mit 0 oder im Schnitt unter 0,75), zeigt die App einen Hinweis, was das fürs Training bedeutet.', 'tr-rir-input'],
+  ] },
+  { v: 231, date: '2026-11-13', items: [
+    ['Plan-Assistent: Die Frage „Mehr Volumen oder mehr Intensität?“ gibt es jetzt schon ab Standard. Mehr Volumen bringt 0,5 Wdh. mehr im Tank, Weniger Volumen 0,5 weniger, auch in einer Diät. Normale Übungen haben dabei höchstens 2 im Tank (Neulinge und Einsteiger behalten ihren Zuschlag).', 'tr-rir-input'],
+  ] },
+  { v: 230, date: '2026-11-13', items: [
+    ['Neue Tank-Regel: Normale Übungen starten in der Intro-Woche bei 2 Wiederholungen im Tank, Grundübungen 0,5 mehr, Assistenzübungen 0,5 weniger.'],
+    ['Neu im Plan und im Plan-Assistenten: „Wie stark soll die Intensität im Zyklus steigen?“: gleichbleibend, moderat oder deutlich.', 'tr-rir-input'],
+  ] },
   { v: 229, date: '2026-11-13', items: [
-    ['Training an die Diät angepasst – neue Regel: Das Volumen startet auf dem Stand von Woche 2, steigt in Woche 2 auf den Stand von Woche 3 und bleibt dann gleich. Im Tank bleiben in der Intro-Woche 2 Wiederholungen, danach jede Woche 0,5 weniger bis 0,5 (Grundübungen +0,5, Assistenzübungen −0,5).'],
+    ['Training an die Diät angepasst. Neue Regel: Das Volumen startet auf dem Stand von Woche 2, steigt in Woche 2 auf den Stand von Woche 3 und bleibt dann gleich. Im Tank bleiben in der Intro-Woche 2 Wiederholungen, danach jede Woche 0,5 weniger bis 0,5 (Grundübungen +0,5, Assistenzübungen −0,5).'],
   ] },
   { v: 228, date: '2026-11-13', items: [
-    ['In einer Diät oder einem Minicut gibt es keine Stillstand-Hinweise mehr – im Kaloriendefizit ist Kraft halten normal und schon ein Erfolg. Auch danach zählen Trainings aus dieser Zeit nicht für den Vergleich.'],
+    ['In einer Diät oder einem Minicut gibt es keine Stillstand-Hinweise mehr. Im Kaloriendefizit ist Kraft halten normal und schon ein Erfolg. Auch danach zählen Trainings aus dieser Zeit nicht für den Vergleich.'],
   ] },
   { v: 222, date: '2026-11-13', items: [
-    ['🤸 Übungsbibliothek: neuer Bereich Calisthenics – vom Toten Hang bis zu Muscle-up, Handstand, Front Lever und Planche, mit Figuren und ausführlicher Anleitung.'],
+    ['🤸 Übungsbibliothek: neuer Bereich Calisthenics, vom Toten Hang bis zu Muscle-up, Handstand, Front Lever und Planche, mit Figuren und ausführlicher Anleitung.'],
     ['🏁 Neuer Bereich Hyrox: alle Stationen in Wettkampf-Reihenfolge mit Strecken und Gewichten je Klasse, dazu passende Übungen.'],
     ['Gesäß-Kickbacks Kabelzug „überkreuzt“ ersetzt durch „seitlich“.'],
   ] },
   { v: 221, date: '2026-11-12', items: [
-    ['💬 Feedback geben: unter Optionen → Hilfe & Info. Öffnet dein Mailprogramm mit vorausgefüllter Nachricht an lockyourgains@gmail.com – auf Wunsch mit Fehlerprotokoll, nie mit deinen Trainingsdaten.'],
+    ['💬 Feedback geben: unter Optionen → Hilfe & Info. Öffnet dein Mailprogramm mit vorausgefüllter Nachricht an lockyourgains@gmail.com, auf Wunsch mit Fehlerprotokoll, nie mit deinen Trainingsdaten.'],
   ] },
   { v: 220, date: '2026-11-12', items: [
-    ['Neues App-Symbol: ein Handy mit Hantel und steigender Verlaufskurve – in der Farbe deiner Farbwelt. Das Handy übernimmt Symbol und Farbe, wenn du die App zum Home-Bildschirm hinzufügst (z. B. beim Umzug auf die neue Adresse); danach bleibt es so, auch wenn du die Farbe änderst.'],
+    ['Neues App-Symbol: ein Handy mit Hantel und steigender Verlaufskurve, in der Farbe deiner Farbwelt. Das Handy übernimmt Symbol und Farbe, wenn du die App zum Home-Bildschirm hinzufügst (z. B. beim Umzug auf die neue Adresse); danach bleibt es so, auch wenn du die Farbe änderst.'],
   ] },
   { v: 219, date: '2026-11-12', items: [
-    ['✏️ Übung umbenennen: Die App fragt jetzt, ob deine bisherigen Daten (Gewichte, Rekorde, Diagramme) auf den neuen Namen übertragen werden sollen – oder ob sie als neue Übung beginnt. Danach bestätigt sie „Übung X in Y umbenannt“.'],
+    ['✏️ Übung umbenennen: Die App fragt jetzt, ob deine bisherigen Daten (Gewichte, Rekorde, Diagramme) auf den neuen Namen übertragen werden sollen oder ob sie als neue Übung beginnt. Danach bestätigt sie „Übung X in Y umbenannt“.'],
     ['Hinweise und Rückfragen erscheinen jetzt in einem eigenen Fenster im Stil der App statt als System-Meldung.'],
     ['Stil „Schlicht“ neu: dünnere Schrift, schmale Überschriften in Großbuchstaben, feine Linien und eckige Nummern.'],
   ] },
   { v: 218, date: '2026-11-12', items: [
-    ['🍎 Das Ernährungstagebuch steht jetzt ganz oben im Reiter Ernährung – mit 📅 Kalender und 📊 Woche & Monat (Kalorien, Eiweiß, Kohlenhydrate, Fett je Tag und im Schnitt).'],
-    ['Beim Ersetzen einer Übung kannst du direkt eine eigene Übung anlegen – sie ersetzt danach gleich die alte.'],
+    ['🍎 Das Ernährungstagebuch steht jetzt ganz oben im Reiter Ernährung, mit 📅 Kalender und 📊 Woche & Monat (Kalorien, Eiweiß, Kohlenhydrate, Fett je Tag und im Schnitt).'],
+    ['Beim Ersetzen einer Übung kannst du direkt eine eigene Übung anlegen. Sie ersetzt danach gleich die alte.'],
     ['Neue Übungen: Latziehen mittelbreit, Gesäß-Kickbacks Kabelzug diagonal und überkreuzt.'],
-    ['Erklärtexte sind ab dem dritten Besuch einer Seite eingeklappt – in allen Modi. Antippen von „? Erklärung“ zeigt sie wieder.'],
+    ['Erklärtexte sind ab dem dritten Besuch einer Seite eingeklappt, in allen Modi. Antippen von „? Erklärung“ zeigt sie wieder.'],
   ] },
   { v: 217, date: '2026-11-12', items: [
-    ['Neuer Name: Die App heißt jetzt LockYourGains – auf dem Home-Bildschirm kurz „Gainslocker“.'],
+    ['Neuer Name: Die App heißt jetzt LockYourGains, auf dem Home-Bildschirm kurz „Gainslocker“.'],
     ['Neue Adresse: lockyourgains.github.io. Sicherungen heißen jetzt „Gainslocker-Sicherung …“; ältere „StepUp-Sicherungen“ lassen sich weiter laden.'],
   ] },
   { v: 216, date: '2026-11-12', items: [
@@ -6282,18 +6552,18 @@ const CHANGES = [
     ['Nach einem verfehlten Satz bekommen die folgenden Sätze mit gleichem Gewicht höchstens 2 Wdh. mehr als der Satz davor.'],
   ] },
   { v: 215, date: '2026-11-12', items: [
-    ['Tippfehler, die trotz Rückfrage gespeichert wurden (z. B. 100 statt 10 kg), zählen nicht mehr für Vorschläge und Bestleistungen. Im Verlauf steht dann „zählt nicht“ – korrigierst du den Satz, zählt er wieder.'],
-    ['Deload-Woche: Ein deutlich verfehlter Satz der Vorwoche ist kein Maßstab mehr – so wird der Deload nie schwerer als das, was du geschafft hast.'],
+    ['Tippfehler, die trotz Rückfrage gespeichert wurden (z. B. 100 statt 10 kg), zählen nicht mehr für Vorschläge und Bestleistungen. Im Verlauf steht dann „zählt nicht“. Korrigierst du den Satz, zählt er wieder.'],
+    ['Deload-Woche: Ein deutlich verfehlter Satz der Vorwoche ist kein Maßstab mehr. So wird der Deload nie schwerer als das, was du geschafft hast.'],
     ['Große Schrift: Knöpfe und Tabellen passen jetzt überall auf den Bildschirm.'],
     ['Vitamine & Mineralstoffe: Die Richtwerte passen jetzt zu deinem Alter.', 'nut-micro'],
   ] },
   { v: 214, date: '2026-11-11', items: [
-    ['🔬 Vitamine & Mineralstoffe im Ernährungstagebuch: 29 Nährstoffe mit den Richtwerten der DGE – als Durchschnitt über 7 Tage oder je Tag.', 'nut-micro'],
-    ['💊 Nahrungsergänzung eintragen oder scannen – gespeichert wie ein Lebensmittel, gezählt in Stück.', 'nut-micro'],
+    ['🔬 Vitamine & Mineralstoffe im Ernährungstagebuch: 29 Nährstoffe mit den Richtwerten der DGE, als Durchschnitt über 7 Tage oder je Tag.', 'nut-micro'],
+    ['💊 Nahrungsergänzung eintragen oder scannen, gespeichert wie ein Lebensmittel, gezählt in Stück.', 'nut-micro'],
     ['Eigene Lebensmittel können jetzt auch Vitamine und Mineralstoffe haben (freiwillig).', 'nut-micro'],
   ] },
   { v: 213, date: '2026-11-11', items: [
-    ['📷 Fortschrittsfotos: vorne, seitlich und hinten – mit Vergleich zweier Termine. Zu finden im Reiter Ernährung beim Körpergewicht.'],
+    ['📷 Fortschrittsfotos: vorne, seitlich und hinten, mit Vergleich zweier Termine. Zu finden im Reiter Ernährung beim Körpergewicht.'],
     ['🎥 Technik-Videos je Übung: in Zeitlupe, Bild für Bild und mit Hilfslinien ansehen oder zwei Videos vergleichen (im Training unter „Details“ → „Video“).'],
     ['Fotos und Videos bleiben nur auf deinem Handy. Eine Anleitung zeigt, wie du sie in deiner Galerie sicherst.'],
   ] },
@@ -6303,37 +6573,37 @@ const CHANGES = [
     ['Plan-Vorschau im Assistenten: Die Übungsnamen haben wieder Platz, die Knöpfe stehen darunter.', 'tr-variants'],
   ] },
   { v: 211, date: '2026-11-11', items: [
-    ['⚡ Intensitätstechniken: Reduktions- und Myo-Sätze – im Training je Satz (Satznummer antippen) oder dauerhaft je Übung im Tagesplan.', 'tr-variants'],
+    ['⚡ Intensitätstechniken: Reduktions- und Myo-Sätze, im Training je Satz (Satznummer antippen) oder dauerhaft je Übung im Tagesplan.', 'tr-variants'],
     ['Alle Teil-Sätze werden gespeichert und angezeigt; verglichen und gesteigert wird nur mit gleich ausgeführten Sätzen.', 'tr-variants'],
-    ['Ausführliche Erklärungen, wann sich welche Technik lohnt – und warum ein Myo-Satz mehr ermüdet als ein normaler Satz.', 'tr-variants'],
+    ['Ausführliche Erklärungen, wann sich welche Technik lohnt, und warum ein Myo-Satz mehr ermüdet als ein normaler Satz.', 'tr-variants'],
     ['„mit Pause“ und „langsam“ gibt es jetzt schon im Modus Standard.', 'tr-variants'],
   ] },
   { v: 210, date: '2026-11-11', items: [
-    ['🔗 Supersätze: Zwei Übungen im Wechsel mit kurzer Pause – im Tagesplan „Als Supersatz koppeln“ oder „Supersätze vorschlagen“.', 'supersets'],
+    ['🔗 Supersätze: Zwei Übungen im Wechsel mit kurzer Pause. Im Tagesplan „Als Supersatz koppeln“ oder „Supersätze vorschlagen“.', 'supersets'],
     ['Die geschätzte Trainingsdauer rechnet Supersätze mit ein, und „Wenig Zeit?“ koppelt auf Wunsch erst Übungen, bevor Sätze wegfallen.', 'supersets'],
     ['Im Training stehen beide Übungen in einem Rahmen, der nächste Satz ist markiert. Gerät besetzt? „Heute einzeln“.', 'supersets'],
   ] },
   { v: 209, date: '2026-11-11', items: [
-    ['Beschwerde-Tagebuch: Stärke von 0 bis 10, Seite und Notiz je Stelle – mit Verlaufslinie (Verlauf → Beschwerden).'],
+    ['Beschwerde-Tagebuch: Stärke von 0 bis 10, Seite und Notiz je Stelle, mit Verlaufslinie (Verlauf → Beschwerden).'],
     ['„🩹 Zwickt“ im Training: Bei jeder Übung festhalten, wo und wie stark es zwickt. So siehst du, welche Übungen sich melden.'],
-    ['Bericht für deinen Termin: Verlauf, betroffene Übungen und Notizen als Bild oder Text – zum Zeigen in Arztpraxis oder Physiotherapie.'],
+    ['Bericht für deinen Termin: Verlauf, betroffene Übungen und Notizen als Bild oder Text, zum Zeigen in Arztpraxis oder Physiotherapie.'],
     ['Weniger Text: Längere Erklärungen klappen nach dem dritten Besuch einer Seite zu „? Erklärung“ zusammen.', 'tr-comment'],
   ] },
   { v: 208, date: '2026-11-11', items: [
-    ['Motivation nach deinem Geschmack: freundlich mit Lob, fordernd mit klaren Ansagen – oder gar nicht (Optionen → Training).'],
-    ['Beschwerden-Verlauf: Im Verlauf siehst du, seit wann es wo zwickt – und änderst es jederzeit, wenn es besser wird.'],
+    ['Motivation nach deinem Geschmack: freundlich mit Lob, fordernd mit klaren Ansagen oder gar nicht (Optionen → Training).'],
+    ['Beschwerden-Verlauf: Im Verlauf siehst du, seit wann es wo zwickt, und änderst es jederzeit, wenn es besser wird.'],
   ] },
   { v: 207, date: '2026-11-11', items: [
-    ['Optionen aufgeräumt: Die Einstellungen sind jetzt nach Bereichen sortiert – Aussehen, Training, Profil, Deine Daten, Hilfe.'],
+    ['Optionen aufgeräumt: Die Einstellungen sind jetzt nach Bereichen sortiert (Aussehen, Training, Profil, Deine Daten, Hilfe).'],
     ['Textgröße: Unter Optionen → Aussehen kannst du Schrift und Knöpfe größer stellen.'],
     ['Ernährung und Plan übersichtlicher: Das Körpergewicht steht direkt unter „Heute gegessen“, die Grundlagen als Zeile ganz unten.'],
   ] },
   { v: 206, date: '2026-11-11', items: [
-    ['Ergebnis teilen: Nach dem Training malt die App ein Bild mit Dauer, bewegtem Gewicht und neuen Bestleistungen – zum Teilen in WhatsApp, Instagram & Co.'],
+    ['Ergebnis teilen: Nach dem Training malt die App ein Bild mit Dauer, bewegtem Gewicht und neuen Bestleistungen, zum Teilen in WhatsApp, Instagram & Co.'],
     ['Die Werte vom letzten Mal stehen im Training wieder immer sichtbar bei jeder Übung.'],
   ] },
   { v: 205, date: '2026-11-11', items: [
-    ['Unter Optionen → Deine Daten siehst du jetzt, ob dein Browser die Daten dauerhaft speichert – und was du sonst tun kannst.'],
+    ['Unter Optionen → Deine Daten siehst du jetzt, ob dein Browser die Daten dauerhaft speichert und was du sonst tun kannst.'],
     ['Fehlerprotokoll: Hakt einmal etwas, merkt sich die App den Fehler (ohne Trainingsdaten). Unter Optionen kannst du ihn an den Entwickler schicken.'],
   ] },
   { v: 204, date: '2026-11-11', items: [
@@ -6341,10 +6611,10 @@ const CHANGES = [
     ['Nebenbei: Ganz unten bei Ernährung lassen sich auch Körpermaße wie die Taille festhalten.'],
   ] },
   { v: 203, date: '2026-11-11', items: [
-    ['Diagramme, Statistik und Erfolge stehen jetzt im Verlauf. Eine Übung zeigt Diagramm und alle Sätze auf einer Seite – unten sind es nur noch fünf Reiter.'],
+    ['Diagramme, Statistik und Erfolge stehen jetzt im Verlauf. Eine Übung zeigt Diagramm und alle Sätze auf einer Seite. Unten sind es nur noch fünf Reiter.'],
   ] },
   { v: 202, date: '2026-11-11', items: [
-    ['Pausen-Timer: Nach jedem Satz läuft oben die Pause – auf Wunsch mit Vibration oder Ton (Optionen → Training).'],
+    ['Pausen-Timer: Nach jedem Satz läuft oben die Pause, auf Wunsch mit Vibration oder Ton (Optionen → Training).'],
   ] },
   { v: 201, date: '2026-11-11', items: [
     ['Startseite aufgeräumt: Der nächste Trainingstag steht ganz oben, die Zyklus-Karte klappt auf, wenn du sie antippst.'],
@@ -6354,7 +6624,7 @@ const CHANGES = [
   ] },
   { v: 199, date: '2026-11-10', items: [
     ['Tank-Vorgaben je Satz als ganze Zahlen, von Satz zu Satz absteigend (z. B. 2 · 2 · 1). Alle Pläne gehen dabei etwas näher ans Muskelversagen.', 'tr-rir-input'],
-    ['Die Sätze gehen jetzt etwas näher an „ging nichts mehr“ – die letzten Sätze einer Übung dürfen richtig hart sein.', '!tr-rir-input'],
+    ['Die Sätze gehen jetzt etwas näher an „ging nichts mehr“. Die letzten Sätze einer Übung dürfen richtig hart sein.', '!tr-rir-input'],
   ] },
   { v: 198, date: '2026-11-10', items: [
     ['Neuer Hinweis „Zum Home-Bildschirm“: Als App auf dem Home-Bildschirm bleiben deine Daten auf dem iPhone sicher gespeichert.'],
@@ -6380,7 +6650,7 @@ function whatsNewCard() {
   const show = items.slice(0, 5);
   return `<div class="card hints whats-new"><p><b>✨ Neu in der App</b></p>
       <ul class="wn-list">${show.map(t => `<li>${t}</li>`).join('')}</ul>
-      ${items.length > show.length ? `<p class="hint">… und ${items.length - show.length} weitere – alle unter Optionen → Hilfe & Info.</p>` : ''}
+      ${items.length > show.length ? `<p class="hint">… und ${items.length - show.length} weitere, alle unter Optionen → Hilfe & Info.</p>` : ''}
       <button class="btn primary" data-action="wn-ok">Alles klar</button></div>`;
 }
 // Optionen: alle Neuerungen zum Nachlesen
@@ -6411,10 +6681,10 @@ function errCard() {
   return `<details class="card about-sec err-card"><summary><b>🧰 Fehlerprotokoll</b>
       <small>${list.length ? `${list.length} ${list.length === 1 ? 'Eintrag' : 'Einträge'}` : 'keine Fehler ✓'}</small></summary>
     ${list.length ? `<ul class="err-list">${[...list].reverse().slice(0, 10).map(x => `<li><small>${fmtErrTime(x.t)} · ${esc(x.view || '–')}${x.n > 1 ? ` · ${x.n}×` : ''}</small>${esc(x.msg)}</li>`).join('')}</ul>
-      <p class="hint">Hakt etwas? Schick das Protokoll an den Entwickler. Es enthält keine Trainingsdaten – nur Fehlertext, Ansicht, App-Version und Gerätetyp.</p>
+      <p class="hint">Hakt etwas? Schick das Protokoll an den Entwickler. Es enthält keine Trainingsdaten, nur Fehlertext, Ansicht, App-Version und Gerätetyp.</p>
       <div class="row"><button class="btn primary" data-action="err-share">Weitergeben</button>
         <button class="btn" data-action="err-clear">Löschen</button></div>`
-    : '<p class="hint">Bisher ist kein Fehler aufgetreten. Falls doch einmal etwas hakt, steht es hier – zum Weitergeben an den Entwickler.</p>'}
+    : '<p class="hint">Bisher ist kein Fehler aufgetreten. Falls doch einmal etwas hakt, steht es hier, zum Weitergeben an den Entwickler.</p>'}
   </details>`;
 }
 
@@ -6467,12 +6737,12 @@ function feelInfo(id) {
   const mine = s => !!findDay(s.dayId);
   const ci = trainingRound(id);
   if (ci.deload) {
-    if (done(ci.cycleStart) || data.sessions.some(s => s.cycleStart === ci.cycleStart && s.deload)) return null;
-    return data.sessions.some(s => mine(s) && s.cycleStart === ci.cycleStart && !s.deload) ? { cs: ci.cycleStart } : null;
+    if (done(ci.cycleStart) || data.sessions.some(s => s.cycleStart === ci.cycleStart && dlSession(s))) return null;
+    return data.sessions.some(s => mine(s) && s.cycleStart === ci.cycleStart && !dlSession(s)) ? { cs: ci.cycleStart } : null;
   }
   if (data.sessions.some(s => s.cycleStart === ci.cycleStart)) return null;  // Zyklus läuft schon
   const prev = sessionsNewestFirst().find(s => mine(s) && s.cycleStart && s.cycleStart !== ci.cycleStart);
-  return prev && !done(prev.cycleStart) && !prev.deload ? { cs: prev.cycleStart, late: true } : null;
+  return prev && !done(prev.cycleStart) && !dlSession(prev) ? { cs: prev.cycleStart, late: true } : null;
 }
 function renderCycleFeel({ id, late }) {
   const adj = rirFeelAdj(), rir = feat('tr-rir-input');
@@ -6482,7 +6752,7 @@ function renderCycleFeel({ id, late }) {
       <p class="sub">${esc(findDay(id).name)}</p>
       <div class="wiz-q-head"><span class="wiz-q-icon" aria-hidden="true">🏁</span><h2>${late ? 'Zyklus geschafft!' : 'Gleich kommt die Deload-Woche.'} Wie hat sich das Training in diesem Zyklus angefühlt?</h2></div>
       <p class="hint wiz-q-explain">${late ? 'Danach richtet die App den neuen Zyklus aus.'
-        : 'Jetzt spürst du die Belastung noch am deutlichsten. Deine Antwort gilt ab der nächsten Intro-Woche – die Deload-Woche bleibt, wie sie ist.'}${rir && adj ? ` Bisher angepasst: ${adj > 0 ? '+' : '−'}${fmtNum(Math.abs(adj))} Wdh. im Tank.` : ''}</p>
+        : 'Jetzt spürst du die Belastung noch am deutlichsten. Deine Antwort gilt ab der nächsten Intro-Woche. Die Deload-Woche bleibt, wie sie ist.'}${rir && adj ? ` Bisher angepasst: ${adj > 0 ? '+' : '−'}${fmtNum(Math.abs(adj))} Wdh. im Tank.` : ''}</p>
       ${opt('hard', 'Zu schwer', atMax ? 'Mehr Luft gibt die App nicht dazu, sie ist schon an ihrer Grenze. Es bleibt wie im letzten Zyklus.'
         : rir ? 'Im neuen Zyklus bleibt in jedem Satz 0,5 Wdh. mehr im Tank.' : 'Der neue Zyklus wird etwas leichter.')}
       ${opt('easy', 'Zu leicht', atMin ? 'Näher ans Muskelversagen geht die App nicht, sie ist schon an ihrer Grenze. Es bleibt wie im letzten Zyklus.'
@@ -6531,7 +6801,7 @@ function beginAfterRound(id, choice = null) {
 
 // exIds: die neuen Übungen wurden schon abgefragt – „Zurück“ bei Frage 1 führt wieder dorthin
 function beginQuestions(id, exIds, choice = null) {
-  if (trainingRound(id).deload) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
+  if (trainingRound(id).deload || hxLight()) startDay(id);  // Deload ist ohnehin leicht -> keine Fragen, kein Abzug
   else go('check', { id, step: 1, exIds, choice });
 }
 
@@ -6570,30 +6840,34 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   if (typeof nutSync === 'function') nutSync();  // z. B. Minicut vorbei -> Deload beginnt (nutrition.js)
   const ci = trainingRound(id);
   const own = ownPlan();
+  // Hyrox-Wettkampf-Woche (v232): auf Wunsch leicht wie im Deload, zählt aber als Training dieser Woche
+  const light = !ci.deload && !own && hxLight();
+  const dl = ci.deload || light;
   // Zyklus und Training (menstrual.js, v191): in einem Zeitfenster mit Beschwerden erst nachfragen, sonst nur markieren (zum Lernen)
-  if (!ci.deload && !own && readiness.mc === undefined && typeof mcCheckNeeded === 'function') {
+  if (!dl && !own && readiness.mc === undefined && typeof mcCheckNeeded === 'function') {
     const win = mcCheckNeeded();
     if (win) { go('mccheck', { id, readiness, win }); return; }
     readiness = { ...readiness, mc: mcAutoTag() };
   }
-  const mc = !ci.deload && !own && readiness.mc ? readiness.mc : null;
+  const mc = !dl && !own && readiness.mc ? readiness.mc : null;
   skipRoundFor = null;
   draft = {
     dayId: day.id,
     dayName: day.name,
     date: new Date().toISOString(),
-    deload: ci.deload && !own,
+    deload: dl && !own,
+    ...(light ? { light: true } : {}),
     intro: ci.intro && !own,
     own,
     cycleStart: ci.cycleStart,
     week: ci.week,
     cycleNo: ci.cycle,
     readiness,
-    penalty: ci.deload || own ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0) + (mc ? mc.pen : 0),
+    penalty: dl || own ? 0 : (readiness.sleptWell ? 0 : 1) + (readiness.stress ? 1 : 0) + (mc ? mc.pen : 0),
     ...(mc ? { mc } : {}),
     // Progression für dieses Training: Einstellung der Woche, im Training noch änderbar (Deload: ohnehin keine)
     progression: own ? { volume: false, load: false }
-      : ci.deload ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
+      : dl ? { volume: true, load: true } : weekProgression(roundKey(ci.cycleStart, ci.week)),
     occurrence: nextOccurrence(day.id, ci),  // 2 = dieser Tag wurde diese Woche schon einmal trainiert
     entries: [],
   };
@@ -6615,8 +6889,10 @@ function startDay(id, readiness = { sleptWell: true, stress: false }) {
   const tl = data.timeLimit;
   if (tl && tl.min) {
     draft.timeLimit = tl.min;
+    const fullCopy = JSON.parse(JSON.stringify(draft.entries));  // v245: für „Anpassen“ und „Ganzes Training“
     if (tl.ss) ssForTime(tl.min);  // Supersätze (v210): erst Pausen sparen, dann Sätze kürzen
     draft.timeCut = trimToTime(draft.entries, tl.min);
+    if (draft.timeCut) draft.timeFull = fullCopy;
     refreshPrefat();
     if (tl.once) { delete data.timeLimit; saveData(); }
   }
@@ -6662,6 +6938,7 @@ function draftEntries(day) {
     if (draft.own) Object.assign(target, { own: true, startWeight: ex.startWeight != null ? ex.startWeight : null });
     setupEntry(en, target, (i, n) => techVariant(ex, i, n));  // Ausführung bzw. Intensitätstechnik laut Plan (v211)
     if (typeof caliApply === 'function') caliApply(en, ex);  // Calisthenics (v225): Wdh./Haltezeit je Satz
+    holdApply(en, ex);  // Halteübungen in normalen Plänen (v236)
     return en;
   });
 }
@@ -6749,12 +7026,12 @@ function bwDeloadRef(name) {
 
 // Eigengewicht: leichtere / schwerere Variante je Übung (Name ohne Umlaute, wie BODYWEIGHT)
 const BW_VARIANTS = [
-  [/^einbeinige kniebeugen zum stuhl/, '„Kniebeugen Eigengewicht“', '„Einbeinige Kniebeugen (Pistol Squats)“ – ganz ohne Stuhl'],
+  [/^einbeinige kniebeugen zum stuhl/, '„Kniebeugen Eigengewicht“', '„Einbeinige Kniebeugen (Pistol Squats)“, ganz ohne Stuhl'],
   [/^einbeinige kniebeugen/, '„Einbeinige Kniebeugen zum Stuhl“', 'eine Kurzhantel oder Kettlebell vor der Brust halten'],
-  [/^nordic/, '„Beincurls am Boden (Handtuch)“ – oder nur langsam absenken und mit den Händen wieder hochdrücken', 'noch langsamer absenken (5 Sekunden) oder eine Gewichtsscheibe vor der Brust halten'],
+  [/^nordic/, '„Beincurls am Boden (Handtuch)“ oder nur langsam absenken und mit den Händen wieder hochdrücken', 'noch langsamer absenken (5 Sekunden) oder eine Gewichtsscheibe vor der Brust halten'],
   [/^klimmzuge/, '„Klimmzüge assistiert (Maschine)“ oder mit Widerstandsband', '„Klimmzüge mit Zusatzgewicht“ (Dip-Gürtel oder Gewichtsweste)'],
   [/^(dips|bankdips)/, '„Dips assistiert (Maschine)“ oder „Dips Maschine“', 'Dips mit Zusatzgewicht (Dip-Gürtel oder Gewichtsweste)'],
-  [/^liegestutze/, '„Liegestütze erhöht“ (Hände auf Bank oder Kasten)', 'Liegestütze mit Gewichtsweste oder Füßen erhöht – oder „Bankdrücken“'],
+  [/^liegestutze/, '„Liegestütze erhöht“ (Hände auf Bank oder Kasten)', 'Liegestütze mit Gewichtsweste oder Füßen erhöht oder „Bankdrücken“'],
   [/^hyperextensions \(/, 'einen kleineren Bewegungsradius', '„Hyperextensions mit Gewicht“'],
   [/^beinheben/, '„Knieheben hängend“', 'Beinheben langsamer und mit gestreckten Beinen'],
   [/^knieheben/, 'eine kleinere Bewegung', '„Beinheben hängend“'],
@@ -6778,7 +7055,7 @@ const HOME_HARDER = [
   [/goblet|kniebeugen/, '„Bulgarian Split Squats“ oder „Einbeinige Kniebeugen zum Stuhl“'],
   [/kreuzheben rumanisch \((kurzhantel|kettlebell)\)/, '„Kreuzheben rumänisch einbeinig (Kurzhantel)“'],
   [/hip thrust|glute bridge/, 'einbeinig ausführen oder oben 2 Sekunden halten'],
-  [/bankdrucken|floor press|fliegende/, 'langsamer (3 Sekunden absenken) oder mit Pause unten – oder „Liegestütze Füße erhöht“'],
+  [/bankdrucken|floor press|fliegende/, 'langsamer (3 Sekunden absenken) oder mit Pause unten oder „Liegestütze Füße erhöht“'],
   [/rudern/, 'oben 2 Sekunden halten und langsam absenken'],
   [/ausfallschritte|bulgarian|step-ups/, 'langsamer (3 Sekunden absenken) oder mit Pause unten'],
 ];
@@ -6790,7 +7067,7 @@ function maxedHint(en) {
     || (!en.sets.some(isDone) && last && !last.deload && last.sets.some(x => x.weight >= top && x.reps >= MAXED_REPS));
   if (!hit) return '';
   const n = norm(en.name), h = HOME_HARDER.find(([re]) => re.test(n));
-  return `💡 ${MAXED_REPS} Wdh. mit deinem schwersten Gewicht (${fmtNum(top)} kg): Zeit für eine schwerere Variante – ${h ? h[1]
+  return `💡 ${MAXED_REPS} Wdh. mit deinem schwersten Gewicht (${fmtNum(top)} kg): Zeit für eine schwerere Variante: ${h ? h[1]
     : 'einarmig bzw. einbeinig ausführen oder langsamer (3 Sekunden absenken)'}. Oder trag schwerere Gewichte unter „Plan → 🏠 Deine Ausrüstung“ ein.
     Tauschen kannst du die Übung oben über „⇄ Ersetzen“.${hintBtns(en, 'high')}`;
 }
@@ -6804,7 +7081,7 @@ function bandHint(en) {
     || (!en.sets.some(isDone) && lastSame && last.sets.some(x => x.reps >= BAND_MAX_REPS));
   if (!hit || en.bandNext) return '';
   const next = bandLevels().find(b => b > t.band);
-  return next ? `💡 ${BAND_MAX_REPS} Wdh. geschafft – Zeit fürs nächststärkere Band. Die App rechnet dann mit etwa ${BAND_STEP_REPS} Wdh. weniger.
+  return next ? `💡 ${BAND_MAX_REPS} Wdh. geschafft. Zeit fürs nächststärkere Band. Die App rechnet dann mit etwa ${BAND_STEP_REPS} Wdh. weniger.
       <button class="vchip" data-action="tr-band" data-ei="${ei}" data-v="${next}">Band „${BAND_LEVELS[next]}“ nehmen</button>${hintBtns(en, 'high')}`
     : `💡 ${BAND_MAX_REPS} Wdh. mit deinem stärksten Band: Nimm zwei Bänder zusammen, greif das Band kürzer oder führe die Bewegung langsamer aus (3 Sekunden absenken).${hintBtns(en, 'high')}`;
 }
@@ -6882,8 +7159,8 @@ function weightLowHint(en) {
   const inDay = new Set(draft.entries.map(e => nameKey(e.name)));
   const swap = typeof HOME_PICKS !== 'undefined' ? (HOME_PICKS[g] || []).find(x => !inDay.has(nameKey(x)) && homeOk(x, data.home) && !homeWeights(x, data.home)) : null;
   const kg = t.max10 != null ? Math.max(1, Math.round(t.max10)) : null;
-  return `💡 Mit deinem leichtesten Gewicht (${fmtNum(low)} kg) schaffst du keine ${minReps()} Wdh. – das ist für diese Übung noch zu schwer.
-    ${swap ? '' : `Dir fehlt ein leichteres Gewicht${kg != null && kg < low ? ` von etwa ${fmtNum(kg)} kg` : ''} – du kannst es unter „Plan → 🏠 Deine Ausrüstung“ eintragen.`}${hintBtns(en, 'low', swap)}`;
+  return `💡 Mit deinem leichtesten Gewicht (${fmtNum(low)} kg) schaffst du keine ${minReps()} Wdh. Das ist für diese Übung noch zu schwer.
+    ${swap ? '' : `Dir fehlt ein leichteres Gewicht${kg != null && kg < low ? ` von etwa ${fmtNum(kg)} kg` : ''}. Du kannst es unter „Plan → 🏠 Deine Ausrüstung“ eintragen.`}${hintBtns(en, 'low', swap)}`;
 }
 
 // Mit Gewicht über REP_SOFT_MAX Wdh.: die nächste Stufe reicht noch nicht – was stattdessen geht (weiche Grenze, ausblendbar)
@@ -6904,7 +7181,7 @@ function stepAskHint(en) {
   const w = parseNum((en.sets[0] || {}).weight), st = t.step || 2.5;
   if (!(w > 0) || w > STEP_ASK_KG || st <= STEP_FINE || st / w <= STEP_ASK_JUMP) return '';
   const ei = draft.entries.indexOf(en);
-  return `⚖️ Kleine Gewichte: Von ${fmtNum(w)} auf ${fmtNum(w + st)} kg wären ${Math.round(st / w * 100)} % mehr – ein großer Sprung.
+  return `⚖️ Kleine Gewichte: Von ${fmtNum(w)} auf ${fmtNum(w + st)} kg wären ${Math.round(st / w * 100)} % mehr, ein großer Sprung.
     Kannst du an diesem Gerät auch 1,25 kg feiner einstellen, z. B. mit einer kleinen Zusatzscheibe?
     <span class="hint-btns"><button class="vchip" data-action="step-ask" data-ei="${ei}" data-v="1">Ja, in 1,25-kg-Schritten</button>
       <button class="vchip" data-action="step-ask" data-ei="${ei}" data-v="0">Nein, geht nicht</button></span>`;
@@ -7040,11 +7317,69 @@ function addAutoSet(en) {
   const prevReps = prev ? parseNum(prev.reps) : null;
   en.sets.push({
     weight: prev ? prev.weight : '',
-    reps: prevReps != null ? String(Math.max(1, prevReps - FATIGUE)) : (en.target ? String(en.target.reps) : ''),
+    reps: prevReps != null ? String(en.holdSec ? prevReps : Math.max(1, prevReps - FATIGUE)) : (en.target ? String(en.target.reps) : ''),
     rir: '',
     auto: true,
+    ...(en.holdSec ? { noTank: true } : {}),
     variant: variantOf(prev),
   });
+}
+
+/* Halteübungen in normalen Plänen (v236, User-Regel 2026-11-14): Ziel in Sekunden statt des Wdh.-Bereichs des Tages.
+   Start 30 s. Geschafft → nächste Woche das Geschaffte (auf 5 s abgerundet), mindestens +5 s, höchstens 120 s. Nicht geschafft →
+   gleich; zweimal deutlich (≥ 20 %) darunter → das Beste der beiden. Kein Tank: die App zeigt je Satz „über/unter Ziel“
+   (Satz erledigt = Sekunden eingetragen oder „✓“ getippt). Längeres Halten ist nie ein Ausreißer.
+   Ab 90 s einmal je Übung ein Hinweis auf eine schwerere Variante (data.holdHintSeen). Calisthenics-Pläne haben eigene Regeln (cali.js). */
+const HOLD_START = 30, HOLD_INC = 5, HOLD_MAX = 120, HOLD_HINT_AT = 90;
+const floor5 = x => Math.floor(x / 5) * 5;
+function holdHistory(name) {
+  const k = nameKey(name), out = [];
+  for (const s of sessionsNewestFirst()) {
+    if (s.deload) continue;  // Deload und leichte Wettkampf-Woche zählen nicht
+    const e = s.entries.find(x => nameKey(x.name) === k);
+    if (e && (e.sets || []).some(x => x.reps != null)) out.push({ date: s.date, sets: e.sets, planned: e.planned || [] });
+  }
+  return out;
+}
+function holdApply(en, ex) {
+  if (!draft || draft.own || !ex || ex.cali || !holdSec(en.name) || typeof caliSetOf !== 'function' || !en.sets.length) return;
+  const hist = holdHistory(en.name);
+  const monday = mondayISO(new Date(todayISO() + 'T12:00:00'));
+  const thisWeek = hist.find(h => h.date.slice(0, 10) >= monday);  // schon diese Woche: gleiches Ziel
+  for (let i = 0; i < en.sets.length; i++) {
+    let v = null;
+    if (thisWeek || draft.deload) { const h = thisWeek || hist[0]; if (h) v = caliSetOf(h, i).planned; }
+    else if (hist.length) {
+      const a = caliSetOf(hist[0], i), b = hist[1] ? caliSetOf(hist[1], i) : null;
+      v = a.done != null && a.done >= a.planned ? Math.max(a.planned + HOLD_INC, floor5(a.done)) : a.planned;
+      if (caliClearMiss(a) && caliClearMiss(b)) v = Math.min(a.planned, floor5(Math.max(a.done, b.done)));
+    }
+    v = Math.max(5, Math.min(HOLD_MAX, v || HOLD_START));
+    en.sets[i] = { ...en.sets[i], reps: String(v), refR: String(v), rir: '', noTank: true, auto: true };
+    en.planned[i] = { ...(en.planned[i] || { weight: null }), reps: v };
+  }
+  en.holdSec = true;
+  en.note = '';
+  en.target = { ...en.target, reps: Math.max(...en.planned.map(x => x.reps)), holdSec: true };
+}
+// Spalte „Ziel“ statt Tank: vor dem Satz das Ziel bzw. „✓“ zum Bestätigen, danach über/unter
+function holdDiffHtml(en, ei, si) {
+  const s = en.sets[si], p = ((en.planned || [])[si] || {}).reps, r = parseNum(s.reps);
+  if (!isDone(s)) return `<button class="hold-ok" data-action="hold-ok" data-ei="${ei}" data-si="${si}" aria-label="Satz ${si + 1}: Ziel ${p} s geschafft">✓</button>`;
+  if (r == null || p == null) return '';
+  const d = r - p;
+  return `<span class="hold-diff ${d > 0 ? 'over' : d < 0 ? 'under' : 'ok'}">${d > 0 ? `+${d} s` : d < 0 ? `−${-d} s` : '✓ Ziel'}</span>`;
+}
+function holdDiffSync(ei) {
+  const en = draft.entries[ei];
+  en.sets.forEach((_, si) => { const el = $view.querySelector(`[data-holddiff="${ei}-${si}"]`); if (el) el.innerHTML = holdDiffHtml(en, ei, si); });
+}
+function holdHintHtml(en) {
+  const top = Math.max(0, ...(en.planned || []).map(x => x.reps || 0));
+  if (top < HOLD_HINT_AT || (data.holdHintSeen || {})[nameKey(en.name)]) return '';
+  return `<div class="hint-item hold-up"><div>💡 Ab etwa ${HOLD_HINT_AT} Sekunden trainiert ${esc(en.name)} vor allem die Ausdauer. Mehr Kraft bringt eine
+    schwerere Variante, z. B. mit Gewicht auf dem Rücken oder mit einem angehobenen Bein. Die App steigert die Zeit weiter bis ${HOLD_MAX} s.</div>
+    <button class="icon-btn" data-action="hold-hint-off" data-name="${esc(en.name)}" aria-label="Hinweis ausblenden">✕</button></div>`;
 }
 
 // Übung im laufenden Training neu vorschlagen (Vorermüdung, Max., Gewichtsstufe, Band, Tausch) – die aktuelle Satzzahl
@@ -7062,6 +7397,7 @@ function rebuildEntry(en, target) {
     const ei = draft.entries.indexOf(en);
     if (ei >= 0) recalcSets(ei);
   }
+  holdApply(en, planExercise(en.name));  // v236: Halteziel in Sekunden bleibt
 }
 
 // Übung im laufenden Training gegen eine andere tauschen (Plan bleibt unverändert)
@@ -7121,7 +7457,7 @@ function saveTraining() {
         .map(s => ({
           weight: parseNum(s.weight), reps: parseNum(s.reps), rir: parseNum(s.rir),
           ...(s.variant ? { variant: s.variant } : {}),
-          ...(setOutlier({ weight: parseNum(s.weight), reps: parseNum(s.reps) }, outlierRef(en.name, (en.planned || [])[en.sets.indexOf(s)])) ? { outlier: 1 } : {}),
+          ...(!en.holdSec && setOutlier({ weight: parseNum(s.weight), reps: parseNum(s.reps) }, outlierRef(en.name, (en.planned || [])[en.sets.indexOf(s)])) ? { outlier: 1 } : {}),
           ...(s.open ? { open: 1 } : {}),
           ...(isTech(s.variant) && s.subs ? { subs: s.subs.map((x, j) => ({ weight: subWeight(en, en.sets.indexOf(s), j), reps: parseNum(x.reps) }))
             .filter(x => x.reps != null) } : {}),  // Teil-Sätze (v211)
@@ -7162,6 +7498,7 @@ function saveTraining() {
   const session = { id: uid(), dayId: draft.dayId, dayName: draft.dayName, date: draft.date, entries };
   if (draft.deload) session.deload = true;
   else if (!prog.volume || !prog.load) session.progression = { volume: prog.volume, load: prog.load };
+  if (draft.light) session.light = true;  // Hyrox-Wettkampf-Woche: leicht, aber keine Deload-Woche (dlSession)
   if (draft.penalty) session.readiness = draft.readiness;
   if (draft.mc) session.mc = draft.mc;  // Zyklus-Zeitfenster und gewählte Stufe (Lernen, Folgewoche)
   if (draft.timeCut) session.timeLimit = draft.timeLimit;  // auf Zeit gekürzt (Anzeige im Verlauf)
@@ -7228,11 +7565,11 @@ async function decryptBackup(d, pw) {
 // Verschlüsselte Sicherung öffnen: nach dem Passwort fragen (bis zu 3 Versuche); null = abgebrochen
 async function openEncryptedBackup(raw) {
   for (let i = 0; i < 3; i++) {
-    const pw = await uiPrompt(`Diese Sicherung ist mit einem Passwort geschützt.${i ? '\n\nFalsches Passwort – bitte noch einmal.' : ''}`, '', 'password');
+    const pw = await uiPrompt(`Diese Sicherung ist mit einem Passwort geschützt.${i ? '\n\nFalsches Passwort. Bitte noch einmal.' : ''}`, '', 'password');
     if (pw === null) return null;
     try { return JSON.parse(await decryptBackup(raw, pw)); } catch (e) { /* falsches Passwort */ }
   }
-  alert('Dreimal ein falsches Passwort – die Sicherung wurde nicht geladen.');
+  alert('Dreimal ein falsches Passwort. Die Sicherung wurde nicht geladen.');
   return null;
 }
 const backupPwOn = () => !!data.backupPw;  // Einstellung „Sicherungen mit Passwort“ (das Passwort selbst wird nicht gespeichert)
@@ -7241,7 +7578,7 @@ let backupPw = '';                         // nur im Arbeitsspeicher, solange di
 async function askBackupPw() {
   let pw = backupPw;
   if (pw.length < 4) {
-    pw = await uiPrompt('Passwort für diese Sicherung\n\nWird nicht gespeichert – ohne Passwort lässt sich die Datei nicht mehr öffnen.', '', 'password');
+    pw = await uiPrompt('Passwort für diese Sicherung\n\nWird nicht gespeichert. Ohne Passwort lässt sich die Datei nicht mehr öffnen.', '', 'password');
     if (pw === null) return null;
     pw = pw.trim();
   }
@@ -7460,10 +7797,10 @@ const actions = {
     const f = libForm;
     const name = f.name.trim().replace(/\s+/g, ' ');
     if (!name) { alert('Bitte gib der Übung einen Namen.'); return; }
-    if (!f.group) { alert('Bitte wähle die Muskelgruppe – aus ihr bekommt die Übung ihre Sätze.'); return; }
+    if (!f.group) { alert('Bitte wähle die Muskelgruppe. Aus ihr bekommt die Übung ihre Sätze.'); return; }
     const renamed = f.orig && nameKey(f.orig) !== nameKey(name);
     if ((!f.orig || renamed) && (builtinExercise(name) || customExercise(name))) {
-      alert(`„${name}“ gibt es schon in der Bibliothek. Such sie einfach dort – oder wähle einen anderen Namen.`);
+      alert(`„${name}“ gibt es schon in der Bibliothek. Such sie einfach dort oder wähle einen anderen Namen.`);
       return;
     }
     const like = (f.like || '').trim();
@@ -7477,7 +7814,7 @@ const actions = {
     registerCustomExercises();
     saveData();
     libForm = null;
-    if (like && !c.like) toast('Ähnliche Übung nicht gefunden – bitte aus den Vorschlägen wählen');
+    if (like && !c.like) toast('Ähnliche Übung nicht gefunden. Bitte aus den Vorschlägen wählen');
     else toast(f.orig ? 'Übung gespeichert ✔' : `${name} angelegt ✔`);
     libOpenGroups.add('own');
     if (current.params.ret && swapReturn) { swapNewFinish(name); return; }  // v218: aus dem Ersetzen-Menü – gleich tauschen
@@ -7486,7 +7823,7 @@ const actions = {
   },
   'libc-del': el => {
     const name = el.dataset.name;
-    if (!askOk(`„${name}“ aus deinen eigenen Übungen löschen?\n\nIn deinen Plänen und im Verlauf bleibt sie erhalten – sie erscheint nur nicht mehr in der Bibliothek und in den Vorschlägen.`)) return;
+    if (!askOk(`„${name}“ aus deinen eigenen Übungen löschen?\n\nIn deinen Plänen und im Verlauf bleibt sie erhalten, sie erscheint nur nicht mehr in der Bibliothek und in den Vorschlägen.`)) return;
     data.customExercises = data.customExercises.filter(c => nameKey(c.name) !== nameKey(name));
     registerCustomExercises();
     saveData();
@@ -7501,6 +7838,11 @@ const actions = {
     go('libex', { name, from: current.view, fromParams: current.params, returnY: window.scrollY, tab });
   },
   // Muskelgruppe auf-/zuklappen (Liste wird erst beim Aufklappen gezeichnet)
+  'plan-course': el => { activePlan().rirCourse = el.dataset.k; saveData(); render(); },
+  'plan-rir-auto': () => {
+    if (!askOk('Auf automatische Tank-Werte umstellen? Deine eigene Tabelle wird dabei nicht mehr verwendet.')) return;
+    Object.assign(activePlan(), { rirMode: 'auto', rirCourse: 'strong', rirStyle: 0, rirPlan: {} }); saveData(); render();
+  },
   'lib-toggle': el => {
     const g = el.dataset.g;
     if (libOpenGroups.has(g)) libOpenGroups.delete(g); else libOpenGroups.add(g);
@@ -7525,10 +7867,38 @@ const actions = {
     data.timeLimit = { min: m, once: timeEdit.once, ss: timeEdit.ss !== false };
     timeEdit = null;
     saveData();
-    toast(`⏱ Zeitlimit ${m} min – ${data.timeLimit.once ? 'gilt für das nächste Training' : 'gilt, bis du es änderst'}`);
+    toast(`⏱ Zeitlimit ${m} min, ${data.timeLimit.once ? 'gilt für das nächste Training' : 'gilt, bis du es änderst'}`);
     render();
   },
-  'time-off': () => { delete data.timeLimit; timeEdit = null; saveData(); toast('Zeitlimit aus – wieder das ganze Training'); render(); },
+  'tc-step': el => {
+    const k = Number(el.dataset.k), f = draft.timeFull[k], min = tcDone(tcFind(f));
+    draft.timePick[k] = Math.max(min, Math.min(f.sets.length, draft.timePick[k] + Number(el.dataset.d)));
+    saveDraft(); render();
+  },
+  'tc-edit': () => { draft.timeOk = false; tcPickInit(); saveDraft(); render(); window.scrollTo(0, 0); },
+  'tc-ok': () => {
+    tcApply(draft.timePick);
+    const c = draft.timeCut, full = draft.timeFull;
+    if (c) {
+      const now = full.map(f => ({ f, en: tcFind(f) }));
+      Object.assign(c, { after: tcMinutes(draft.entries.map(en => ({ en, n: en.sets.length }))),
+        dropped: now.filter(x => !x.en).map(x => x.f.name),
+        cut: now.filter(x => x.en && x.en.sets.length < x.f.sets.length).map(x => ({ name: x.f.name, from: x.f.sets.length, to: x.en.sets.length })) });
+    }
+    draft.timeOk = true; draft.timePick = null;
+    saveDraft(); render();
+  },
+  'tc-full': () => {
+    const pick = {}; draft.timeFull.forEach((f, k) => { pick[k] = f.sets.length; });
+    tcApply(pick);
+    // Supersätze, die nur fürs Zeitlimit gekoppelt wurden, wieder lösen (wie im Plan)
+    draft.entries.forEach(en => { const f = draft.timeFull.find(x => nameKey(x.name) === nameKey(en.name)); if (!f) return;
+      if (f.ss) Object.assign(en, { ss: f.ss, ssRest: f.ssRest }); else { delete en.ss; delete en.ssRest; } });
+    Object.assign(draft, { timeLimit: null, timeCut: null, timeFull: null, timePick: null, timeOk: false, ssToday: [] });
+    saveDraft(); render();
+    toast('Wieder das ganze Training');
+  },
+  'time-off': () => { delete data.timeLimit; timeEdit = null; saveData(); toast('Zeitlimit aus, wieder das ganze Training'); render(); },
   'skip-open': () => {
     const ci = cycleInfo();
     skipPick = new Set(roundSkipped(ci.cycleStart, ci.week));
@@ -7551,7 +7921,7 @@ const actions = {
     skipPick = null;
     saveData();
     const now = cycleInfo();
-    toast(now.cycleStart !== ci.cycleStart || now.week !== ci.week ? `Woche geschafft – weiter mit ${ciLabel(now)}`
+    toast(now.cycleStart !== ci.cycleStart || now.week !== ci.week ? `Woche geschafft, weiter mit ${ciLabel(now)}`
       : list.length ? `${new Set(list).size} Tag${new Set(list).size === 1 ? '' : 'e'} ausgelassen` : 'Keine Tage ausgelassen');
     render();
   },
@@ -7653,8 +8023,9 @@ const actions = {
   'tr-go': el => trGo(Number(el.dataset.d)),
   'tr-go-to': el => trGo(0, Number(el.dataset.i)),
   'tr-to-save': () => { const b = $view.querySelector('[data-action="tr-save"]'); if (b) b.scrollIntoView({ block: 'center', behavior: 'smooth' }); },
-  'reorder-toggle': () => {
+  'reorder-toggle': el => {
     draft.reorder = !draft.reorder;
+    draft.reorderFrom = draft.reorder && el && el.dataset && el.dataset.ei != null ? Number(el.dataset.ei) : null;  // v244: Übung hervorheben
     saveDraft(); render();
     if (draft.reorder) window.scrollTo(0, 0);
   },
@@ -7696,7 +8067,7 @@ const actions = {
     if (navigator.share) {
       try { await navigator.share({ title: `${APP_SHORT} Fehlerprotokoll`, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
-    try { await navigator.clipboard.writeText(text); toast('Fehlerprotokoll kopiert ✔ – z. B. in eine Nachricht einfügen'); }
+    try { await navigator.clipboard.writeText(text); toast('Fehlerprotokoll kopiert ✔, z. B. in eine Nachricht einfügen'); }
     catch (e) { uiCopy(text); }
   },
   'err-clear': () => {
@@ -7737,6 +8108,13 @@ const actions = {
   },
   'trm-entry-help': () => { entryHelpOpen = true; render(); window.scrollTo(0, 0); },
   'trm-prefat': () => { prefatHelpOpen = true; render(); window.scrollTo(0, 0); },
+  'trm-swipe': () => {
+    data.profile = data.profile || {};
+    data.profile.swipe = !trSwipeOn();
+    trMenuOpen = false;
+    saveData(); render(); syncTrHead();
+    toast(trSwipeOn() ? 'Eine Übung je Bildschirm: nach links wischen für die nächste' : 'Alle Übungen untereinander');
+  },
   'trm-details-all': () => {
     const open = !draft.entries.every(detOpen);
     draft.entries.forEach(en => { en.detOpen = open; });
@@ -7847,6 +8225,13 @@ const actions = {
     refreshPrefat();
     saveDraft(); render();
   },
+  'hold-ok': el => {
+    const ei = +el.dataset.ei, si = +el.dataset.si, s = draft.entries[ei].sets[si];
+    s.touched = true; s.auto = false;
+    restStart(ei, si);
+    recalcSets(ei); saveDraft(); render();
+  },
+  'hold-hint-off': el => { data.holdHintSeen = { ...(data.holdHintSeen || {}), [nameKey(el.dataset.name)]: true }; saveData(); render(); },
   'typo-ok': el => {
     const s = draft.entries[el.dataset.ei].sets[el.dataset.si];
     s.typoOk = `${s.weight}|${s.reps}`;
@@ -8039,7 +8424,7 @@ const actions = {
     p.progression = { volume: true, load: true };
     setRound(newCycleId(), 1, (data.cycle.no || 0) + 1);
     saveData(); render();
-    toast('Steigerung eingeschaltet – es beginnt die Intro-Woche');
+    toast('Steigerung eingeschaltet, es beginnt die Intro-Woche');
   },
   'plan-rename': async el => {
     const p = data.plans.find(x => x.id === el.dataset.id);
@@ -8139,7 +8524,7 @@ const actions = {
         data.cycle.buildWeeks = len;
         if (!trained) setRound(ci.cycleStart, len + 1, ci.cycle);
       }
-      toast(cycleInfo().deload ? 'Jetzt: Deload-Woche, danach neuer Zyklus' : 'Zyklus endet nach dieser Woche – dann kommt der Deload');
+      toast(cycleInfo().deload ? 'Jetzt: Deload-Woche, danach neuer Zyklus' : 'Zyklus endet nach dieser Woche, dann kommt der Deload');
     } else if (el.dataset.m === 'newdl') {
       // neuer Zyklus, der mit der Deload-Woche beginnt (Wiedereinstieg) – danach Intro-Woche im selben Zyklus
       if (ci.deload) { toast('Die Deload-Woche läuft schon'); return; }
@@ -8149,12 +8534,12 @@ const actions = {
       if (selfDeload()) data.cycle.deloadAt = 1;
       else setRound(id, data.cycle.buildWeeks + 1, ci.cycle + 1);
       data.cycle.leadDl = id;
-      toast('Neuer Zyklus – es geht mit der Deload-Woche los, danach Intro');
+      toast('Neuer Zyklus: Es geht mit der Deload-Woche los, danach Intro');
     } else {
       // ohne Deload: sofort neuer Zyklus mit der Intro-Woche
       data.cycle.buildWeeks = Math.max(1, ci.week - (roundSessions(ci.cycleStart, ci.week).length ? 0 : 1));
       setRound(newCycleId(ci.cycleStart), 1, ci.cycle + 1);
-      toast('Neuer Zyklus – es geht mit der Intro-Woche los');
+      toast('Neuer Zyklus: Es geht mit der Intro-Woche los');
     }
     cycEndAsk = false; cycAdjustOpen = false;
     saveData(); render();
@@ -8179,7 +8564,7 @@ const actions = {
   'deload-now': () => {
     const ci = cycleInfo();
     if (ci.deload) return;
-    if (!askOk('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mind. 3 Wdh. im Tank – jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
+    if (!askOk('Deload-Woche jetzt einlegen?\n\nHalbe Sätze, 15 % weniger Gewicht oder weniger Wdh., mind. 3 Wdh. im Tank, jeder Trainingstag einmal. Danach beginnt ein neuer Zyklus mit der Intro-Woche.')) return;
     startDeloadNow();
     saveData(); render();
     toast('Deload-Woche eingelegt');
@@ -8408,7 +8793,7 @@ const actions = {
     setRound(todayISO(), 1, 1);
     saveData();
     draft = null; saveDraft();
-    toast('Trainings gelöscht – Plan ist noch da');
+    toast('Trainings gelöscht, der Plan ist noch da');
     go('plan');
   },
   'reset-all': () => {
@@ -8505,6 +8890,7 @@ const fields = {
   },
   'rep-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'plan-swap-name': el => showSuggestions(el),
+  'ss-pick-name': el => showSuggestions(el),  // v242
   'add-name': el => { showSuggestions(el); fillReplaceMax(el); },
   'libc-name': el => { libForm.name = el.value; },
   'libc-note': el => { libForm.note = el.value; },
@@ -8640,7 +9026,7 @@ function swipeNextHtml(ei) {
   const n = draft.entries.length;
   return ei < n - 1
     ? `<button class="btn primary swipe-next" data-action="tr-go" data-d="1">Nächste Übung: ${esc(draft.entries[ei + 1].name)} ›</button>`
-    : '<button class="btn swipe-next" data-action="tr-to-save">Letzte Übung – zum Speichern ↓</button>';
+    : '<button class="btn swipe-next" data-action="tr-to-save">Letzte Übung, zum Speichern ↓</button>';
 }
 let swipeStart = null;
 document.addEventListener('touchstart', e => {
@@ -8775,8 +9161,13 @@ const profileName = () => (data.profile && data.profile.name) || '';
 const profileSex = () => (data.profile && data.profile.sex) || null;
 // Farbe: selbst gewählt, sonst passend zum Geschlecht (Frau: Beere, sonst Blau)
 const sexColor = () => profileSex() === 'f' ? 'berry' : 'blue';
+// v234: Designs bringen eine Farbe als Vorschlag mit (Kraftraum: Abendrot, Logbuch: Wald), solange keine Farbwelt selbst gewählt ist
+const LOOK_COLORS = { kraft: 'sunset', log: 'forest' };
 const profileColor = () => {
-  const c = data.profile && data.profile.color;
+  const p = data.profile || {};
+  const dc = LOOK_COLORS[currentLook()];
+  if (dc && !p.colorSet) return dc;
+  const c = p.color;
   return c && PROFILE_COLORS[c] ? c : sexColor();
 };
 
@@ -8804,7 +9195,8 @@ function applyTheme() {
   plainSync();
   iconSync();
   // Statusleiste des Handys in der Hintergrundfarbe der Farbwelt einfärben
-  const [light, dark] = plainOn() ? ['#f4f4f5', '#0e0e10'] : PROFILE_COLORS[profileColor()].bg;  // Schlicht: neutral
+  const LOOK_BG = { plain: ['#f4f4f5', '#0e0e10'], kraft: ['#eceef0', '#141517'], log: ['#fbfbfa', '#121413'], bw: ['#ffffff', '#101010'], sheet: ['#f8f9fa', '#1f1f1f'] };
+  const [light, dark] = LOOK_BG[currentLook()] || PROFILE_COLORS[profileColor()].bg;  // Schlicht und die neuen Designs (v234): neutral
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
     const isDark = /dark/.test(m.getAttribute('media') || '');
     m.setAttribute('content', mode === 'dark' ? dark : mode === 'light' ? light : isDark ? dark : light);
@@ -8816,6 +9208,7 @@ function applyTheme() {
 // Mitteilungen und Rückfragen. Einfache Zeichen (✔ ✕ ✎ ↑ ↓ ★ …) bleiben – mit U+FE0E immer einfarbig.
 // Behälter, die danach leer sind (z. B. das große Symbol über einer Frage), werden ausgeblendet (.plain-empty).
 const plainOn = () => !!(data.profile && data.profile.look === 'plain');
+const emojiOff = () => plainOn() || (typeof currentLook === 'function' && currentLook() === 'sheet');  // v248: Puristen ohne Emojis
 // Schlicht (v219): Tagesnummern zweistellig wie „01“
 const dayNoText = i => plainOn() ? String(i + 1).padStart(2, '0') : i + 1;
 const PLAIN_KEEP = new Set([...'✔✓✕✎★☆↑↓⇅⇄↔↕⬆⬇▶◀‹›→←↘↗↩−+']);  // ↘ = Reduktions-Teil-Satz (v212)
@@ -8851,8 +9244,9 @@ function plainNode(root) {
 }
 let plainObs = null;
 function plainSync() {
-  const on = plainOn();
-  if (on) document.documentElement.dataset.look = 'plain'; else delete document.documentElement.dataset.look;
+  const on = emojiOff();
+  const look = currentLook();
+  if (look) document.documentElement.dataset.look = look; else delete document.documentElement.dataset.look;
   if (on && !plainObs && typeof MutationObserver === 'function') {
     plainObs = new MutationObserver(list => {
       for (const m of list) {
@@ -8871,9 +9265,15 @@ function plainSync() {
 // Rückfragen und Hinweise des Browsers ebenfalls ohne Emojis
 for (const k of ['alert', 'confirm', 'prompt']) {
   const orig = window[k];
-  if (typeof orig === 'function') window[k] = function (msg, ...rest) { return orig.call(window, plainOn() ? plainStrip(String(msg)) : msg, ...rest); };
+  if (typeof orig === 'function') window[k] = function (msg, ...rest) { return orig.call(window, emojiOff() ? plainStrip(String(msg)) : msg, ...rest); };
 }
-const LOOKS = { '': 'Standard', plain: 'Schlicht' };
+// Stile (v234): drei neue Designs, dazu die bisherigen „Standard“ und „Schlicht“. Ohne Angabe im Profil (neue Nutzer): Kraftraum.
+const LOOKS = { kraft: 'Kraftraum', log: 'Logbuch', bw: 'Schwarzweiß', sheet: 'Puristen', '': 'Standard', plain: 'Schlicht' };  // v248: Puristen = Tabellen-Optik
+const currentLook = () => {
+  const p = data.profile;
+  const l = p && p.look !== undefined ? p.look || '' : 'kraft';
+  return l in LOOKS ? l : 'kraft';
+};
 
 // Diskopumper und Booty-Plan schließen sich aus: angezeigt wird nur der passende (ohne Angabe beide)
 function classicHidden(id) {
@@ -8906,22 +9306,24 @@ function appearanceCard() {
       <div class="seg three">${Object.entries(THEME_MODES).map(([k, l]) =>
         `<button class="${((p.theme || '') === k) ? 'on' : ''}" data-action="profile-theme" data-k="${k}">${l}</button>`).join('')}
       </div>
-      <p class="hint explain">Blau und Beere haben einen neutralen grauen Hintergrund, alle anderen Farbwelten färben auch den Hintergrund ein.
+      <p class="hint explain">Im Stil Standard färben die meisten Farbwelten auch den Hintergrund ein, in allen anderen Stilen bleibt er neutral.
         „Automatisch“ folgt der Einstellung deines Handys (hell/dunkel),
-        „Hell“ und „Dunkel“ gelten immer – jede Farbwelt gibt es in beiden Varianten.</p>
+        „Hell“ und „Dunkel“ gelten immer. Jede Farbwelt gibt es in beiden Varianten.</p>
       <p class="lbl">Textgröße</p>
       <div class="seg three size-seg">${Object.entries(SIZES).map(([k, l]) =>
         `<button class="${((p.size || '') === k) ? 'on' : ''}" data-action="profile-size" data-k="${k}">${l}</button>`).join('')}</div>
-      <p class="hint">Macht Schrift, Felder und Knöpfe auf allen Seiten größer – gut lesbar auch ohne Brille.</p>
+      <p class="hint">Macht Schrift, Felder und Knöpfe auf allen Seiten größer, gut lesbar auch ohne Brille.</p>
       <p class="lbl">Stil</p>
-      <div class="seg two">${Object.entries(LOOKS).map(([k, l]) =>
-        `<button class="${((p.look || '') === k) ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
-      <p class="hint explain">„Standard“: mit Symbolen, Farben und Farbverläufen. „Schlicht“: ohne Emojis, ganz in Schwarz, Weiß und Grau,
-        flache Flächen und feine Linien – nur die Überschriften haben die Farbe deiner Farbwelt.</p>
+      <div class="variants look-pick">${Object.entries(LOOKS).map(([k, l]) =>
+        `<button class="vchip ${currentLook() === k ? 'on' : ''}" data-action="profile-look" data-k="${k}">${l}</button>`).join('')}</div>
+      <p class="hint explain">„Kraftraum“: sportlich mit kräftigen, schmalen Überschriften und großen Zahlen. „Logbuch“: wie ein Trainingsbuch,
+        Zeilen statt Karten, Zahlen in Schreibmaschinenschrift. „Schwarzweiß“: nur Schwarz und Weiß, dicke Linien statt Karten. „Puristen“: so einfach wie eine Tabelle in Excel oder Google Sheets, ohne Emojis.
+        Kraftraum und Logbuch übernehmen deine Farbwelt. Ohne eigene Wahl ist Kraftraum orange und Logbuch grün.
+        „Standard“ und „Schlicht“ sind die bisherigen Stile.</p>
       <p class="lbl">Übungen im Training</p>
       <div class="seg two tr-viewmode"><button class="${trSwipeOn() ? '' : 'on'}" data-action="tr-swipe" data-v="0">↕ Untereinander</button>
         <button class="${trSwipeOn() ? 'on' : ''}" data-action="tr-swipe" data-v="1">↔ Wischen</button></div>
-      <p class="hint explain">„Untereinander“: alle Übungen auf einer Seite zum Scrollen. „Wischen“: eine Übung je Bildschirm – nach links wischen
+      <p class="hint explain">„Untereinander“: alle Übungen auf einer Seite zum Scrollen. „Wischen“: eine Übung je Bildschirm, nach links wischen
         für die nächste Übung, nach rechts für die vorige.</p>
     </div>`;
 }
@@ -8945,7 +9347,7 @@ function colorHintCard() {
   if (!data.profile || !data.profile.name || data.profile.colorHint) return '';
   return `<div class="card color-hint">
       <h2>🎨 Mach die App zu deiner</h2>
-      <p>Im Reiter <b>„Optionen“</b> kannst du die Farbwelt der App wählen – viele davon färben auch den Hintergrund ein –
+      <p>Im Reiter <b>„Optionen“</b> kannst du die Farbwelt der App wählen. Viele davon färben auch den Hintergrund ein
         und zwischen hell und dunkel wechseln.</p>
       <div class="row"><button class="btn primary" data-action="color-hint" data-go="1">Farben ansehen</button>
         <button class="btn" data-action="color-hint">Später</button></div>
@@ -8983,11 +9385,11 @@ function showWelcome() {
 // Startseiten für neue Nutzer (v213, „Startseite A“): drei Bilder mit je einem Satz, was die App besonders macht
 const INTRO = [
   { img: 'intro-1.jpg', h: 'Weniger rätseln, mehr trainieren',
-    p: 'Für jeden Satz sagt dir die App, welches <b>Gewicht</b> und wie viele <b>Wiederholungen</b> – passend zu deiner Kraft. Nach jedem Training lernt sie dazu.' },
+    p: 'Für jeden Satz sagt dir die App, welches <b>Gewicht</b> und wie viele <b>Wiederholungen</b>, passend zu deiner Kraft. Nach jedem Training lernt sie dazu.' },
   { img: 'intro-2.jpg', h: 'Ein Plan, der mitwächst',
-    p: 'Woche für Woche ein bisschen mehr, dann eine leichtere Woche zur Erholung. Deinen Plan erstellt der Assistent in wenigen Minuten – fürs Studio oder zu Hause.' },
+    p: 'Woche für Woche ein bisschen mehr, dann eine leichtere Woche zur Erholung. Deinen Plan erstellt der Assistent in wenigen Minuten, fürs Studio oder zu Hause.' },
   { img: 'intro-3.jpg', h: 'Fortschritt, den du siehst',
-    p: 'Bestleistungen, Kraftverlauf und ein Rückblick nach jedem Zyklus zeigen dir, dass es wirkt. <b>Ohne Konto, ohne Werbung</b> – alles bleibt auf deinem Handy.' },
+    p: 'Bestleistungen, Kraftverlauf und ein Rückblick nach jedem Zyklus zeigen dir, dass es wirkt. <b>Ohne Konto, ohne Werbung</b>: Alles bleibt auf deinem Handy.' },
 ];
 function introHtml() {
   const i = welc.slide || 0, s = INTRO[i], last = i === INTRO.length - 1;
@@ -9023,15 +9425,17 @@ function welcomeHtml() {
     return `${icon}${dots}
       ${welc.fresh ? `<h2 id="welcome-title">Willkommen bei ${APP_NAME}</h2>
       <ul class="welcome-why">
-        <li>Für jeden Satz sagt dir die App <b>Gewicht und Wiederholungen</b> – passend zu deiner Kraft.</li>
+        <li>Für jeden Satz sagt dir die App <b>Gewicht und Wiederholungen</b>, passend zu deiner Kraft.</li>
         <li>Sie <b>lernt aus jedem Training</b> und steigert dich Schritt für Schritt, mit Erholungswochen zur richtigen Zeit.</li>
-        <li>Dein <b>Plan in wenigen Minuten</b> – fürs Studio, an Maschinen oder zu Hause. Oder du übernimmst deinen eigenen.</li>
+        <li>Dein <b>Plan in wenigen Minuten</b>, fürs Studio, an Maschinen oder zu Hause. Oder du übernimmst deinen eigenen.</li>
         <li>Auf Wunsch auch <b>Ernährung</b>: Kalorienziel, Tagebuch und Barcode-Scanner.</li>
-        <li><b>Ohne Konto, ohne Werbung</b> – deine Daten bleiben auf deinem Handy.</li>
+        <li><b>Ohne Konto, ohne Werbung</b>: Deine Daten bleiben auf deinem Handy.</li>
+        <li><b>Am Anfang erklärt dir die App alles ausführlich.</b> Damit die Seiten danach übersichtlich bleiben, klappen die Erklärungen
+          nach dem zweiten Lesen zu „? Erklärung“ zusammen. Ein Tipp darauf holt sie jederzeit zurück.</li>
       </ul>
       <details class="welcome-health"><summary>⚕️ Wichtig: Gesundheitshinweis</summary>${typeof healthListHtml === 'function' ? healthListHtml() : ''}</details>`
       : `<h2 id="welcome-title">Etwas persönlicher</h2>
-      <p>Verrate der App kurz, wie du heißt – dann kann sie dich persönlich ansprechen und sich etwas mehr auf dich einstellen.</p>`}
+      <p>Verrate der App kurz, wie du heißt, dann kann sie dich persönlich ansprechen und sich etwas mehr auf dich einstellen.</p>`}
       <div class="welcome-form">
         <label class="lbl">Wie heißt du?
           <input class="inp" type="text" id="welcome-name" autocomplete="given-name" placeholder="Vorname" value="${esc(profileName())}">
@@ -9041,7 +9445,7 @@ function welcomeHtml() {
         ${welc.fresh ? `<p class="lbl">Wie viel soll die App zeigen?</p>
           <div class="welcome-modes" id="welcome-mode">${Object.entries(APP_MODES).map(([k, x]) =>
             `<button class="split-opt ${welc.mode === k ? 'on' : ''}" data-action="welcome-mode" data-m="${k}"><b>${x.icon} ${x.label}</b><small>${x.text}</small></button>`).join('')}</div>
-          <p class="hint welcome-note">Die Trainingssteuerung ist in allen Modi gleich – der Modus bestimmt nur, wie viele Zahlen und
+          <p class="hint welcome-note">Die Trainingssteuerung ist in allen Modi gleich. Der Modus bestimmt nur, wie viele Zahlen und
             Einstellungen du siehst. Du kannst ihn jederzeit in den Optionen ändern.</p>
           <p class="lbl">Wie möchtest du motiviert werden?</p>
           <div class="seg three" id="welcome-motiv">${Object.entries(MOTIV_OPTS).map(([k, [, l]]) =>
@@ -9056,15 +9460,15 @@ function welcomeHtml() {
   const train = welc.phase === 'diet' || welc.phase === 'minicut'
     ? nutTrainQuestion(welc, 'welcome-train')
     : welc.phase === 'bulk' || welc.phase === 'recomp'
-      ? `<p class="hint welcome-note">Im ${welc.phase === 'bulk' ? 'Aufbau' : 'Body Recomposition'} läuft dein Trainingsplan ganz normal –
-          eine Anpassung ist nur in Diät und Minicut vorgesehen.</p>` : '';
+      ? `<p class="hint welcome-note">Im ${welc.phase === 'bulk' ? 'Aufbau' : 'Body Recomposition'} läuft dein Trainingsplan ganz normal.
+          Eine Anpassung ist nur in Diät und Minicut vorgesehen.</p>` : '';
   return `${icon}${dots}
       <h2 id="welcome-title">${welc.fresh || welcomeNeedsProfile() ? 'Deine Ernährungsphase' : `${esc(profileName()) ? esc(profileName()) + ', i' : 'I'}n welcher Phase bist du?`}</h2>
-      <p>${welc.fresh || welcomeNeedsProfile() ? 'In welcher Phase bist du gerade?' : 'Neu in der App:'} Davon hängt ab, wie viel du essen solltest – und
+      <p>${welc.fresh || welcomeNeedsProfile() ? 'In welcher Phase bist du gerade?' : 'Neu in der App:'} Davon hängt ab, wie viel du essen solltest, und
         auf Wunsch passt die App in einer Diät auch deinen Trainingsplan an.</p>
       <div class="welcome-form wiz-q welcome-phases">
         ${Object.entries(NUT_PHASES).filter(([p]) => p !== 'minicut' || feat('nut-minicut')).map(([p, ph]) => opt(p, ph.icon, ph.label, ph.short)).join('')}
-        ${opt('', '🕓', 'Später festlegen', 'Kein Problem – du kannst die Phase jederzeit im Reiter „Ernährung“ wählen.')}
+        ${opt('', '🕓', 'Später festlegen', 'Kein Problem, du kannst die Phase jederzeit im Reiter „Ernährung“ wählen.')}
         <details class="nut-help">${NUT_HELP}</details>
       </div>
       <div id="welcome-train">${train}</div>
@@ -9072,8 +9476,8 @@ function welcomeHtml() {
         Gewicht und Aktivität ergänzt. Phase und Trainingsanpassung kannst du dort jederzeit ändern.</p>` : ''}
       ${welc.fresh ? `<ul class="welcome-tips">
         <li><b>Plan:</b> Mit dem Assistenten in wenigen Schritten deinen Trainingsplan erstellen.</li>
-        <li><b>Training:</b> Trainingstag antippen und loslegen – die App schlägt Gewichte und Wiederholungen vor.</li>
-        <li><b>Optionen:</b> Farbwelt und hell/dunkel wählen, Name und Geschlecht ändern – und deine Daten sichern. Alles bleibt nur auf deinem Handy, sichere es ab und zu.</li>
+        <li><b>Training:</b> Trainingstag antippen und loslegen. Die App schlägt Gewichte und Wiederholungen vor.</li>
+        <li><b>Optionen:</b> Farbwelt und hell/dunkel wählen, Name und Geschlecht ändern und deine Daten sichern. Alles bleibt nur auf deinem Handy, sichere es ab und zu.</li>
       </ul>` : ''}
       <button class="btn primary" data-action="welcome-done">${welc.fresh ? "Los geht's 💪" : 'Speichern'}</button>`;
 }
@@ -9148,7 +9552,7 @@ actions['welcome-phase'] = el => {
 actions['welcome-train'] = el => { welc.trainAdapt = el.dataset.v === '1'; welcomeRedraw(); };
 
 actions['welcome-done'] = () => {
-  if (welc.phase == null) { alert('Bitte wähle deine Phase – oder „Später festlegen“.'); return; }
+  if (welc.phase == null) { alert('Bitte wähle deine Phase oder „Später festlegen“.'); return; }
   if ((welc.phase === 'diet' || welc.phase === 'minicut') && welc.trainAdapt == null && !feat('nut-train-q')) welc.trainAdapt = true;
   if ((welc.phase === 'diet' || welc.phase === 'minicut') && welc.trainAdapt == null) {
     alert('Bitte noch auswählen, ob dein Trainingsplan an die Phase angepasst werden soll.');
@@ -9181,7 +9585,7 @@ actions['profile-look'] = el => {
   saveData(); applyTheme(); render();
 };
 actions['profile-color'] = el => {
-  data.profile = { ...(data.profile || {}), color: el.dataset.k, colorHint: true };
+  data.profile = { ...(data.profile || {}), color: el.dataset.k, colorHint: true, colorSet: true };
   saveData(); applyTheme(); render();
 };
 actions['color-hint'] = el => {
@@ -9214,6 +9618,31 @@ actions['sub-del'] = el => {
 // Supersätze (v210)
 actions['ss-pick-open'] = el => { planSwap = null; exRename = null; ssPick = { day: current.params.id, i: +el.dataset.i }; render(); };
 actions['ss-pick-cancel'] = () => { ssPick = null; render(); };
+// v242 (User 2026-11-14): Partner frei wählen – steht die Übung schon im Tag, wird sie gekoppelt, sonst direkt dahinter eingefügt
+actions['ss-pick-add'] = el => {
+  const day = findDay(current.params.id), i = +el.dataset.i, a = day.exercises[i];
+  const input = $view.querySelector(`[data-field="ss-pick-name"][data-i="${i}"]`);
+  const name = String((input && input.value) || '').trim();
+  if (!name) { alert('Bitte eine Übung eintippen oder aus den Vorschlägen wählen.'); return; }
+  if (nameKey(name) === nameKey(a.name)) { alert('Das ist dieselbe Übung. Bitte eine andere wählen.'); return; }
+  const have = day.exercises.findIndex(x => nameKey(x.name) === nameKey(name));
+  const b = have >= 0 ? day.exercises[have] : withDefaults(ownPlan() ? { id: uid(), name, sets: 3 } : { id: uid(), name, sets: 2, setsEnd: 3, max10: knownMax10(name) });
+  if (!ssExOk(b)) {
+    alert(`„${name}“ kennt die App noch nicht. Leg sie zuerst als eigene Übung mit Muskelgruppe an (Bibliothek → Eigene Übung hinzufügen), dann kann sie in einen Supersatz.`);
+    return;
+  }
+  if (!ssPairOk(a, b)) {
+    alert(`„${a.name.trim()}“ und „${name}“ passen nicht als Supersatz: Beide belasten dieselben Muskeln. Erlaubt sind Gegenspieler (z. B. Brust und Rücken) und Muskelgruppen, die nichts miteinander zu tun haben.`);
+    return;
+  }
+  if (have >= 0 && dayPairs(day.exercises).has(have)) { alert(`„${name}“ ist schon Teil eines anderen Supersatzes. Löse ihn zuerst.`); return; }
+  let j = have;
+  if (j < 0) { day.exercises.splice(i + 1, 0, b); j = i + 1; }
+  ssCouple(day, i, j);
+  ssPick = null;
+  saveData(); render();
+  toast(`🔗 Supersatz: ${a.name.trim()} + ${b.name.trim()}${have < 0 ? ' (neu im Plan)' : ''}`);
+};
 actions['ss-pair'] = el => {
   const day = findDay(current.params.id), a = day.exercises[+el.dataset.i], b = day.exercises[+el.dataset.j];
   ssCouple(day, +el.dataset.i, +el.dataset.j);
@@ -9225,7 +9654,7 @@ actions['ss-unpair'] = el => {
   const day = findDay(current.params.id);
   for (const x of day.exercises.slice(+el.dataset.i, +el.dataset.i + 2)) { delete x.ss; delete x.ssRest; }
   saveData(); render();
-  toast('Supersatz gelöst – die Übungen laufen wieder einzeln');
+  toast('Supersatz gelöst, die Übungen laufen wieder einzeln');
 };
 actions['ss-auto'] = () => {
   const day = findDay(current.params.id), pv = ssAutoPreview(day);
@@ -9241,7 +9670,7 @@ actions['ss-solo'] = el => {
   const en = draft.entries[+el.dataset.ei];
   draft.ssSolo = [...(draft.ssSolo || []), en.ss];
   saveDraft(); render();
-  toast('Heute einzeln – normale Pausen, der Plan bleibt');
+  toast('Heute einzeln: normale Pausen, der Plan bleibt');
 };
 actions['ss-unsolo'] = el => {
   const en = draft.entries[+el.dataset.ei];
@@ -9261,8 +9690,8 @@ actions['ss-check'] = el => {
   if (v === 'solo') day.exercises.forEach(x => { delete x.ss; delete x.ssRest; });
   day.ssAsked = true;
   saveData(); render();
-  toast(v === 'ok' ? 'Danke – die Supersätze bleiben, wie sie sind' : v === 'longer' ? 'Pausen im Supersatz verlängert'
-    : 'Supersätze gelöst – die Übungen laufen wieder einzeln');
+  toast(v === 'ok' ? 'Danke, die Supersätze bleiben, wie sie sind' : v === 'longer' ? 'Pausen im Supersatz verlängert'
+    : 'Supersätze gelöst, die Übungen laufen wieder einzeln');
 };
 // Beschwerden-Verlauf (v208)
 actions['compl-open'] = el => { complEdit = null; go('complaints', { from: el.dataset.from || current.view }); };
@@ -9288,7 +9717,7 @@ actions['compl-save'] = () => {
   else data.complaints.push(entry);
   saveData();
   complEdit = null;
-  toast('Eingetragen ✔ – die Hinweise im Training sind angepasst');
+  toast('Eingetragen ✔, die Hinweise im Training sind angepasst');
   render();
 };
 actions['compl-report'] = () => go('complreport', { from: current.params.from, weeks: 8 });
@@ -9306,7 +9735,7 @@ actions['crep-text'] = async () => {
   if (navigator.share) {
     try { await navigator.share({ title: 'Beschwerde-Bericht', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
-  try { await navigator.clipboard.writeText(text); toast('Bericht kopiert ✔ – z. B. in eine Mail einfügen'); }
+  try { await navigator.clipboard.writeText(text); toast('Bericht kopiert ✔, z. B. in eine Mail einfügen'); }
   catch (e) { uiCopy(text); }
 };
 actions['pain-pt'] = el => {
@@ -9342,7 +9771,7 @@ actions['pain-save'] = () => {
   data.painLog.push(z);
   saveData();
   painQuick = null;
-  toast('Notiert ✔ – steht in deinem Beschwerde-Tagebuch');
+  toast('Notiert ✔, steht in deinem Beschwerde-Tagebuch');
   render();
 };
 // Erklärtexte (v209)
@@ -9359,7 +9788,7 @@ actions['explain-mode'] = el => {
 actions['motiv-set'] = el => {
   data.profile = { ...(data.profile || {}), motiv: el.dataset.m };
   saveData(); render();
-  if (current.view === 'start') toast(`Motivation: ${MOTIV_OPTS[el.dataset.m][1]} – änderbar unter Optionen → Training`);
+  if (current.view === 'start') toast(`Motivation: ${MOTIV_OPTS[el.dataset.m][1]}, änderbar unter Optionen → Training`);
 };
 actions['motiv-hide'] = el => { data.profile = { ...(data.profile || {}), motivHide: el.dataset.k }; saveData(); render(); };
 actions['welcome-motiv'] = el => {
@@ -9458,10 +9887,10 @@ function channelInit() {
 }
 function betaCard() {
   if (!IS_BETA) return '';
-  return `<div class="card beta-card"><p><b>🧪 Beta-Version ${APP_V}</b> – hier testest du Neues, bevor alle es bekommen. Deine Daten hier sind
+  return `<div class="card beta-card"><p><b>🧪 Beta-Version ${APP_V}</b>: Hier testest du Neues, bevor alle es bekommen. Deine Daten hier sind
       getrennt von der normalen App.</p>
     <button class="btn" data-action="beta-feedback">💬 Rückmeldung geben</button>
-    <button class="btn" data-action="beta-testdata">🧪 Testdaten laden<small>Max, 6 Monate Training und Ernährung (Mai bis Nov. 2026) – ersetzt die Daten der Beta</small></button></div>`;
+    <button class="btn" data-action="beta-testdata">🧪 Testdaten laden<small>Max, 6 Monate Training und Ernährung (Mai bis Nov. 2026), ersetzt die Daten der Beta</small></button></div>`;
 }
 // Beta (v223, User 2026-11-13): simulierte Testperson aus testdaten-max.json laden – läuft wie „Sicherung laden“ (mit Rückfrage)
 actions['beta-testdata'] = async () => {
@@ -9470,20 +9899,20 @@ actions['beta-testdata'] = async () => {
     const res = await fetch('testdaten-max.json', { cache: 'no-cache' });
     if (!res.ok) throw new Error(res.status);
     importData(new File([await res.text()], 'testdaten-max.json', { type: 'application/json' }));
-  } catch (e) { alert('Die Testdaten konnten nicht geladen werden – bitte mit Internetverbindung noch einmal versuchen.'); }
+  } catch (e) { alert('Die Testdaten konnten nicht geladen werden. Bitte mit Internetverbindung noch einmal versuchen.'); }
 };
 // Alte Adresse (stepup-strength.github.io): Daten ziehen nicht von selbst mit (jede Adresse hat ihren eigenen Speicher)
 function moveCard() {
-  if (!OLD_HOST) return '';
+  if (!OLD_HOST || !MOVE_ON) return '';
   const host = NEW_URL.replace('https://', '').replace(/\/$/, '');
   return `<div class="card move-card"><h2>📦 Die App zieht um</h2>
-    <p>Sie heißt jetzt <b>${APP_NAME}</b> und hat eine neue Adresse. Deine Daten nimmst du einmal mit – so geht's:</p>
-    <ol><li><b>Sicherung erstellen</b> – speichert alle Trainings, Pläne und Einträge als Datei.
+    <p>Sie heißt jetzt <b>${APP_NAME}</b> und hat eine neue Adresse. Deine Daten nimmst du einmal mit. So geht's:</p>
+    <ol><li><b>Sicherung erstellen</b>: speichert alle Trainings, Pläne und Einträge als Datei.
         <button class="btn primary" data-action="export">💾 Sicherung erstellen</button></li>
       <li><b>Neue Adresse öffnen</b> <a class="btn" href="${NEW_URL}" target="_blank" rel="noopener">${host} öffnen</a></li>
       <li>Dort bei der Begrüßung <b>„Ich habe schon eine Sicherung“</b> tippen und die Datei wählen.</li></ol>
     <p class="hint">iPhone: Öffne die neue Adresse in Safari, füge sie über „Teilen → Zum Home-Bildschirm“ hinzu und lade die Sicherung
-      <b>in der neuen App</b> – sie hat ihren eigenen Speicher. Fortschrittsfotos haben eine eigene Sicherung (Ernährung → Fortschrittsfotos →
+      <b>in der neuen App</b>. Sie hat ihren eigenen Speicher. Fortschrittsfotos haben eine eigene Sicherung (Ernährung → Fortschrittsfotos →
       Fotos sichern). Lösch die alte App erst, wenn drüben alles da ist.</p></div>`;
 }
 actions['beta-feedback'] = async () => {
@@ -9492,13 +9921,13 @@ actions['beta-feedback'] = async () => {
 
 `;
   if (typeof LEGAL !== 'undefined' && LEGAL.email) {
-    location.href = `mailto:${LEGAL.email}?subject=${encodeURIComponent(APP_NAME + ' Beta – Rückmeldung')}&body=${encodeURIComponent(text)}`;
+    location.href = `mailto:${LEGAL.email}?subject=${encodeURIComponent(APP_NAME + ' Beta: Rückmeldung')}&body=${encodeURIComponent(text)}`;
     return;
   }
   if (navigator.share) {
-    try { await navigator.share({ title: `${APP_NAME} Beta – Rückmeldung`, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.share({ title: `${APP_NAME} Beta: Rückmeldung`, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
-  try { await navigator.clipboard.writeText(text); toast('Text kopiert – füg ihn in deine Nachricht ein'); } catch (e) { uiCopy(text, 'Diesen Text kopieren und in deine Nachricht einfügen:'); }
+  try { await navigator.clipboard.writeText(text); toast('Text kopiert, füg ihn in deine Nachricht ein'); } catch (e) { uiCopy(text, 'Diesen Text kopieren und in deine Nachricht einfügen:'); }
 };
 // Begrüßung: vorhandene Sicherung laden (z. B. beim Umzug von der alten Adresse)
 actions['welcome-import'] = () => {
